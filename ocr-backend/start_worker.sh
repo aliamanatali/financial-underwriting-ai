@@ -38,7 +38,7 @@ echo ""
 #               Reduced from 10 to work with semaphore (4 concurrent API requests)
 # -Q: Queues to consume from
 # -n: Worker name
-celery -A app.celery_app worker \
+"$SCRIPT_DIR/venv/bin/celery" -A app.celery_app worker \
     --loglevel="${CELERY_LOG_LEVEL:-info}" \
     --concurrency="${CELERY_WORKER_CONCURRENCY:-16}" \
     -Q document_processing,chunk_processing,default \
