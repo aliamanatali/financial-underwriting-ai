@@ -10,10 +10,15 @@ import {
 import LoadingSpinner from "./LoadingSpinner";
 import ProcessingProgressComponent from "./ProcessingProgress";
 import { useDocumentProgress } from "@/hooks/useDocumentProgress";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 
 interface DocumentViewerProps {
   documentId: string;
 }
+
+type ViewMode = "raw" | "rendered";
 
 export default function DocumentViewer({ documentId }: DocumentViewerProps) {
   const [document, setDocument] = useState<DocumentResponse | null>(null);
@@ -23,6 +28,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("rendered");
 
   // Use SSE for real-time progress updates (only for processing_chunks status)
   const shouldUseSSE =
@@ -325,7 +331,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
       {document.status === "completed" && extractedText && (
         <>
           {/* Action Buttons */}
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 items-center">
             <button
               onClick={handleCopyText}
               className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -384,18 +390,216 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
               </svg>
               Download Text
             </button>
+
+            {/* View Mode Toggle */}
+            <div className="ml-auto flex items-center bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode("rendered")}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === "rendered"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <svg
+                  className="h-4 w-4 inline mr-1.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                  />
+                </svg>
+                Rendered
+              </button>
+              <button
+                onClick={() => setViewMode("raw")}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  viewMode === "raw"
+                    ? "bg-white text-gray-900 shadow-sm"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <svg
+                  className="h-4 w-4 inline mr-1.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
+                  />
+                </svg>
+                Raw
+              </button>
+            </div>
           </div>
 
           {/* Extracted Text */}
           <div className="bg-white shadow rounded-lg p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Extracted Text
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                (
+                {viewMode === "rendered" ? "Markdown Rendered" : "Raw Markdown"}
+                )
+              </span>
             </h3>
-            <div className="bg-gray-50 rounded-lg p-4 max-h-[600px] overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-sm text-gray-800 font-mono leading-relaxed">
-                {extractedText.text || "No text extracted"}
-              </pre>
-            </div>
+
+            {viewMode === "raw" ? (
+              <div className="bg-gray-50 rounded-lg p-4 max-h-[600px] overflow-y-auto">
+                <pre className="whitespace-pre-wrap text-sm text-gray-800 font-mono leading-relaxed">
+                  {extractedText.text || "No text extracted"}
+                </pre>
+              </div>
+            ) : (
+              <div className="bg-white border border-gray-200 rounded-lg p-6 max-h-[600px] overflow-y-auto prose prose-sm max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw]}
+                  components={{
+                    // Custom styling for markdown elements
+                    h1: ({ node, ...props }) => (
+                      <h1
+                        className="text-3xl font-bold mt-6 mb-4 text-gray-900"
+                        {...props}
+                      />
+                    ),
+                    h2: ({ node, ...props }) => (
+                      <h2
+                        className="text-2xl font-bold mt-5 mb-3 text-gray-900"
+                        {...props}
+                      />
+                    ),
+                    h3: ({ node, ...props }) => (
+                      <h3
+                        className="text-xl font-bold mt-4 mb-2 text-gray-900"
+                        {...props}
+                      />
+                    ),
+                    h4: ({ node, ...props }) => (
+                      <h4
+                        className="text-lg font-semibold mt-3 mb-2 text-gray-900"
+                        {...props}
+                      />
+                    ),
+                    p: ({ node, ...props }) => (
+                      <p
+                        className="mb-4 text-gray-700 leading-relaxed"
+                        {...props}
+                      />
+                    ),
+                    ul: ({ node, ...props }) => (
+                      <ul
+                        className="list-disc list-inside mb-4 space-y-2 text-gray-700"
+                        {...props}
+                      />
+                    ),
+                    ol: ({ node, ...props }) => (
+                      <ol
+                        className="list-decimal list-inside mb-4 space-y-2 text-gray-700"
+                        {...props}
+                      />
+                    ),
+                    li: ({ node, ...props }) => (
+                      <li className="ml-4" {...props} />
+                    ),
+                    blockquote: ({ node, ...props }) => (
+                      <blockquote
+                        className="border-l-4 border-gray-300 pl-4 italic my-4 text-gray-600"
+                        {...props}
+                      />
+                    ),
+                    code: ({ node, className, children, ...props }) => {
+                      const match = /language-(\w+)/.exec(className || "");
+                      const isInline = !match;
+                      return isInline ? (
+                        <code
+                          className="bg-gray-100 text-red-600 px-1.5 py-0.5 rounded text-sm font-mono"
+                          {...props}
+                        >
+                          {children}
+                        </code>
+                      ) : (
+                        <code
+                          className="block bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm font-mono my-4"
+                          {...props}
+                        >
+                          {children}
+                        </code>
+                      );
+                    },
+                    pre: ({ node, ...props }) => (
+                      <pre
+                        className="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto my-4"
+                        {...props}
+                      />
+                    ),
+                    table: ({ node, ...props }) => (
+                      <div className="overflow-x-auto my-4">
+                        <table
+                          className="min-w-full divide-y divide-gray-300 border border-gray-300"
+                          {...props}
+                        />
+                      </div>
+                    ),
+                    thead: ({ node, ...props }) => (
+                      <thead className="bg-gray-50" {...props} />
+                    ),
+                    tbody: ({ node, ...props }) => (
+                      <tbody
+                        className="divide-y divide-gray-200 bg-white"
+                        {...props}
+                      />
+                    ),
+                    tr: ({ node, ...props }) => <tr {...props} />,
+                    th: ({ node, ...props }) => (
+                      <th
+                        className="px-4 py-3 text-left text-sm font-semibold text-gray-900 border border-gray-300"
+                        {...props}
+                      />
+                    ),
+                    td: ({ node, ...props }) => (
+                      <td
+                        className="px-4 py-3 text-sm text-gray-700 border border-gray-300"
+                        {...props}
+                      />
+                    ),
+                    a: ({ node, ...props }) => (
+                      <a
+                        className="text-blue-600 hover:text-blue-800 underline"
+                        {...props}
+                      />
+                    ),
+                    hr: ({ node, ...props }) => (
+                      <hr className="my-6 border-gray-300" {...props} />
+                    ),
+                    strong: ({ node, ...props }) => (
+                      <strong className="font-bold text-gray-900" {...props} />
+                    ),
+                    em: ({ node, ...props }) => (
+                      <em className="italic" {...props} />
+                    ),
+                  }}
+                >
+                  {extractedText.text || "No text extracted"}
+                </ReactMarkdown>
+              </div>
+            )}
+
             <div className="mt-4 text-sm text-gray-500">
               {extractedText.text.length.toLocaleString()} characters
             </div>
