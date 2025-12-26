@@ -9,17 +9,17 @@ class Settings(BaseSettings):
     
     # Gemini API Configuration
     gemini_api_key: str
-    gemini_model: str = "gemini-3-pro-preview"
-    gemini_embedding_model: str = "text-embedding-004"
+    gemini_model: str
+    gemini_embedding_model: str
     gemini_temperature: float = 0.0
     gemini_max_output_tokens: int = 65536
     gemini_timeout_seconds: int = 120
     gemini_max_retries: int = 3
     
     # PDF Chunking Configuration
-    chunk_size_pages: int = 1
+    chunk_size_pages: int = 10
     large_file_threshold_mb: float = 5.0
-    large_file_page_threshold: int = 1
+    large_file_page_threshold: int = 10
     
     # MongoDB Configuration (Optional)
     mongodb_uri: Optional[str] = None

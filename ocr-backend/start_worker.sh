@@ -25,6 +25,11 @@ if ! redis-cli ping > /dev/null 2>&1; then
     exit 1
 fi
 
+# Purge existing Celery tasks
+echo "Purging existing Celery tasks..."
+"$SCRIPT_DIR/venv/bin/celery" -A app.celery_app purge -f
+echo ""
+
 echo "Starting Celery worker..."
 echo "Worker concurrency: ${CELERY_WORKER_CONCURRENCY:-16}"
 echo "Log level: ${CELERY_LOG_LEVEL:-info}"
