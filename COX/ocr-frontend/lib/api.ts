@@ -1,4 +1,4 @@
-import { UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress } from "./types";
+import { UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, DocumentResponse, DocumentDetailsResponse } from "./types";
 
 const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8001";
 const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8000";
@@ -14,15 +14,54 @@ class ApiClient {
 
   // --- OCR Backend Methods ---
 
-  async uploadDocument(file: File): Promise<UploadResponse> {
-    const formData = new FormData();
-    formData.append("file", file);
+  async uploadDocument(
+    file: File,
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
+  ): Promise<UploadResponse> {
+    const xhr = new XMLHttpRequest();
 
-    const response = await fetch(`${OCR_API_URL}/api/documents/upload`, {
-      method: 'POST',
-      body: formData,
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          onProgress({
+            loaded: e.loaded,
+            total: e.total,
+            percentage: percentComplete,
+          });
+        }
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 200) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve(response as UploadResponse);
+          } catch (e) {
+            reject(new Error('Failed to parse upload response'));
+          }
+        } else {
+          try {
+            const error = JSON.parse(xhr.responseText);
+            reject(new Error(error.detail || `Upload failed with status ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
+          }
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        reject(new Error('Upload request failed'));
+      });
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      xhr.open('POST', `${OCR_API_URL}/api/documents/upload`);
+      xhr.send(formData);
     });
-    return this.handleResponse<UploadResponse>(response);
   }
 
   streamDocumentProgress(documentId: string, onProgress: (progress: ProcessingProgress) => void): EventSource {
@@ -38,6 +77,27 @@ class ApiClient {
     return eventSource;
   }
 
+ async listDocuments(): Promise<DocumentResponse[]> {
+   const response = await fetch(`${OCR_API_URL}/api/documents`);
+   const data = await this.handleResponse<{ documents: DocumentResponse[] }>(response);
+   return data.documents;
+ }
+
+ async getDocumentDetails(documentId: string): Promise<DocumentDetailsResponse> {
+   const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`);
+   return this.handleResponse<DocumentDetailsResponse>(response);
+ }
+
+ async deleteDocument(documentId: string): Promise<void> {
+   const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`, {
+     method: 'DELETE',
+   });
+   if (!response.ok) {
+     const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+   }
+   // No content expected on successful deletion
+ }
   // --- Financial Engine Methods ---
 
   async startAnalysis(documentId: string, params: DealParameters): Promise<UnderwritingAnalysis> {

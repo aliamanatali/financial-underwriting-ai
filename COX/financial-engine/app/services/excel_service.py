@@ -10,13 +10,17 @@ class ExcelService:
         """
         Generates a list of ProFormaEntry objects for the side-by-side view.
         T12 = Historical, F12 = Pro Forma
+        Uses DealParameters for vacancy rate (not hardcoded).
         """
         entries = []
+        
+        # Get vacancy rate from deal parameters (not hardcoded)
+        vacancy_rate = analysis_data.deal_parameters.vacancy_rate if analysis_data.deal_parameters else 0.03
         
         # Add Revenue Section
         historical_revenue = sum(item.current_rent * 12 for item in analysis_data.rent_roll)
         pro_forma_revenue = sum(item.market_rent * 12 for item in analysis_data.rent_roll)
-        pro_forma_revenue_after_vacancy = pro_forma_revenue * (1 - analysis_data.deal_parameters.vacancy_rate)
+        pro_forma_revenue_after_vacancy = pro_forma_revenue * (1 - vacancy_rate)
         
         entries.append(ProFormaEntry(
             name="Gross Potential Rent",
@@ -27,7 +31,7 @@ class ExcelService:
         entries.append(ProFormaEntry(
             name="Vacancy Loss",
             t12=0,
-            f12=pro_forma_revenue * analysis_data.deal_parameters.vacancy_rate
+            f12=pro_forma_revenue * vacancy_rate
         ))
         
         entries.append(ProFormaEntry(

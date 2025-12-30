@@ -137,7 +137,7 @@ class IngestionService:
             historical_expenses=normalized_expenses,
         )
         # 6. Compare Income Sources and Add Warning if Mismatch
-        pnl_income = self.ingest_income_statement_from_pdf(document_id)
+        pnl_income = await self.ingest_income_statement_from_pdf(document_id)
         rent_roll_income = analysis.rent_roll_summary.total_annual_rent
         
         income_discrepancy_warning = self.compare_income_sources(
@@ -199,7 +199,7 @@ class IngestionService:
             return f"Warning: Annual income from Rent Roll (${rent_roll_income:,.2f}) and P&L (${pnl_income:,.2f}) differs by {discrepancy:.2%}, which is above the {threshold:.2%} threshold."
         return None
 
-def _summarize_rent_roll(self, rent_roll: List[RentRollItem]) -> RentRollSummary:
+    def _summarize_rent_roll(self, rent_roll: List[RentRollItem]) -> RentRollSummary:
         """
         Summarizes the rent roll to calculate total units, occupancy rate, and rent totals.
         """

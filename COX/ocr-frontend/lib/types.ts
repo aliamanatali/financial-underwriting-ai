@@ -17,7 +17,16 @@ export interface Document {
 export interface DocumentResponse {
   document_id: string;
   filename: string;
-  status: string;
+  status: DocumentStatus;
+  created_at: string;
+  updated_at: string;
+  metadata?: {
+    page_count?: number;
+    file_size?: number;
+  } | null;
+}
+
+export interface DocumentDetailsResponse extends DocumentResponse {
   extracted_text?: string | null;
   metadata?: {
     page_count?: number;
@@ -27,8 +36,6 @@ export interface DocumentResponse {
     mime_type?: string;
     extraction_notes?: string | null;
   } | null;
-  created_at: string;
-  updated_at: string;
   processing_time_seconds?: number | null;
   error_message?: string | null;
 }
