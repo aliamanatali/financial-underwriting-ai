@@ -27,6 +27,15 @@ export default function DocumentList({
 
     try {
       const docs = await apiClient.listDocuments();
+      console.log("Fetched documents:", docs);
+
+      // Log duplicate document IDs
+      const docIds = docs.map(doc => doc.document_id);
+      const uniqueDocIds = new Set(docIds);
+      if (docIds.length !== uniqueDocIds.size) {
+        console.warn("Duplicate document_id's found in fetched data.");
+      }
+      
       setDocuments(
         docs.sort(
           (a, b) =>
@@ -34,6 +43,7 @@ export default function DocumentList({
         )
       );
     } catch (err) {
+      console.error("Failed to fetch documents:", err);
       setError(err instanceof Error ? err.message : "Failed to load documents");
     } finally {
       setIsLoading(false);
@@ -55,9 +65,11 @@ export default function DocumentList({
     );
 
     if (hasProcessingDocs) {
+      console.log("Processing documents found, starting polling.");
       // Poll every 10 seconds (reduced from 5s since SSE handles real-time updates)
       // This is just to update the list view status
       pollingIntervalRef.current = setInterval(() => {
+        console.log("Polling for document updates...");
         fetchDocuments();
       }, 10000);
     } else {
@@ -97,6 +109,7 @@ export default function DocumentList({
         onDelete();
       }
     } catch (err) {
+      console.error(`Failed to delete document ${id}:`, err);
       alert(err instanceof Error ? err.message : "Failed to delete document");
     } finally {
       setDeletingId(null);

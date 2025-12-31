@@ -53,32 +53,30 @@ class FinancialLineItem(BaseModel):
     type: str  # "Historical" or "ProForma"
 
 class DealParameters(BaseModel):
-    growth_rate: float = 0.03
-    exit_cap_rate: float = Field(alias="exit_cap", default=0.06)
-    vacancy_rate: float = 0.03
-    loan_amount: float = 5_000_000  # Default minimum for gating check
+    growth_rate: float
+    exit_cap_rate: float = Field(alias="exit_cap")
+    vacancy_rate: float = 0.05
+
+class StandardizedExpense(BaseModel):
+    original_text: str
+    mapped_category: "ExpenseCategory"
+    amount: float
+    confidence: float
+    audit_log: "AuditLog"
 
 class UnderwritingAnalysis(BaseModel):
     document_id: str
     pass_fail_status: str
     gating_reasons: List[str] = []
-    
+
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
     rent_roll_summary: "RentRollSummary"
-    historical_expenses: List["FinancialLineItem"]
-    
+    normalized_expenses: List["StandardizedExpense"]
+
     # --- ADD THESE ---
     deal_parameters: Optional[DealParameters] = None
     audit_trail: List[Dict[str, Any]] = [] # For the general audit logs
-    
+
     pro_forma_noi: Optional[float] = 0.0
     cap_rate: Optional[float] = 0.0
-    
-    historical_noi: Optional[float] = 0.0
-    historical_cap_rate: Optional[float] = 0.0
-
-class ProFormaEntry(BaseModel):
-    name: str
-    t12: float
-    f12: float

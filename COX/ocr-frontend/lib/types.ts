@@ -1,6 +1,13 @@
 // TypeScript types for OCR API integration
 
-export type DocumentStatus = "pending" | "processing" | "completed" | "failed";
+export type DocumentStatus =
+  | "pending"
+  | "processing"
+  | "processing_chunks"
+  | "extracting"
+  | "completed"
+  | "failed"
+  | "error";
 export type TaskStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
 export type ChunkStatus = "pending" | "processing" | "completed" | "failed";
 

@@ -1,4 +1,4 @@
-import { UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, DocumentResponse, DocumentDetailsResponse } from "./types";
+import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress } from "./types";
 
 const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8001";
 const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8000";
@@ -77,27 +77,22 @@ class ApiClient {
     return eventSource;
   }
 
- async listDocuments(): Promise<DocumentResponse[]> {
-   const response = await fetch(`${OCR_API_URL}/api/documents`);
-   const data = await this.handleResponse<{ documents: DocumentResponse[] }>(response);
-   return data.documents;
- }
+  async listDocuments(): Promise<DocumentResponse[]> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/`);
+    return this.handleResponse<DocumentResponse[]>(response);
+  }
 
- async getDocumentDetails(documentId: string): Promise<DocumentDetailsResponse> {
-   const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`);
-   return this.handleResponse<DocumentDetailsResponse>(response);
- }
+  async deleteDocument(documentId: string): Promise<void> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+    // No content expected on successful deletion
+  }
 
- async deleteDocument(documentId: string): Promise<void> {
-   const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`, {
-     method: 'DELETE',
-   });
-   if (!response.ok) {
-     const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
-     throw new Error(error.detail || `HTTP error! status: ${response.status}`);
-   }
-   // No content expected on successful deletion
- }
   // --- Financial Engine Methods ---
 
   async startAnalysis(documentId: string, params: DealParameters): Promise<UnderwritingAnalysis> {
@@ -121,7 +116,7 @@ class ApiClient {
         const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
         throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
-    
+
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
