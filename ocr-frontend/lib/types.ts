@@ -1,6 +1,13 @@
 // TypeScript types for OCR API integration
 
-export type DocumentStatus = "pending" | "processing" | "completed" | "failed";
+export type DocumentStatus =
+  | "pending"
+  | "processing"
+  | "processing_chunks"
+  | "extracting"
+  | "completed"
+  | "failed"
+  | "error";
 export type TaskStatus = "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
 export type ChunkStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -17,7 +24,16 @@ export interface Document {
 export interface DocumentResponse {
   document_id: string;
   filename: string;
-  status: string;
+  status: DocumentStatus;
+  created_at: string;
+  updated_at: string;
+  metadata?: {
+    page_count?: number;
+    file_size?: number;
+  } | null;
+}
+
+export interface DocumentDetailsResponse extends DocumentResponse {
   extracted_text?: string | null;
   metadata?: {
     page_count?: number;
@@ -27,8 +43,6 @@ export interface DocumentResponse {
     mime_type?: string;
     extraction_notes?: string | null;
   } | null;
-  created_at: string;
-  updated_at: string;
   processing_time_seconds?: number | null;
   error_message?: string | null;
 }
@@ -92,4 +106,60 @@ export interface UploadProgress {
   loaded: number;
   total: number;
   percentage: number;
+}
+
+// Financial Analysis Types
+export interface PropertyMeta {
+  address: string;
+  year_built: number;
+  purchase_price: number;
+  total_units: number;
+}
+
+export interface RentRollItem {
+  unit_number: string;
+  unit_type: string;
+  tenant_name: string;
+  current_rent: number;
+  market_rent: number;
+  lease_start: string;
+  lease_end: string;
+}
+
+export interface RentRollSummary {
+  total_units: number;
+  occupied_units: number;
+  occupancy_rate: number;
+  total_monthly_rent: number;
+  total_annual_rent: number;
+}
+
+export interface FinancialLineItem {
+  category: string;
+  value: number;
+  period: string;
+  type: string;
+}
+
+export interface DealParameters {
+  growth_rate: number;
+  exit_cap_rate: number;
+  vacancy_rate: number;
+  loan_amount?: number;
+}
+
+export interface UnderwritingAnalysis {
+  document_id: string;
+  pass_fail_status: string;
+  gating_reasons: string[];
+  property_meta: PropertyMeta;
+  rent_roll: RentRollItem[];
+  rent_roll_summary: RentRollSummary;
+  historical_expenses: FinancialLineItem[];
+  deal_parameters?: DealParameters;
+  audit_trail?: Record<string, any>[];
+  pro_forma_noi?: number;
+  cap_rate?: number;
+  historical_noi?: number;
+  historical_cap_rate?: number;
 }

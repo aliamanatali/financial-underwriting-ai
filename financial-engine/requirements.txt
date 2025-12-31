@@ -6,3 +6,7 @@ pytest-asyncio
 openpyxl
 httpx
 python-dotenv
+google-generativeai
+google-genai
+pandas
+python-multipart

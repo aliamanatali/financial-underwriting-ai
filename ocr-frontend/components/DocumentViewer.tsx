@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import {
   DocumentResponse,
@@ -21,6 +22,7 @@ interface DocumentViewerProps {
 type ViewMode = "raw" | "rendered";
 
 export default function DocumentViewer({ documentId }: DocumentViewerProps) {
+  const router = useRouter();
   const [document, setDocument] = useState<DocumentResponse | null>(null);
   const [extractedText, setExtractedText] = useState<ExtractedText | null>(
     null
@@ -29,6 +31,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("rendered");
+  const [isStartingAnalysis, setIsStartingAnalysis] = useState(false);
 
   // Use SSE for real-time progress updates (only for processing_chunks status)
   const shouldUseSSE =
@@ -155,6 +158,18 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
     a.click();
     window.document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const handleStartAnalysis = async () => {
+    try {
+      setIsStartingAnalysis(true);
+      // Navigate to analysis page - the analysis page will handle the API call
+      router.push(`/analysis/${documentId}`);
+    } catch (err) {
+      console.error("Failed to navigate to analysis:", err);
+      alert("Failed to start analysis. Please try again.");
+      setIsStartingAnalysis(false);
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -389,6 +404,55 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
                 />
               </svg>
               Download Text
+            </button>
+
+            <button
+              onClick={handleStartAnalysis}
+              disabled={isStartingAnalysis}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isStartingAnalysis ? (
+                <>
+                  <svg
+                    className="h-5 w-5 mr-2 animate-spin"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
+                  </svg>
+                  Starting Analysis...
+                </>
+              ) : (
+                <>
+                  <svg
+                    className="h-5 w-5 mr-2"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
+                  </svg>
+                  Start Financial Analysis
+                </>
+              )}
             </button>
 
             {/* View Mode Toggle */}

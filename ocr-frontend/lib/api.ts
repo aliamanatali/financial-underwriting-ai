@@ -1,200 +1,177 @@
-// API client for FastAPI backend integration
+import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText } from "./types";
 
-import {
-  DocumentResponse,
-  UploadResponse,
-  ExtractedText,
-  ApiError,
-  UploadProgress,
-  ProcessingStatus,
-  ProcessingProgress,
-} from "./types";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8000";
+const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8001";
 
 class ApiClient {
-  private baseUrl: string;
-
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
-  }
-
-  /**
-   * Handle API errors
-   */
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const error: ApiError = await response.json().catch(() => ({
-        detail: `HTTP error! status: ${response.status}`,
-        status: response.status,
-      }));
-      throw new Error(error.detail || "An error occurred");
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      const detail = error.detail || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(detail);
     }
     return response.json();
   }
 
-  /**
-   * Upload a PDF document to the backend
-   */
+  // --- Health Check Methods ---
+
+  async checkOCRBackend(): Promise<boolean> {
+    try {
+      const response = await fetch(`${OCR_API_URL}/health`, { method: 'GET' });
+      return response.ok;
+    } catch (err) {
+      console.error("OCR backend health check failed:", err);
+      return false;
+    }
+  }
+
+  async checkFinancialBackend(): Promise<boolean> {
+    try {
+      const response = await fetch(`${FIN_API_URL}/health`, { method: 'GET' });
+      return response.ok;
+    } catch (err) {
+      console.error("Financial backend health check failed:", err);
+      return false;
+    }
+  }
+
+  // --- OCR Backend Methods ---
+
   async uploadDocument(
     file: File,
-    onProgress?: (progress: UploadProgress) => void
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
   ): Promise<UploadResponse> {
+    const xhr = new XMLHttpRequest();
+
+    if (onProgress) {
+      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          onProgress({
+            loaded: e.loaded,
+            total: e.total,
+            percentage: percentComplete,
+          });
+        }
+      });
+    }
+
     return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-
-      // Track upload progress
-      if (onProgress) {
-        xhr.upload.addEventListener("progress", (e) => {
-          if (e.lengthComputable) {
-            const progress: UploadProgress = {
-              loaded: e.loaded,
-              total: e.total,
-              percentage: Math.round((e.loaded / e.total) * 100),
-            };
-            onProgress(progress);
-          }
-        });
-      }
-
-      // Handle completion
-      xhr.addEventListener("load", () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
+      xhr.addEventListener('load', () => {
+        if (xhr.status === 200) {
           try {
             const response = JSON.parse(xhr.responseText);
-            resolve(response);
-          } catch (error) {
-            reject(new Error("Failed to parse response"));
+            resolve(response as UploadResponse);
+          } catch (e) {
+            reject(new Error('Failed to parse upload response'));
           }
         } else {
           try {
             const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.detail || `Upload failed: ${xhr.status}`));
-          } catch {
-            reject(new Error(`Upload failed: ${xhr.status}`));
+            reject(new Error(error.detail || `Upload failed with status ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`Upload failed with status ${xhr.status}`));
           }
         }
       });
 
-      // Handle errors
-      xhr.addEventListener("error", () => {
-        reject(new Error("Network error occurred"));
+      xhr.addEventListener('error', () => {
+        reject(new Error('Upload request failed'));
       });
 
-      xhr.addEventListener("abort", () => {
-        reject(new Error("Upload aborted"));
-      });
-
-      // Prepare and send request
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append('file', file);
 
-      xhr.open("POST", `${this.baseUrl}/api/documents/upload`);
+      xhr.open('POST', `${OCR_API_URL}/api/documents/upload`);
       xhr.send(formData);
     });
   }
 
-  /**
-   * Get document details by ID
-   */
-  async getDocument(id: string): Promise<DocumentResponse> {
-    const response = await fetch(`${this.baseUrl}/api/documents/${id}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    return this.handleResponse<DocumentResponse>(response);
+  streamDocumentProgress(documentId: string, onProgress: (progress: ProcessingProgress) => void): EventSource {
+    const eventSource = new EventSource(`${OCR_API_URL}/api/documents/${documentId}/progress/stream`);
+    eventSource.onmessage = (event) => {
+      const progress = JSON.parse(event.data);
+      onProgress(progress);
+    };
+    eventSource.onerror = (err) => {
+      console.error("EventSource failed:", err);
+      eventSource.close();
+    };
+    return eventSource;
   }
 
-  /**
-   * Get extracted text from a document
-   */
-  async getDocumentText(id: string): Promise<ExtractedText> {
-    const response = await fetch(`${this.baseUrl}/api/documents/${id}/text`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    return this.handleResponse<ExtractedText>(response);
-  }
-
-  /**
-   * Get list of all documents
-   */
   async listDocuments(): Promise<DocumentResponse[]> {
-    const response = await fetch(`${this.baseUrl}/api/documents`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    const data = await this.handleResponse<{
-      documents: DocumentResponse[];
-      total: number;
-    }>(response);
+    const response = await fetch(`${OCR_API_URL}/api/documents`);
+    const data = await this.handleResponse<{ documents: DocumentResponse[] }>(response);
     return data.documents;
   }
 
-  /**
-   * Delete a document by ID
-   */
-  async deleteDocument(id: string): Promise<{ message: string }> {
-    const response = await fetch(`${this.baseUrl}/api/documents/${id}`, {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    return this.handleResponse<{ message: string }>(response);
+  async getDocument(documentId: string): Promise<DocumentResponse> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`);
+    return this.handleResponse<DocumentResponse>(response);
   }
 
-  /**
-   * Get processing status for a document
-   */
-  async getDocumentStatus(id: string): Promise<ProcessingStatus> {
-    const response = await fetch(`${this.baseUrl}/api/documents/${id}/status`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    return this.handleResponse<ProcessingStatus>(response);
+  async getDocumentText(documentId: string): Promise<ExtractedText> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}/text`);
+    return this.handleResponse<ExtractedText>(response);
   }
 
-  /**
-   * Get detailed processing progress for a document
-   */
-  async getDocumentProgress(id: string): Promise<ProcessingProgress> {
-    const response = await fetch(
-      `${this.baseUrl}/api/documents/${id}/progress`,
-      {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    return this.handleResponse<ProcessingProgress>(response);
+  async deleteDocument(documentId: string): Promise<void> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+    // No content expected on successful deletion
   }
 
-  /**
-   * Check backend health
-   */
-  async healthCheck(): Promise<{ status: string }> {
-    const response = await fetch(`${this.baseUrl}/health`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
+  // --- Financial Engine Methods ---
+
+  async startAnalysis(documentId: string, params: DealParameters): Promise<UnderwritingAnalysis> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
     });
-    return this.handleResponse<{ status: string }>(response);
+    return this.handleResponse<UnderwritingAnalysis>(response);
+  }
+  async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
+    // Create default deal parameters
+    const params: DealParameters = {
+      growth_rate: 0.02,
+      exit_cap_rate: 0.05,
+      vacancy_rate: 0.05,
+    };
+
+    // Call the original startAnalysis function with the default parameters
+    return this.startAnalysis(documentId, params);
+  }
+
+  async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo'): Promise<void> {
+    const endpoint = type === 'excel' ? 'export/excel' : 'export/memo';
+    const response = await fetch(`${FIN_API_URL}/api/v1/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(analysisData),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = type === 'excel' ? `financial_analysis_${analysisData.document_id}.xlsx` : `investment_memo_${analysisData.document_id}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
   }
 }
 
-// Export singleton instance
 export const apiClient = new ApiClient();
-
-// Export class for testing
-export default ApiClient;
