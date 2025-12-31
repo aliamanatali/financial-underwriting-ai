@@ -94,7 +94,7 @@ class AuditLogService:
         })
         
         # Expense Audits
-        total_expenses = sum(exp.value for exp in analysis.historical_expenses)
+        total_expenses = sum(exp.amount for exp in analysis.normalized_expenses)
         audit_trail.append({
             "field": "Total Operating Expenses",
             "value": f"${total_expenses:,.0f}",
@@ -105,13 +105,14 @@ class AuditLogService:
         })
         
         # Normalized Expense Details
-        for expense in analysis.historical_expenses:
+        for expense in analysis.normalized_expenses:
+            category_name = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
             audit_trail.append({
-                "field": f"Expense: {expense.category}",
-                "value": f"${expense.value:,.0f}",
+                "field": f"Expense: {category_name}",
+                "value": f"${expense.amount:,.0f}",
                 "source": "T12 P&L Statement",
-                "method": f"Extracted and mapped to {expense.category}",
-                "confidence_score": 0.90,
+                "method": f"Original: '{expense.original_text}' mapped to {category_name} (Confidence: {expense.confidence:.0%})",
+                "confidence_score": expense.confidence,
                 "timestamp": datetime.now().isoformat()
             })
         

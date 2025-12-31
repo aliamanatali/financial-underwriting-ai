@@ -26,11 +26,14 @@ from app.tasks.redis_progress import RedisProgressTracker
 # Initialize services (these will be created per worker)
 def get_services():
     """Get service instances for the current worker."""
+    from app.services.document_service import DocumentService
+    from app.services.gemini_service import GeminiService
     return {
         'storage': StorageService(),
         'gemini': GeminiService(),
         'chunking': PDFChunkingService(chunk_size_pages=settings.chunk_size_pages),
-        'progress': RedisProgressTracker()
+        'progress': RedisProgressTracker(),
+        'document': DocumentService()
     }
 
 
@@ -132,6 +135,14 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
         
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
+        
+        # Add detailed logging for the ValueError
+        if isinstance(e, ValueError) and "not enough values to unpack" in str(e):
+            logger.error("Detailed error info:")
+            logger.error(f"Task ID: {self.request.id}")
+            logger.error(f"Task Name: {self.name}")
+            logger.error(f"Args: {self.request.args}")
+            logger.error(f"Kwargs: {self.request.kwargs}")
         
         # Update document status to error
         asyncio.run(_update_document_status(

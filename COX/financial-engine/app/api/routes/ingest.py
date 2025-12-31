@@ -32,7 +32,7 @@ async def ingest_and_analyze_document(
         document_id = upload_response["document_id"]
 
         # 2. Ingest and process the document using the document_id
-        analysis = ingestion_service.ingest_pdf_document(document_id)
+        analysis = await ingestion_service.ingest_pdf_document(document_id)
         return analysis
 
     except Exception as e:

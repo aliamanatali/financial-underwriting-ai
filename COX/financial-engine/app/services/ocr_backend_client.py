@@ -54,3 +54,14 @@ class OcrBackendClient:
         except httpx.HTTPError as e:
             logger.error(f"Error fetching document status from OCR backend: {e}")
             raise Exception(f"OCR backend status check failed: {e}")
+
+    async def get_document_bytes(self, document_id: str) -> bytes:
+        """Get the raw document bytes from OCR backend"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.base_url}/api/documents/{document_id}/content")
+                response.raise_for_status()
+                return response.content
+        except httpx.HTTPError as e:
+            logger.error(f"Error fetching document bytes from OCR backend: {e}")
+            raise Exception(f"OCR backend bytes fetch failed: {e}")

@@ -1,6 +1,10 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
+class ProFormaEntry(BaseModel):
+    name: str
+    t12: float  # Historical
+    f12: float  # Pro Forma
 
 class ExpenseCategory(str, Enum):
     REAL_ESTATE_TAXES = "Real Estate Taxes"
@@ -25,10 +29,11 @@ class AuditLog(BaseModel):
     reasoning: str
 
 class PropertyMeta(BaseModel):
-    address: str
-    year_built: int
-    purchase_price: float
-    total_units: int
+    address: Optional[str] = "Unknown"
+    year_built: Optional[int] = 0
+    purchase_price: Optional[float] = 0.0
+    total_units: Optional[int] = 0
+    is_renovated: bool = False
 
 class RentRollItem(BaseModel):
     unit_number: str = Field(alias="Unit #")
@@ -53,16 +58,26 @@ class FinancialLineItem(BaseModel):
     type: str  # "Historical" or "ProForma"
 
 class DealParameters(BaseModel):
-    growth_rate: float
-    exit_cap_rate: float = Field(alias="exit_cap")
-    vacancy_rate: float = 0.05
+    """
+    Valiance Standard Assumptions.
+    These parameters define the standard underwriting criteria for Valiance Capital.
+    """
+    model_config = {"populate_by_name": True}
+    
+    growth_rate: float = 0.03
+    exit_cap_rate: float = Field(alias="exit_cap", default=0.06)
+    vacancy_rate: float = 0.03
+    loan_amount: float = 5_000_000
+    min_unit_count: int = 15
+    max_unit_count: int = 80
+    max_build_year: int = 1970
 
 class StandardizedExpense(BaseModel):
     original_text: str
-    mapped_category: "ExpenseCategory"
+    mapped_category: ExpenseCategory
     amount: float
     confidence: float
-    audit_log: "AuditLog"
+    audit_log: AuditLog
 
 class UnderwritingAnalysis(BaseModel):
     document_id: str
@@ -71,8 +86,8 @@ class UnderwritingAnalysis(BaseModel):
 
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
-    rent_roll_summary: "RentRollSummary"
-    normalized_expenses: List["StandardizedExpense"]
+    rent_roll_summary: RentRollSummary
+    normalized_expenses: List[StandardizedExpense]
 
     # --- ADD THESE ---
     deal_parameters: Optional[DealParameters] = None

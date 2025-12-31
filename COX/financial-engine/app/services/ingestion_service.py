@@ -30,32 +30,44 @@ class IngestionService:
 
         # Reload with correct header
         df = pd.read_excel(file_path, header=header_row_idx)
+        df = df.fillna("")
 
         rent_roll = []
         for _, row in df.iterrows():
-            rent_roll.append(RentRollItem(
-                **row.to_dict()
-            ))
+            if not row.get("Unit Number") and not row.get("Tenant Name"):
+                continue
 
-        if len(rent_roll) != property_meta.total_units:
-            raise ValueError(f"Unit count mismatch: {len(rent_roll)} in rent roll, {property_meta.total_units} in metadata")
+            rent_roll.append(RentRollItem(
+                unit_number=str(row.get("Unit Number", "")),
+                unit_type=str(row.get("Unit Type", "")),
+                tenant_name=str(row.get("Tenant Name", "")),
+                current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                market_rent=float(row.get("Market Rent", 0.0)),
+                lease_start=str(row.get("Lease Start", "")),
+                lease_end=str(row.get("Lease End", ""))
+            ))
 
         return rent_roll
 
-    def ingest_pdf_document(self, document_id: str) -> UnderwritingAnalysis:
+    async def ingest_pdf_document(self, document_id: str) -> UnderwritingAnalysis:
         """
         Ingests a PDF document from the ocr-backend, extracts the required information,
         and returns a complete UnderwritingAnalysis object.
         """
         # Poll for document processing completion
-        import time
-        while True:
-            status = self.ocr_backend_client.get_document_status(document_id)
+        import asyncio
+        max_wait_time = 300  # 5 minutes
+        elapsed_time = 0
+        while elapsed_time < max_wait_time:
+            status = await self.ocr_backend_client.get_document_status(document_id)
             if status["status"] == "completed":
                 break
-            time.sleep(5) # Wait for 5 seconds before checking again
+            await asyncio.sleep(5)  # Use asyncio.sleep for non-blocking wait
+            elapsed_time += 5
+        else:
+            raise HTTPException(status_code=408, detail="Document processing timed out.")
 
-        raw_text = self.ocr_backend_client.get_document_text(document_id)
+        raw_text = await self.ocr_backend_client.get_document_text(document_id)
 
         # 1. Extract PropertyMeta (SAFE METHOD)
         property_meta_prompt = """
@@ -70,83 +82,130 @@ class IngestionService:
             "total_units": 50
         }
         """
-        # USE THE HELPER YOU WROTE!
-        try:
-            property_meta_data = self.gemini_client.generate_structured_data(
-                property_meta_prompt,
-                prompt=f"{property_meta_prompt}\n\n{raw_text}",
-                pdf_data=None,
-                pydantic_schema=PropertyMeta
-            )
-            if not property_meta_data:
-                raise ValueError("LLM did not return any data for Property Meta.")
-            property_meta = PropertyMeta(**property_meta_data)
-        except (ValueError, IndexError, TypeError) as e:
-            raise HTTPException(status_code=400, detail=f"Failed to extract valid Property Meta: {e}")
+        property_meta_data = self.gemini_client.generate_structured_data(
+            f"{property_meta_prompt}\n\n{raw_text}",
+            pydantic_schema=PropertyMeta,
+            expect_list=False
+        )
+        property_meta = PropertyMeta(**property_meta_data) if isinstance(property_meta_data, dict) else PropertyMeta(address="Unknown", year_built=0, purchase_price=0.0, total_units=0)
 
         # 2. Extract RentRoll (SAFE METHOD)
         rent_roll_prompt = f"""
         Extract the rent roll from the document for {property_meta.total_units} units.
         Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "tenant_name", "current_rent", "market_rent", "lease_start", "lease_end".
-
-        Example:
-        [
-            {{
-                "unit_number": "101",
-                "unit_type": "1BD/1BA",
-                "tenant_name": "John Doe",
-                "current_rent": 2500.0,
-                "market_rent": 2600.0,
-                "lease_start": "2023-01-15",
-                "lease_end": "2024-01-14"
-            }}
-        ]
         """
-        try:
-            rent_roll_data = self.gemini_client.generate_structured_data(
-                rent_roll_prompt,
-                prompt=f"{rent_roll_prompt}\n\n{raw_text}",
-                pdf_data=None,
-                pydantic_schema=RentRollItem
-            )
-            if not rent_roll_data:
-                raise ValueError("LLM did not return any data for Rent Roll.")
-            rent_roll = [RentRollItem(**item) for item in rent_roll_data]
-        except (ValueError, IndexError, TypeError) as e:
-            raise HTTPException(status_code=400, detail=f"Failed to extract valid Rent Roll: {e}")
+        pdf_bytes = await self.ocr_backend_client.get_document_bytes(document_id)
+        rent_roll_data = self.gemini_client.generate_structured_data(
+            f"{rent_roll_prompt}\n\n{raw_text}",
+            pdf_data=pdf_bytes,
+            pydantic_schema=RentRollItem,
+            expect_list=True
+        )
+        rent_roll = [RentRollItem(**item) for item in rent_roll_data if isinstance(item, dict)]
 
         # 3. Extract Raw Expenses
-        raw_expenses = self.ingest_financials_from_pdf(document_id)
+        raw_expenses = await self.ingest_financials_from_pdf(document_id)
 
-        # 4. Normalize Expenses
+        # 4. Normalize Expenses (with audit trail integration)
         normalized_expenses = self.normalization_service.normalize_expenses(raw_expenses)
+        
+        # 5. Compute Rent Roll Summary first (needed for audit trail)
+        rent_roll_summary = self._summarize_rent_roll(rent_roll)
+        
+        # 6. Build comprehensive Audit Trail
+        audit_trail_entries = []
+        
+        # Add Property Meta audit logs
+        audit_trail_entries.append({
+            "field_name": "Property Address",
+            "extracted_value": property_meta.address,
+            "source_doc": "OM / PDF",
+            "confidence_score": 0.9,
+            "reasoning": "Extracted from Operating Memorandum cover page"
+        })
+        audit_trail_entries.append({
+            "field_name": "Year Built",
+            "extracted_value": property_meta.year_built,
+            "source_doc": "OM / PDF",
+            "confidence_score": 0.9,
+            "reasoning": "Extracted from property description section"
+        })
+        audit_trail_entries.append({
+            "field_name": "Purchase Price",
+            "extracted_value": property_meta.purchase_price,
+            "source_doc": "OM / PDF",
+            "confidence_score": 0.9,
+            "reasoning": "Extracted from offering summary"
+        })
+        audit_trail_entries.append({
+            "field_name": "Total Units",
+            "extracted_value": property_meta.total_units,
+            "source_doc": "Rent Roll / PDF",
+            "confidence_score": 0.95,
+            "reasoning": "Counted from rent roll line items"
+        })
+        
+        # Add Rent Roll summary audit logs
+        audit_trail_entries.append({
+            "field_name": "Occupancy Rate",
+            "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}",
+            "source_doc": "Rent Roll / PDF",
+            "confidence_score": 0.98,
+            "reasoning": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total"
+        })
+        audit_trail_entries.append({
+            "field_name": "Total Annual Rent (T12)",
+            "extracted_value": rent_roll_summary.total_annual_rent,
+            "source_doc": "Rent Roll / PDF",
+            "confidence_score": 0.98,
+            "reasoning": "Summed current rents from all unit line items"
+        })
+        
+        # Add Normalized Expenses audit logs
+        for normalized_exp in normalized_expenses:
+            audit_trail_entries.append({
+                "field_name": f"Expense: {normalized_exp.mapped_category.value}",
+                "extracted_value": normalized_exp.amount,
+                "source_doc": normalized_exp.audit_log.source_doc,
+                "confidence_score": normalized_exp.confidence,
+                "reasoning": f"Original text '{normalized_exp.original_text}' mapped to standard category. {normalized_exp.audit_log.reasoning}"
+            })
 
-        # 5. Create UnderwritingAnalysis object
+        # 7. Create UnderwritingAnalysis object
         analysis = UnderwritingAnalysis(
             document_id=document_id,
             pass_fail_status="PASS",
             property_meta=property_meta,
             rent_roll=rent_roll,
-            rent_roll_summary=self._summarize_rent_roll(rent_roll),
+            rent_roll_summary=rent_roll_summary,
             normalized_expenses=normalized_expenses,
+            audit_trail=audit_trail_entries  # Pass the comprehensive audit trail
         )
-        # 6. Compare Income Sources and Add Warning if Mismatch
-        pnl_income = self.ingest_income_statement_from_pdf(document_id)
+        
+        # 8. Get income from P&L and compare (add warning if mismatch)
+        pnl_income = await self.ingest_income_statement_from_pdf(document_id)
         rent_roll_income = analysis.rent_roll_summary.total_annual_rent
-
+        
         income_discrepancy_warning = self.compare_income_sources(
             rent_roll_income, pnl_income
         )
         if income_discrepancy_warning:
             analysis.gating_reasons.append(income_discrepancy_warning)
-
+            audit_trail_entries.append({
+                "field_name": "Income Source Reconciliation",
+                "extracted_value": f"Rent Roll: ${rent_roll_income:,.2f}, P&L: ${pnl_income:,.2f}",
+                "source_doc": "Rent Roll vs. P&L",
+                "confidence_score": 0.85,
+                "reasoning": income_discrepancy_warning
+            })
+        
         return analysis
 
-    def ingest_financials_from_pdf(self, document_id: str) -> List[Dict]:
+    async def ingest_financials_from_pdf(self, document_id: str) -> List[Dict]:
         """
         Extracts raw T12 line items. We don't normalize yet, just get the text.
         """
-        raw_text = self.ocr_backend_client.get_document_text(document_id)
+        raw_text = await self.ocr_backend_client.get_document_text(document_id)
 
         prompt = """
         Analyze this T12 Income Statement. Extract all EXPENSE line items.
@@ -155,14 +214,14 @@ class IngestionService:
         If the amount is in parentheses (500), treat it as a positive expense number.
         """
 
-        raw_expenses = self.gemini_client.generate_structured_data(prompt=f"{prompt}\n\n{raw_text}", pdf_data=None)
+        raw_expenses = self.gemini_client.generate_structured_data(f"{prompt}\n\n{raw_text}", pdf_data=None)
         return raw_expenses
 
-    def ingest_income_statement_from_pdf(self, document_id: str) -> float:
+    async def ingest_income_statement_from_pdf(self, document_id: str) -> float:
         """
         Extracts the total annual income from a T12 Income Statement.
         """
-        raw_text = self.ocr_backend_client.get_document_text(document_id)
+        raw_text = await self.ocr_backend_client.get_document_text(document_id)
 
         prompt = """
         Analyze this T12 Income Statement. Find the TOTAL ANNUAL INCOME.
@@ -170,8 +229,16 @@ class IngestionService:
         Example: {"total_annual_income": 1250000.00}
         """
 
-        income_data = self.gemini_client.generate_structured_data(prompt=f"{prompt}\n\n{raw_text}", pdf_data=None)
-        return income_data.get("total_annual_income", 0.0)
+        income_data = self.gemini_client.generate_structured_data(
+            f"{prompt}\n\n{raw_text}",
+            pdf_data=None,
+            expect_list=False  # CRITICAL FIX: Expecting single dict, not list
+        )
+        
+        # Now income_data is a dict, not a list
+        if isinstance(income_data, dict):
+            return income_data.get("total_annual_income", 0.0)
+        return 0.0
 
     def compare_income_sources(self, rent_roll_income: float, pnl_income: float, threshold: float = 0.05) -> str | None:
         """

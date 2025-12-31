@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict
-from app.models.schemas import FinancialLineItem, ExpenseCategory
+from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,9 +9,15 @@ class NormalizationService:
     def __init__(self, llm_service: "GeminiService"):
         self.llm_service = llm_service
 
-    def normalize_expenses(self, raw_expenses: List[Dict]) -> List[FinancialLineItem]:
+    def normalize_expenses(self, raw_expenses: List[Dict]) -> List[StandardizedExpense]:
         """
-        Normalizes a list of raw expense data into a standardized format using an LLM.
+        Normalizes a list of raw expense data into StandardizedExpense objects.
+        Each expense includes:
+        - original_text: What the PDF said (e.g., "Repairs & Maintenance - Plumbing")
+        - mapped_category: The standardized category (e.g., ExpenseCategory.REPAIRS_MAINTENANCE)
+        - amount: The dollar amount
+        - confidence: How confident the mapping is (0.0 to 1.0)
+        - audit_log: Source and reasoning for the mapping
         """
         if not raw_expenses:
             return []
@@ -29,16 +35,26 @@ class NormalizationService:
                 except ValueError:
                     logger.warning(
                         f"LLM mapped to an invalid category: '{item['mapped_category']}'. "
-                        f"Defaulting to '{ExpenseCategory.OTHER.value}'."
+                        f"Defaulting to '{ExpenseCategory.UNCATEGORIZED.value}'."
                     )
-                    category_enum = ExpenseCategory.OTHER
+                    category_enum = ExpenseCategory.UNCATEGORIZED
+
+                # Build audit log for this normalized expense
+                audit_log = AuditLog(
+                    field_name=f"Expense: {category_enum.value}",
+                    extracted_value=item["amount"],
+                    source_doc="T12 Income Statement",
+                    confidence_score=item.get("confidence", 0.85),
+                    reasoning=f"LLM mapped '{item['original_text']}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence"
+                )
 
                 normalized_expenses.append(
-                    FinancialLineItem(
-                        category=category_enum.value,
-                        value=item["amount"],
-                        period="Annual",
-                        type="Historical"
+                    StandardizedExpense(
+                        original_text=item.get("original_text", ""),
+                        mapped_category=category_enum,
+                        amount=item.get("amount", 0.0),
+                        confidence=item.get("confidence", 0.85),
+                        audit_log=audit_log
                     )
                 )
             return normalized_expenses
@@ -52,11 +68,14 @@ class NormalizationService:
             # Fallback for any other unexpected errors
             return self._fallback_simple_mapping(raw_expenses)
 
-    def _fallback_simple_mapping(self, raw_expenses: List[Dict]) -> List[FinancialLineItem]:
-        """A simple keyword-based mapping as a fallback."""
+    def _fallback_simple_mapping(self, raw_expenses: List[Dict]) -> List[StandardizedExpense]:
+        """A simple keyword-based mapping as a fallback when LLM fails."""
         normalized_expenses = []
         for expense in raw_expenses:
             description = expense.get("description", "").lower()
+            amount = expense.get("amount", 0.0)
+            
+            # Simple keyword matching
             mapped_category = ExpenseCategory.UNCATEGORIZED
             if "tax" in description:
                 mapped_category = ExpenseCategory.REAL_ESTATE_TAXES
@@ -68,13 +87,29 @@ class NormalizationService:
                 mapped_category = ExpenseCategory.MANAGEMENT_FEES
             elif "util" in description or "gas" in description or "electric" in description:
                 mapped_category = ExpenseCategory.UTILITIES
+            elif "payroll" in description or "staff" in description:
+                mapped_category = ExpenseCategory.PAYROLL
+            elif "contract" in description or "service" in description:
+                mapped_category = ExpenseCategory.CONTRACT_SERVICES
+            elif "advertis" in description or "market" in description:
+                mapped_category = ExpenseCategory.ADVERTISING_MARKETING
+            
+            # Build audit log
+            audit_log = AuditLog(
+                field_name=f"Expense: {mapped_category.value}",
+                extracted_value=amount,
+                source_doc="T12 Income Statement",
+                confidence_score=0.65,  # Lower confidence for fallback
+                reasoning=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching"
+            )
             
             normalized_expenses.append(
-                FinancialLineItem(
-                    category=mapped_category.value,
-                    value=expense.get("amount", 0.0),
-                    period="Annual",
-                    type="Historical"
+                StandardizedExpense(
+                    original_text=description,
+                    mapped_category=mapped_category,
+                    amount=amount,
+                    confidence=0.65,  # Lower confidence for fallback
+                    audit_log=audit_log
                 )
             )
         return normalized_expenses

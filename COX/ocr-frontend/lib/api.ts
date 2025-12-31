@@ -1,4 +1,4 @@
-import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress } from "./types";
+import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText } from "./types";
 
 const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8001";
 const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8000";
@@ -7,9 +7,32 @@ class ApiClient {
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
-      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+      const detail = error.detail || `HTTP ${response.status}: ${response.statusText}`;
+      throw new Error(detail);
     }
     return response.json();
+  }
+
+  // --- Health Check Methods ---
+
+  async checkOCRBackend(): Promise<boolean> {
+    try {
+      const response = await fetch(`${OCR_API_URL}/health`, { method: 'GET' });
+      return response.ok;
+    } catch (err) {
+      console.error("OCR backend health check failed:", err);
+      return false;
+    }
+  }
+
+  async checkFinancialBackend(): Promise<boolean> {
+    try {
+      const response = await fetch(`${FIN_API_URL}/health`, { method: 'GET' });
+      return response.ok;
+    } catch (err) {
+      console.error("Financial backend health check failed:", err);
+      return false;
+    }
   }
 
   // --- OCR Backend Methods ---
@@ -79,7 +102,18 @@ class ApiClient {
 
   async listDocuments(): Promise<DocumentResponse[]> {
     const response = await fetch(`${OCR_API_URL}/api/documents/`);
-    return this.handleResponse<DocumentResponse[]>(response);
+    const data = await this.handleResponse<{ documents: DocumentResponse[] }>(response);
+    return data.documents;
+  }
+
+  async getDocument(documentId: string): Promise<DocumentResponse> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}`);
+    return this.handleResponse<DocumentResponse>(response);
+  }
+
+  async getDocumentText(documentId: string): Promise<ExtractedText> {
+    const response = await fetch(`${OCR_API_URL}/api/documents/${documentId}/text`);
+    return this.handleResponse<ExtractedText>(response);
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -102,6 +136,17 @@ class ApiClient {
       body: JSON.stringify(params),
     });
     return this.handleResponse<UnderwritingAnalysis>(response);
+  }
+  async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
+    // Create default deal parameters
+    const params: DealParameters = {
+      growth_rate: 0.02,
+      exit_cap_rate: 0.05,
+      vacancy_rate: 0.05,
+    };
+
+    // Call the original startAnalysis function with the default parameters
+    return this.startAnalysis(documentId, params);
   }
 
   async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo'): Promise<void> {

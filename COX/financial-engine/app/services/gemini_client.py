@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import base64
-from typing import List, Dict, Optional, Type
+from typing import List, Dict, Optional, Type, Any
 import google.generativeai as genai
 from pydantic import BaseModel, ValidationError
 
@@ -14,7 +14,10 @@ class GeminiClient:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro')
+        self.model = genai.GenerativeModel(
+            'gemini-2.5-pro',
+            generation_config={"temperature": 0.0}
+        )
 
     def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
         """
@@ -58,45 +61,79 @@ class GeminiClient:
         self,
         prompt: str,
         pdf_data: Optional[bytes] = None,
-        pydantic_schema: Optional[Type[BaseModel]] = None
-    ) -> List[Dict]:
+        pydantic_schema: Optional[Type[BaseModel]] = None,
+        expect_list: bool = True
+    ) -> Any:
         """
-        Generates structured data, validates it, and performs self-correction.
-        Always returns a list of dicts for consistency.
+        Generates structured data. Returns List[Dict] if expect_list=True, else Dict.
+        
+        Args:
+            prompt: The prompt to send to Gemini
+            pdf_data: Optional PDF bytes for vision-based processing
+            pydantic_schema: Optional Pydantic model for validation
+            expect_list: If True, ensures output is a list. If False, expects a single dict.
+        
+        Returns:
+            List[Dict] if expect_list=True, Dict otherwise
         """
         response_text = self.generate_content(prompt, pdf_data)
         
+        if not response_text.strip().startswith(('{', '[')):
+            logger.error(f"Gemini response is not JSON, returning as is: {response_text}")
+            return {"error": f"Invalid response from LLM: {response_text}"}
+
         try:
-            # First attempt to parse the cleaned JSON
             cleaned_json = self._clean_json_string(response_text)
             data = json.loads(cleaned_json)
-        except json.JSONDecodeError:
-            # If parsing fails, ask the LLM to correct the JSON
-            correction_prompt = f"""
-            The following text is not valid JSON. Please correct it and return only the valid JSON.
-            Do not include any other text or explanations in your response.
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON decode error for text: '{response_text}'. Attempting correction. Error: {e}")
+            # Ask Gemini to fix the JSON
+            correction_prompt = f"""The following text is not valid JSON. Please correct it and return ONLY the valid JSON.
+Do not include any other text or explanations.
 
-            {response_text}
-            """
+{response_text}"""
             corrected_response = self.generate_content(correction_prompt)
             cleaned_json = self._clean_json_string(corrected_response)
-            data = json.loads(cleaned_json)
-
-        # Ensure data is always a list
-        if not isinstance(data, list):
-            data = [data]
-
-        # Validate with Pydantic schema if provided
-        if pydantic_schema:
             try:
-                # Validate each item in the list
-                validated_data = [pydantic_schema(**item) if isinstance(item, dict) else pydantic_schema(**item.model_dump()) for item in data]
-                return [item.model_dump() for item in validated_data]
-            except (ValidationError, TypeError) as e:
-                logger.error(f"Pydantic validation failed: {e}")
-                raise ValueError(f"LLM output failed Pydantic validation: {e}")
+                data = json.loads(cleaned_json)
+            except json.JSONDecodeError as e2:
+                logger.error(f"Failed to parse even after correction: {e2}")
+                raise ValueError(f"Gemini returned invalid JSON even after correction: {cleaned_json}")
 
-        return data
+        # Handle List vs Single Object based on expect_list flag
+        if expect_list:
+            # Ensure we return a list
+            if not isinstance(data, list):
+                data = [data]
+            
+            # Validate with Pydantic if schema provided
+            if pydantic_schema:
+                validated_list = []
+                for item in data:
+                    if isinstance(item, dict):
+                        try:
+                            validated_obj = pydantic_schema(**item)
+                            validated_list.append(validated_obj.model_dump())
+                        except Exception as e:
+                            logger.warning(f"Validation error for item: {e}, including raw item")
+                            validated_list.append(item) # Keep raw data if validation fails
+                return validated_list
+            return data # Return raw data if no schema is provided
+        else:
+            # Expecting single object - return first item if list, else return dict
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            
+            # Validate with Pydantic if schema provided
+            if pydantic_schema:
+                try:
+                    validated_obj = pydantic_schema(**data)
+                    return validated_obj.model_dump()
+                except ValidationError as e:
+                    logger.error(f"Pydantic validation failed for single object: {e}. Raw data: {data}")
+                    raise ValueError(f"LLM output failed Pydantic validation for single object: {e}")
+            
+            return data
 
     def _clean_json_string(self, json_string: str) -> str:
         """

@@ -29,19 +29,26 @@ export default function DocumentList({
       const docs = await apiClient.listDocuments();
       console.log("Fetched documents:", docs);
 
-      // Log duplicate document IDs
-      const docIds = docs.map(doc => doc.document_id);
-      const uniqueDocIds = new Set(docIds);
-      if (docIds.length !== uniqueDocIds.size) {
-        console.warn("Duplicate document_id's found in fetched data.");
+      // Ensure docs is an array before processing
+      if (Array.isArray(docs)) {
+        // Log duplicate document IDs
+        const docIds = docs.map(doc => doc.document_id);
+        const uniqueDocIds = new Set(docIds);
+        if (docIds.length !== uniqueDocIds.size) {
+          console.warn("Duplicate document_id's found in fetched data.");
+        }
+        
+        setDocuments(
+          docs.sort(
+            (a, b) =>
+              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )
+        );
+      } else {
+        // Handle cases where docs is not an array
+        console.warn("Fetched documents is not an array:", docs);
+        setDocuments([]); // Reset to an empty array to prevent further errors
       }
-      
-      setDocuments(
-        docs.sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )
-      );
     } catch (err) {
       console.error("Failed to fetch documents:", err);
       setError(err instanceof Error ? err.message : "Failed to load documents");
