@@ -550,13 +550,16 @@ class DocumentService:
             
         Returns:
             True if deleted successfully
+            
+        Raises:
+            ValueError: If document not found
         """
+        doc = await self._get_document_record(document_id)
+        
+        if not doc:
+            raise ValueError(f"Document not found: {document_id}")
+        
         try:
-            doc = await self._get_document_record(document_id)
-            
-            if not doc:
-                raise ValueError(f"Document not found: {document_id}")
-            
             # Delete file from storage
             await self.storage_service.delete_file(doc["storage_path"])
             
@@ -571,8 +574,8 @@ class DocumentService:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to delete document: {str(e)}")
-            return False
+            logger.error(f"Failed to delete document file/record: {str(e)}")
+            raise
     
     async def _get_document_record(self, document_id: str) -> Optional[Dict[str, Any]]:
         """Get document record from database or Redis storage."""

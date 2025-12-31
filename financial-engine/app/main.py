@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import analysis, documents
+from app.api.routes import analysis, ingest, exports
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,7 +25,8 @@ app.add_middleware(
 
 
 app.include_router(analysis.router, prefix="/api/v1", tags=["Analysis"])
-app.include_router(documents.router, prefix="/api", tags=["Documents"])
+app.include_router(ingest.router, prefix="/api", tags=["Ingestion"])
+app.include_router(exports.router, prefix="/api/v1", tags=["Exports"])
 
 @app.get("/health", tags=["Health"])
 async def health_check():

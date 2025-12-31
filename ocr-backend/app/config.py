@@ -36,11 +36,11 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     
     # Redis Configuration
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str
     
     # Celery Configuration
-    celery_broker_url: str = "redis://localhost:6379/0"
-    celery_result_backend: str = "redis://localhost:6379/1"
+    celery_broker_url: str
+    celery_result_backend: str
     celery_worker_concurrency: int = 4
     celery_task_time_limit: int = 3600  # 1 hour
     celery_task_soft_time_limit: int = 3300  # 55 minutes

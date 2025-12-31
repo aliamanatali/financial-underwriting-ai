@@ -113,6 +113,19 @@ class DocumentListResponse(BaseModel):
     total: int = Field(..., description="Total number of documents")
 
 
+class Document(BaseModel):
+    """Document entity stored in database."""
+    document_id: str = Field(..., description="Unique document identifier")
+    filename: str = Field(..., description="Original filename")
+    status: ProcessingStatus = Field(..., description="Current processing status")
+    extracted_text: Optional[str] = Field(default=None, description="Extracted text content")
+    metadata: Optional[DocumentMetadata] = Field(default=None, description="Document metadata")
+    task_id: Optional[str] = Field(default=None, description="Celery task ID")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
+    error_message: Optional[str] = Field(default=None, description="Error message if processing failed")
+
+
 class HealthCheckResponse(BaseModel):
     """Health check response."""
     status: str = Field(default="healthy", description="Service health status")

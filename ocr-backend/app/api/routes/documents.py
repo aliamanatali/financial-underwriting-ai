@@ -164,6 +164,30 @@ async def get_document_text(document_id: str):
             detail=f"Failed to retrieve document text: {str(e)}"
         )
 
+@router.get("/{document_id}/content")
+async def get_document_content(document_id: str):
+    """
+    Get the raw content of a document.
+    """
+    try:
+        doc = await document_service._get_document_record(document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        file_data = await document_service.storage_service.get_file(doc["storage_path"])
+
+        return StreamingResponse(
+            iter([file_data]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={doc['filename']}"}
+        )
+    except Exception as e:
+        logger.error(f"Failed to get document content: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve document content: {str(e)}"
+        )
+
 
 @router.delete("/{document_id}")
 async def delete_document(document_id: str):
