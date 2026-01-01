@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import {
-  DocumentResponse,
+  DocumentDetailsResponse,
   ExtractedText,
   ProcessingProgress,
 } from "@/lib/types";
@@ -23,7 +23,7 @@ type ViewMode = "raw" | "rendered";
 
 export default function DocumentViewer({ documentId }: DocumentViewerProps) {
   const router = useRouter();
-  const [document, setDocument] = useState<DocumentResponse | null>(null);
+  const [document, setDocument] = useState<DocumentDetailsResponse | null>(null);
   const [extractedText, setExtractedText] = useState<ExtractedText | null>(
     null
   );
