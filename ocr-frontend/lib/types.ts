@@ -153,8 +153,8 @@ export interface DealParameters {
 }
 
 export interface AuditEntry {
-  field: string;
-  value: any;
+  field_name: string;
+  extracted_value: any;
   source: string;
   method: string;
   confidence_score?: number;

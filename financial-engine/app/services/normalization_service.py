@@ -183,8 +183,8 @@ class NormalizationService:
 
 #                 # FIX: Keys match Schema EXACTLY now.
 #                 audit_log = AuditLog(
-#                     field=f"Expense: {category_enum.value}",
-#                     value=item.get("amount", 0.0),
+#                     field_name=f"Expense: {category_enum.value}",
+#                     extracted_value=item.get("amount", 0.0),
 #                     source="T12 Income Statement",
 #                     confidence_score=item.get("confidence", 0.85),
 #                     method=f"LLM mapped '{item.get('original_text', '')}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence"
@@ -222,8 +222,8 @@ class NormalizationService:
             
 #             # FIX: Keys match Schema
 #             audit_log = AuditLog(
-#                 field=f"Expense: {mapped_category.value}",
-#                 value=amount,
+#                 field_name=f"Expense: {mapped_category.value}",
+#                 extracted_value=amount,
 #                 source="T12 Income Statement",
 #                 confidence_score=0.65,  # Lower confidence for fallback
 #                 method=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching"

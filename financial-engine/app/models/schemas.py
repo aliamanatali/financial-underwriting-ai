@@ -137,8 +137,8 @@ class UnderwritingAnalysis(BaseModel):
 #     Ground of Truth Log Entry.
 #     Tracks exactly how a value was derived.
 #     """
-#     field: str
-#     value: Any
+#     field_name: str
+#     extracted_value: Any
 #     source: str         # e.g., "OM", "T12", "Calculation"
 #     method: str         # e.g., "Extracted via OCR", "Formula: EGI * 38%"
 #     confidence_score: float = 1.0

@@ -375,35 +375,35 @@ class IngestionService:
 #         audit_trail = []
         
 #         audit_trail.append({
-#             "field": "Property Address", "value": property_meta.address,
+#             "field_name": "Property Address", "extracted_value": property_meta.address,
 #             "source": "OM", "method": "AI Extraction", "confidence_score": 0.9, "timestamp": datetime.now().isoformat()
 #         })
 #         audit_trail.append({
-#             "field": "Year Built", "value": property_meta.year_built,
+#             "field_name": "Year Built", "extracted_value": property_meta.year_built,
 #             "source": "OM", "method": "AI Extraction", "confidence_score": 0.9, "timestamp": datetime.now().isoformat()
 #         })
 #         audit_trail.append({
-#             "field": "Purchase Price", "value": property_meta.purchase_price,
+#             "field_name": "Purchase Price", "extracted_value": property_meta.purchase_price,
 #             "source": "OM", "method": "AI Extraction", "confidence_score": 0.9, "timestamp": datetime.now().isoformat()
 #         })
 #         audit_trail.append({
-#             "field": "Total Units", "value": property_meta.total_units,
+#             "field_name": "Total Units", "extracted_value": property_meta.total_units,
 #             "source": "Rent Roll", "method": "Counted from rent roll entries", "confidence_score": 0.95, "timestamp": datetime.now().isoformat()
 #         })
 #         audit_trail.append({
-#             "field": "Occupancy Rate", "value": f"{rent_roll_summary.occupancy_rate:.2%}",
+#             "field_name": "Occupancy Rate", "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}",
 #             "source": "Rent Roll", "method": f"Calculated from {rent_roll_summary.occupied_units}/{rent_roll_summary.total_units} units", "confidence_score": 0.98, "timestamp": datetime.now().isoformat()
 #         })
 #         audit_trail.append({
-#             "field": "Total Annual Rent (T12)", "value": rent_roll_summary.total_annual_rent,
+#             "field_name": "Total Annual Rent (T12)", "extracted_value": rent_roll_summary.total_annual_rent,
 #             "source": "Rent Roll", "method": "Summed current rents", "confidence_score": 0.98, "timestamp": datetime.now().isoformat()
 #         })
         
 #         for exp in historical_expenses:
 #             # Transfer log from Expense object to Main Audit Trail
 #             audit_trail.append({
-#                 "field": exp.audit_log.field,
-#                 "value": exp.audit_log.value,
+#                 "field_name": exp.audit_log.field_name,
+#                 "extracted_value": exp.audit_log.extracted_value,
 #                 "source": exp.audit_log.source,
 #                 "method": exp.audit_log.method,
 #                 "confidence_score": exp.audit_log.confidence_score,
@@ -429,8 +429,8 @@ class IngestionService:
 #         if income_discrepancy_warning:
 #             analysis.gating_reasons.append(income_discrepancy_warning)
 #             analysis.audit_trail.append({
-#                 "field": "Income Reconciliation",
-#                 "value": f"Rent Roll: ${rent_roll_income:,.2f}, P&L: ${pnl_income:,.2f}",
+#                 "field_name": "Income Reconciliation",
+#                 "extracted_value": f"Rent Roll: ${rent_roll_income:,.2f}, P&L: ${pnl_income:,.2f}",
 #                 "source": "Rent Roll vs. P&L",
 #                 "method": income_discrepancy_warning,
 #                 "confidence_score": 0.85,

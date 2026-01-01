@@ -73,7 +73,7 @@ export default function AuditTrailWidget({
                   <div className="flex items-center gap-3">
                     <span className="text-xl">{getSourceIcon(entry.source)}</span>
                     <div>
-                      <h4 className="font-semibold text-gray-900">{entry.field}</h4>
+                      <h4 className="font-semibold text-gray-900">{entry.field_name}</h4>
                       <p className="text-sm text-gray-500 mt-1">
                         Source: <strong>{entry.source}</strong>
                       </p>
@@ -92,7 +92,7 @@ export default function AuditTrailWidget({
                 {/* Right side: Value + Confidence */}
                 <div className="text-right flex-shrink-0">
                   <p className="text-sm font-mono text-gray-900 truncate max-w-xs">
-                    {formatValue(entry.value).split("\n")[0]}
+                    {formatValue(entry.extracted_value).split("\n")}
                   </p>
                   {entry.confidence_score !== undefined && (
                     <div
@@ -122,7 +122,7 @@ export default function AuditTrailWidget({
                       Value
                     </p>
                     <p className="mt-1 text-gray-900 font-mono whitespace-pre-wrap break-words">
-                      {formatValue(entry.value)}
+                      {formatValue(entry.extracted_value)}
                     </p>
                   </div>
 
