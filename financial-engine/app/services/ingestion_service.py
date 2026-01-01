@@ -71,15 +71,16 @@ class IngestionService:
 
         # 1. Extract PropertyMeta (SAFE METHOD)
         property_meta_prompt = """
-        Extract the property address, year built, purchase price, and total units from the document.
-        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units".
+        Extract the property address, year built, purchase price, total units, AND current_loan_balance from the document.
+        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance".
 
         Example:
         {
             "address": "123 Main St, Anytown, USA",
             "year_built": 2022,
             "purchase_price": 5000000.0,
-            "total_units": 50
+            "total_units": 50,
+            "current_loan_balance": 7200000.0
         }
         """
         property_meta_data = self.gemini_client.generate_structured_data(
@@ -87,7 +88,18 @@ class IngestionService:
             pydantic_schema=PropertyMeta,
             expect_list=False
         )
-        property_meta = PropertyMeta(**property_meta_data) if isinstance(property_meta_data, dict) else PropertyMeta(address="Unknown", year_built=0, purchase_price=0.0, total_units=0)
+        # --- ROBUSTNESS FIX ---
+        # If the returned data is not a valid dict, it means the LLM failed.
+        # We must stop here to prevent creating a bad analysis object.
+        if not isinstance(property_meta_data, dict) or "address" not in property_meta_data:
+            # Check for an error key in the dictionary
+            if isinstance(property_meta_data, dict) and "error" in property_meta_data:
+                raise HTTPException(status_code=422, detail=f"Failed to extract Property Meta: {property_meta_data['error']}")
+            raise HTTPException(status_code=422, detail="Failed to extract valid Property Meta from document.")
+        property_meta = PropertyMeta(**property_meta_data)
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        logging.info(f"Extracted Property Meta: {property_meta}")
 
         # 2. Extract RentRoll (SAFE METHOD)
         rent_roll_prompt = f"""
@@ -95,19 +107,21 @@ class IngestionService:
         Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "tenant_name", "current_rent", "market_rent", "lease_start", "lease_end".
         """
         pdf_bytes = await self.ocr_backend_client.get_document_bytes(document_id)
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="Failed to fetch PDF content from OCR backend.")
         rent_roll_data = self.gemini_client.generate_structured_data(
             f"{rent_roll_prompt}\n\n{raw_text}",
             pdf_data=pdf_bytes,
             pydantic_schema=RentRollItem,
             expect_list=True
         )
-        rent_roll = [RentRollItem(**item) for item in rent_roll_data if isinstance(item, dict)]
+        rent_roll = self.normalization_service.normalize_rent_roll(rent_roll_data)
 
         # 3. Extract Raw Expenses
         raw_expenses = await self.ingest_financials_from_pdf(document_id)
 
         # 4. Normalize Expenses (with audit trail integration)
-        normalized_expenses = self.normalization_service.normalize_expenses(raw_expenses)
+        historical_expenses = self.normalization_service.normalize_expenses(raw_expenses)
         
         # 5. Compute Rent Roll Summary first (needed for audit trail)
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
@@ -162,13 +176,24 @@ class IngestionService:
         })
         
         # Add Normalized Expenses audit logs
-        for normalized_exp in normalized_expenses:
+        for normalized_exp in historical_expenses:
+            # FIX: Ensure we handle the object structure correctly
+            # If normalized_exp is a Pydantic model, use dot notation. If dict, use .get()
+            
+            # Assuming normalized_exp is a Pydantic model from normalization_service
+            category = getattr(normalized_exp, 'mapped_category', None)
+            amount = getattr(normalized_exp, 'amount', 0)
+            original_text = getattr(normalized_exp, 'original_text', '')
+            
+            # The previous 'audit_log' field might not exist on the Expense object itself
+            # We usually reconstruct the audit trail from the expense data
+            
             audit_trail_entries.append({
-                "field_name": f"Expense: {normalized_exp.mapped_category.value}",
-                "extracted_value": normalized_exp.amount,
-                "source_doc": normalized_exp.audit_log.source_doc,
-                "confidence_score": normalized_exp.confidence,
-                "reasoning": f"Original text '{normalized_exp.original_text}' mapped to standard category. {normalized_exp.audit_log.reasoning}"
+                "field_name": f"Expense: {category.value if category else 'Unknown'}",
+                "extracted_value": amount,
+                "source_doc": "T12 / PDF", # Defaulting since we are inside PDF ingestion
+                "confidence_score": getattr(normalized_exp, 'confidence', 0.9),
+                "reasoning": f"Mapped '{original_text}' to standard category."
             })
 
         # 7. Create UnderwritingAnalysis object
@@ -178,7 +203,7 @@ class IngestionService:
             property_meta=property_meta,
             rent_roll=rent_roll,
             rent_roll_summary=rent_roll_summary,
-            normalized_expenses=normalized_expenses,
+            historical_expenses=historical_expenses,
             audit_trail=audit_trail_entries  # Pass the comprehensive audit trail
         )
         

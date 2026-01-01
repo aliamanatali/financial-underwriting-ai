@@ -42,7 +42,7 @@ class ExcelService:
         
         # Add Expense Section (by category)
         expenses_by_category: Dict[str, float] = {}
-        for expense in analysis_data.normalized_expenses:
+        for expense in analysis_data.historical_expenses:
             # StandardizedExpense.mapped_category is an Enum, get its value
             category = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
             if category not in expenses_by_category:

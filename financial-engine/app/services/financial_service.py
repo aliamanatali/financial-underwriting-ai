@@ -79,16 +79,20 @@ class FinancialService:
         
         # 3. Calculate Historical Net Operating Income (for reference)
         total_historical_expenses = sum(
-            expense.amount for expense in analysis.normalized_expenses
+            expense.amount for expense in analysis.historical_expenses
         )
         historical_noi = (sum(item.current_rent * 12 for item in analysis.rent_roll)) - total_historical_expenses
         
         # 4. Pro Forma NOI using 38% expense ratio (Valiance Standard)
         pro_forma_expenses = egi * 0.38
         pro_forma_noi = egi - pro_forma_expenses
+        analysis.pro_forma_expenses = pro_forma_expenses
         
         # 5. Calculate Cap Rate
-        cap_rate = pro_forma_noi / analysis.property_meta.purchase_price if analysis.property_meta.purchase_price > 0 else 0
+        exit_cap_rate = analysis.deal_parameters.exit_cap_rate
+        if not exit_cap_rate:
+            exit_cap_rate = 0.06
+        cap_rate = pro_forma_noi / analysis.property_meta.purchase_price if analysis.property_meta.purchase_price and analysis.property_meta.purchase_price > 0 else 0
         
         return {
             "historical_noi": historical_noi,
@@ -131,7 +135,7 @@ class FinancialService:
         
         Formula:
         1. Historical Gross Income (HGI) = Sum of Current Rents * 12 months
-        2. Historical NOI = HGI - Total Expenses (from normalized_expenses)
+        2. Historical NOI = HGI - Total Expenses (from historical_expenses)
         3. Historical Cap Rate = NOI / Purchase Price
         """
         # 1. Calculate Historical Gross Income
@@ -141,8 +145,9 @@ class FinancialService:
         
         # 2. Calculate Historical Net Operating Income
         total_expenses = sum(
-            expense.amount for expense in analysis.normalized_expenses
-        ) if analysis.normalized_expenses else 0
+            expense.amount for expense in analysis.historical_expenses
+        ) if analysis.historical_expenses else 0
+        analysis.historical_total_expenses = total_expenses
         historical_noi = hgi - total_expenses
         
         # 3. Calculate Historical Cap Rate

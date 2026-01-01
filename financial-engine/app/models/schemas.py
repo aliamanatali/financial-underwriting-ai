@@ -34,15 +34,16 @@ class PropertyMeta(BaseModel):
     purchase_price: Optional[float] = 0.0
     total_units: Optional[int] = 0
     is_renovated: bool = False
+    current_loan_balance: Optional[float] = 0.0
 
 class RentRollItem(BaseModel):
-    unit_number: str = Field(alias="Unit #")
-    unit_type: str = Field(alias="Unit Type")
-    tenant_name: str = Field(alias="Tenant Name")
-    current_rent: float = Field(alias="Current Rent")
-    market_rent: float = Field(alias="Market Rent")
-    lease_start: str = Field(alias="Lease Start")
-    lease_end: str = Field(alias="Lease End")
+    unit_number: str
+    unit_type: str
+    tenant_name: str
+    current_rent: float
+    market_rent: Optional[float] = None
+    lease_start: Optional[str] = None
+    lease_end: str
 
 class RentRollSummary(BaseModel):
     total_units: int
@@ -87,11 +88,17 @@ class UnderwritingAnalysis(BaseModel):
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
     rent_roll_summary: RentRollSummary
-    normalized_expenses: List[StandardizedExpense]
+    historical_expenses: List[StandardizedExpense]
 
     # --- ADD THESE ---
     deal_parameters: Optional[DealParameters] = None
     audit_trail: List[Dict[str, Any]] = [] # For the general audit logs
 
     pro_forma_noi: Optional[float] = 0.0
+    pro_forma_expenses: Optional[float] = 0.0
     cap_rate: Optional[float] = 0.0
+    
+    # Historicals
+    historical_noi: Optional[float] = 0.0
+    historical_total_expenses: float = 0.0
+    historical_cap_rate: Optional[float] = 0.0

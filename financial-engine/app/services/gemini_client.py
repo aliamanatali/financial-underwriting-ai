@@ -78,9 +78,8 @@ class GeminiClient:
         """
         response_text = self.generate_content(prompt, pdf_data)
         
-        if not response_text.strip().startswith(('{', '[')):
-            logger.error(f"Gemini response is not JSON, returning as is: {response_text}")
-            return {"error": f"Invalid response from LLM: {response_text}"}
+        # --- FIX: Removed the strict startswith check here ---
+        # We trust _clean_json_string to find the JSON logic inside Markdown
 
         try:
             cleaned_json = self._clean_json_string(response_text)
@@ -139,8 +138,9 @@ Do not include any other text or explanations.
         """
         Cleans a JSON string that may be wrapped in markdown.
         """
-        if json_string.startswith("```json"):
-            json_string = json_string[7:]
-        if json_string.endswith("```"):
-            json_string = json_string[:-3]
+        # Use regex to find JSON content between ```json and ```
+        import re
+        match = re.search(r"```json\s*([\s\S]*?)\s*```", json_string, re.DOTALL)
+        if match:
+            return match.group(1).strip()
         return json_string.strip()

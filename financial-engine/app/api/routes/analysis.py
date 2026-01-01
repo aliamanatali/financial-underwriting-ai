@@ -58,10 +58,13 @@ async def perform_analysis(
         # Calculate historical (from T12)
         historical_data = financial_service.calculate_historical(analysis)
         logger.info(f"Historical NOI: ${historical_data['historical_noi']:,.2f}")
+        analysis.historical_noi = historical_data["historical_noi"]
+        analysis.historical_cap_rate = historical_data["historical_cap_rate"]
         
         # Calculate pro forma (with market rents & standard assumptions)
         pro_forma_data = financial_service.calculate_pro_forma(analysis)
         analysis.pro_forma_noi = pro_forma_data["pro_forma_noi"]
+        analysis.pro_forma_expenses = pro_forma_data["pro_forma_expenses"]
         analysis.cap_rate = pro_forma_data["cap_rate"]
         logger.info(f"Pro Forma NOI: ${analysis.pro_forma_noi:,.2f}, Cap Rate: {analysis.cap_rate:.2%}")
     except Exception as e:

@@ -1,6 +1,6 @@
 import json
-from typing import List, Dict
-from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog
+from typing import List, Dict, Any
+from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem
 import logging
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class NormalizationService:
                 mapped_category = ExpenseCategory.REPAIRS_MAINTENANCE
             elif "management" in description:
                 mapped_category = ExpenseCategory.MANAGEMENT_FEES
-            elif "util" in description or "gas" in description or "electric" in description:
+            elif "util" in description or "gas" in description or "electric" in description or "waste" in description:
                 mapped_category = ExpenseCategory.UTILITIES
             elif "payroll" in description or "staff" in description:
                 mapped_category = ExpenseCategory.PAYROLL
@@ -113,3 +113,37 @@ class NormalizationService:
                 )
             )
         return normalized_expenses
+
+    def normalize_rent_roll(self, raw_rent_roll: List[Dict[str, Any]]) -> List[RentRollItem]:
+        """
+        Normalizes raw rent roll data into a list of RentRollItem objects.
+        """
+        normalized_rent_roll = []
+        for item in raw_rent_roll:
+            # Pydantic will validate the types. We just need to ensure that the keys exist.
+            # If market_rent is missing, default to current_rent or 0.0
+            if item.get("market_rent") is None:
+                item["market_rent"] = item.get("current_rent", 0.0)
+
+            # If lease_start is missing, default to an empty string
+            if item.get("lease_start") is None:
+                item["lease_start"] = ""
+
+            # Ensure all required fields are present with some default if possible
+            rent_roll_item_data = {
+                "unit_number": item.get("unit_number", "N/A"),
+                "unit_type": item.get("unit_type", "Unknown"),
+                "tenant_name": item.get("tenant_name", "Unknown"),
+                "current_rent": item.get("current_rent", 0.0),
+                "market_rent": item["market_rent"], # Already defaulted above
+                "lease_start": item["lease_start"], # Already defaulted above
+                "lease_end": item.get("lease_end", ""),
+            }
+            
+            try:
+                normalized_item = RentRollItem(**rent_roll_item_data)
+                normalized_rent_roll.append(normalized_item)
+            except Exception as e:
+                logger.error(f"Error normalizing rent roll item: {rent_roll_item_data}. Error: {e}")
+
+        return normalized_rent_roll

@@ -1,3 +1,4 @@
+import app.config
 from fastapi import Depends
 from app.services.gemini_client import GeminiClient
 from app.services.normalization_service import NormalizationService

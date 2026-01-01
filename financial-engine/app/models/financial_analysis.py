@@ -69,7 +69,7 @@ class UnderwritingAnalysis(BaseModel):
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
     rent_roll_summary: RentRollSummary
-    normalized_expenses: List[StandardizedExpense]
+    historical_expenses: List[StandardizedExpense]
     
     # Logic Data (Calculated Day 2)
     pro_forma_noi: Optional[float] = 0.0

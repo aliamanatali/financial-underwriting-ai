@@ -1,9 +1,7 @@
 from fastapi import FastAPI
+import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports
-from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-
-load_dotenv()
 
 app = FastAPI(
     title="Valiance Financial Engine",
