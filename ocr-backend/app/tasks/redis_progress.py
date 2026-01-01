@@ -25,15 +25,15 @@ class RedisProgressTracker:
             logger.error(f"Failed to connect to Redis: {str(e)}")
             self.redis_client = None
     
-    def _get_channel(self, document_id: str) -> str:
+    def get_channel(self, document_id: str) -> str:
         """Get Redis pub/sub channel for document progress."""
         return f"document:{document_id}:progress"
     
-    def _get_key(self, document_id: str) -> str:
+    def get_key(self, document_id: str) -> str:
         """Get Redis key for document progress."""
         return f"document:progress:{document_id}"
     
-    def _get_start_time_key(self, document_id: str) -> str:
+    def get_start_time_key(self, document_id: str) -> str:
         """Get Redis key for document start time."""
         return f"document:start_time:{document_id}"
     

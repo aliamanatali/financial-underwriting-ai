@@ -176,8 +176,9 @@ async def get_document_content(document_id: str):
 
         file_data = await document_service.storage_service.get_file(doc["storage_path"])
 
+        from io import BytesIO
         return StreamingResponse(
-            iter([file_data]),
+            BytesIO(file_data),
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={doc['filename']}"}
         )
@@ -364,7 +365,7 @@ async def stream_document_progress(document_id: str):
             )
             
             # Subscribe to progress channel
-            channel = progress_tracker._get_channel(document_id)
+            channel = progress_tracker.get_channel(document_id)
             pubsub = redis_client.pubsub()
             await pubsub.subscribe(channel)
             

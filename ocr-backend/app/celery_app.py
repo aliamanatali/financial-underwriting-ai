@@ -1,5 +1,6 @@
 """Celery application configuration for async task processing."""
 
+
 from celery import Celery
 from kombu import Queue, Exchange
 
@@ -43,6 +44,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=settings.celery_worker_prefetch_multiplier,
     worker_max_tasks_per_child=settings.celery_worker_max_tasks_per_child,
     worker_disable_rate_limits=False,
+    worker_pool="solo",
     
     # Queue settings
     task_default_queue="default",

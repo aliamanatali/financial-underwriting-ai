@@ -114,6 +114,7 @@ export interface PropertyMeta {
   year_built: number;
   purchase_price: number;
   total_units: number;
+  current_loan_balance?: number;
 }
 
 export interface RentRollItem {
@@ -146,6 +147,19 @@ export interface DealParameters {
   exit_cap_rate: number;
   vacancy_rate: number;
   loan_amount?: number;
+  min_unit_count?: number;
+  max_unit_count?: number;
+  max_build_year?: number;
+}
+
+export interface AuditEntry {
+  field: string;
+  value: any;
+  source: string;
+  method: string;
+  confidence_score?: number;
+  timestamp?: string;
+  reasons?: string[];
 }
 
 export interface UnderwritingAnalysis {
@@ -157,7 +171,7 @@ export interface UnderwritingAnalysis {
   rent_roll_summary: RentRollSummary;
   historical_expenses: FinancialLineItem[];
   deal_parameters?: DealParameters;
-  audit_trail?: Record<string, any>[];
+  audit_trail?: AuditEntry[];
   pro_forma_noi?: number;
   cap_rate?: number;
   historical_noi?: number;

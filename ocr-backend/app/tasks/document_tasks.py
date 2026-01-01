@@ -37,6 +37,11 @@ def get_services():
     }
 
 
+def get_redis_key(document_id: str) -> str:
+    """Get Redis key for document progress."""
+    return f"document:progress:{document_id}"
+
+
 @celery_app.task(
     bind=True,
     name="app.tasks.document_tasks.process_document_task",

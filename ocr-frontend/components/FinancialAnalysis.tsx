@@ -5,6 +5,7 @@ import { apiClient } from '@/lib/api';
 import { UnderwritingAnalysis, DealParameters } from '@/lib/types';
 import LoadingSpinner from './LoadingSpinner';
 import UnderwritingDashboard from './UnderwritingDashboard';
+import AuditTrailWidget from './AuditTrailWidget';
 
 interface FinancialAnalysisProps {
   documentId: string;
@@ -61,6 +62,11 @@ export default function FinancialAnalysis({ documentId }: FinancialAnalysisProps
       {analysis ? (
         <div className="mt-6">
           <UnderwritingDashboard analysis={analysis} />
+          {analysis.audit_trail && (
+            <div className="mt-6">
+              <AuditTrailWidget auditTrail={analysis.audit_trail} />
+            </div>
+          )}
           <div className="mt-6 text-right">
             <button 
               onClick={() => handleDownload('excel')} 

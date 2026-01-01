@@ -1,16 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-
-interface AuditEntry {
-  field: string;
-  value: any;
-  source: string;
-  method: string;
-  confidence_score?: number;
-  timestamp?: string;
-  reasons?: string[];
-}
+import { AuditEntry } from "@/lib/types";
 
 interface AuditTrailWidgetProps {
   auditTrail: AuditEntry[];

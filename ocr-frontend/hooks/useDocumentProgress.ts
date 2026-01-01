@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ProcessingProgress } from "@/lib/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8001";
+const API_BASE_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8000";
 
 interface UseDocumentProgressReturn {
   progress: ProcessingProgress | null;
@@ -57,6 +57,16 @@ export function useDocumentProgress(
             setProgress(data);
           } catch (err) {
             console.error("Failed to parse progress event:", err);
+          }
+        });
+
+        // Handle initialization event
+        eventSource.addEventListener("initialized", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            setProgress(data);
+          } catch (err) {
+            console.error("Failed to parse initialized event:", err);
           }
         });
 

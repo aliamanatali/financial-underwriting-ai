@@ -498,6 +498,11 @@ class DocumentService:
             keys = self.redis_client.keys("document:*")
             for key in keys:
                 try:
+                    # --- ROBUSTNESS FIX ---
+                    # Filter out keys that are not full document records
+                    if not self.redis_client.type(key) == 'string':
+                        continue
+                        
                     data = self.redis_client.get(key)
                     if data:
                         doc = json.loads(data)

@@ -18,8 +18,8 @@ class ExcelService:
         vacancy_rate = analysis_data.deal_parameters.vacancy_rate if analysis_data.deal_parameters else 0.03
         
         # Add Revenue Section
-        historical_revenue = sum(item.current_rent * 12 for item in analysis_data.rent_roll)
-        pro_forma_revenue = sum(item.market_rent * 12 for item in analysis_data.rent_roll)
+        historical_revenue = sum((item.current_rent or 0) * 12 for item in analysis_data.rent_roll)
+        pro_forma_revenue = sum((item.market_rent or 0) * 12 for item in analysis_data.rent_roll)
         pro_forma_revenue_after_vacancy = pro_forma_revenue * (1 - vacancy_rate)
         
         entries.append(ProFormaEntry(
@@ -41,27 +41,37 @@ class ExcelService:
         ))
         
         # Add Expense Section (by category)
-        expenses_by_category: Dict[str, float] = {}
+        # T12 uses historical expenses
+        historical_expenses_by_category: Dict[str, float] = {}
         for expense in analysis_data.historical_expenses:
-            # StandardizedExpense.mapped_category is an Enum, get its value
             category = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
-            if category not in expenses_by_category:
-                expenses_by_category[category] = 0
-            expenses_by_category[category] += expense.amount
-        
-        total_historical_expenses = sum(expenses_by_category.values())
-        
-        for category, amount in expenses_by_category.items():
+            historical_expenses_by_category.setdefault(category, 0)
+            historical_expenses_by_category[category] += expense.amount
+
+        # F12 uses the new detailed pro forma expenses
+        pro_forma_expenses_by_category: Dict[str, float] = {
+            item.name: item.amount for item in analysis_data.pro_forma_expenses_detailed
+        }
+
+        # Get all unique expense categories from both historical and pro forma
+        all_expense_categories = sorted(list(set(historical_expenses_by_category.keys()) | set(pro_forma_expenses_by_category.keys())))
+
+        for category in all_expense_categories:
+            t12_amount = historical_expenses_by_category.get(category, 0)
+            f12_amount = pro_forma_expenses_by_category.get(category, 0)
             entries.append(ProFormaEntry(
                 name=f"  {category}",
-                t12=amount,
-                f12=amount * (1 + analysis_data.deal_parameters.growth_rate)  # Simple growth projection
+                t12=t12_amount,
+                f12=f12_amount
             ))
-        
+
+        total_historical_expenses = sum(historical_expenses_by_category.values())
+        total_pro_forma_expenses = sum(pro_forma_expenses_by_category.values())
+
         entries.append(ProFormaEntry(
             name="Total Operating Expenses",
             t12=total_historical_expenses,
-            f12=total_historical_expenses * (1 + analysis_data.deal_parameters.growth_rate)
+            f12=total_pro_forma_expenses
         ))
         
         # Add NOI Section
@@ -199,3 +209,5 @@ class ExcelService:
         workbook.save(virtual_workbook)
         virtual_workbook.seek(0)
         return virtual_workbook.read()
+
+

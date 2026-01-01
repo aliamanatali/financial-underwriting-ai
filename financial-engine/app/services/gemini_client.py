@@ -113,9 +113,23 @@ Do not include any other text or explanations.
                         try:
                             validated_obj = pydantic_schema(**item)
                             validated_list.append(validated_obj.model_dump())
-                        except Exception as e:
-                            logger.warning(f"Validation error for item: {e}, including raw item")
-                            validated_list.append(item) # Keep raw data if validation fails
+                        except ValidationError as e:
+                            logger.warning(f"Validation error for item: {e}, attempting to fix.")
+                            # Add a more explicit prompt to fix the validation error
+                            correction_prompt = f"""The following JSON object is invalid. Please correct it based on the schema and return ONLY the valid JSON.
+Invalid JSON: {item}
+Error: {e}
+"""
+                            corrected_response = self.generate_content(correction_prompt)
+                            cleaned_json = self._clean_json_string(corrected_response)
+                            try:
+                                corrected_data = json.loads(cleaned_json)
+                                validated_obj = pydantic_schema(**corrected_data)
+                                validated_list.append(validated_obj.model_dump())
+                            except (json.JSONDecodeError, ValidationError) as e2:
+                                logger.error(f"Failed to fix validation error: {e2}")
+                                # If the correction fails, we will not include the item in the list
+                                pass
                 return validated_list
             return data # Return raw data if no schema is provided
         else:

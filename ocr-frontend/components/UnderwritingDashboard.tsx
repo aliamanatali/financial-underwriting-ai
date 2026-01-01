@@ -10,14 +10,20 @@ interface UnderwritingDashboardProps {
 export default function UnderwritingDashboard({
   analysis,
 }: UnderwritingDashboardProps) {
-  const getPassFailColor = (status: string) => {
-    return status === "PASS"
-      ? "bg-green-100 text-green-800 border-green-300"
-      : "bg-red-100 text-red-800 border-red-300";
-  };
-
-  const getPassFailIcon = (status: string) => {
-    return status === "PASS" ? "✓" : "✗";
+  const getStatusDisplay = (status: string) => {
+    if (status === "PASS") {
+      return {
+        text: "CRITERIA MET",
+        color: "bg-green-100 text-green-800 border-green-300",
+        icon: "✓",
+      };
+    } else {
+      return {
+        text: "CRITERIA NOT MET",
+        color: "bg-red-100 text-red-800 border-red-300",
+        icon: "✗",
+      };
+    }
   };
 
   const formatCurrency = (value: number) => {
@@ -71,16 +77,28 @@ export default function UnderwritingDashboard({
               {formatCurrency(analysis.property_meta.purchase_price)}
             </p>
           </div>
+          <div>
+            <p className="text-gray-500">Existing Loan</p>
+            <p className="font-semibold text-gray-900">
+              {formatCurrency(analysis.property_meta.current_loan_balance || 0)}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Existing Loan</p>
+            <p className="font-semibold text-gray-900">
+              {formatCurrency(analysis.property_meta.current_loan_balance || 0)}
+            </p>
+          </div>
         </div>
       </div>
 
       {/* Pass/Fail Status Badge */}
-      <div className={`rounded-lg border-2 p-6 ${getPassFailColor(analysis.pass_fail_status)}`}>
+      <div className={`rounded-lg border-2 p-6 ${getStatusDisplay(analysis.pass_fail_status).color}`}>
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-bold flex items-center gap-2">
-              <span className="text-3xl">{getPassFailIcon(analysis.pass_fail_status)}</span>
-              Deal Status: {analysis.pass_fail_status}
+              <span className="text-3xl">{getStatusDisplay(analysis.pass_fail_status).icon}</span>
+              Qualification Status: {getStatusDisplay(analysis.pass_fail_status).text}
             </h3>
             {analysis.gating_reasons.length > 0 && (
               <div className="mt-3 space-y-1">
