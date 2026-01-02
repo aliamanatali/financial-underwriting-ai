@@ -1,7 +1,7 @@
 import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText } from "./types";
 
-const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8000";
-const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8001";
+const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL;
+const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
 class ApiClient {
   private async handleResponse<T>(response: Response): Promise<T> {

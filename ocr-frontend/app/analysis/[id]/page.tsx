@@ -18,7 +18,7 @@ export default function AnalysisResultPage() {
     "dashboard"
   );
 
-  const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8001";
+  const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
   useEffect(() => {
     if (id) {
@@ -113,6 +113,9 @@ export default function AnalysisResultPage() {
   }
 
   if (error) {
+    // Determine if this is a package or single document based on the ID format or error
+    const isLikelyPackage = error.includes('package') || error.includes('multi-document') || error.includes('Deal package');
+    
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-4xl mx-auto">
@@ -138,7 +141,21 @@ export default function AnalysisResultPage() {
                   <p className="font-semibold mb-2">Troubleshooting Tips:</p>
                   <ul className="list-disc list-inside space-y-1">
                     <li>Ensure the financial-engine backend is running on <code className="bg-red-50 px-2 py-1 rounded">{API_BASE_URL}</code></li>
-                    <li>Check that the document was successfully processed by OCR</li>
+                    {isLikelyPackage ? (
+                      <>
+                        <li>Verify the deal package was successfully uploaded via the multi-document upload page</li>
+                        <li>Check that the package ID is correct: <code className="bg-red-50 px-2 py-1 rounded">{id}</code></li>
+                        <li>The package may have been deleted or expired from storage</li>
+                        <li>Try re-uploading your ZIP file with the deal package documents</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>Verify the document was successfully processed by OCR backend</li>
+                        <li>Check that the document ID is correct: <code className="bg-red-50 px-2 py-1 rounded">{id}</code></li>
+                        <li>The document may have been deleted or expired from storage</li>
+                        <li>Try re-uploading your document</li>
+                      </>
+                    )}
                     <li>Verify network connectivity and firewall settings</li>
                     <li>Check browser console (F12) for additional error details</li>
                   </ul>

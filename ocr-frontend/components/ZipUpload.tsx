@@ -48,7 +48,7 @@ export default function ZipUpload({
     const fetchDocumentTypes = async () => {
       try {
         const response = await fetch(
-          `${process.env.NEXT_PUBLIC_FINANCIAL_ENGINE_URL || 'http://localhost:8001'}/api/v1/multi-document/document-types`
+          `${process.env.NEXT_PUBLIC_FINANCIAL_ENGINE_URL}/api/v1/multi-document/document-types`
         );
         
         if (response.ok) {
@@ -113,7 +113,7 @@ export default function ZipUpload({
 
       // Upload to backend
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_FINANCIAL_ENGINE_URL || 'http://localhost:8001'}/api/v1/multi-document/packages/upload-zip`,
+        `${process.env.NEXT_PUBLIC_FINANCIAL_ENGINE_URL}/api/v1/multi-document/packages/upload-zip`,
         {
           method: "POST",
           body: formData,
