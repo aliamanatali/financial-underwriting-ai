@@ -1,4 +1,4 @@
-import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText } from "./types";
+import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText, DealPackage } from "./types";
 
 const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL;
 const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -137,6 +137,12 @@ class ApiClient {
     });
     return this.handleResponse<UnderwritingAnalysis>(response);
   }
+
+  async getDealPackages(): Promise<DealPackage[]> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages`);
+    return this.handleResponse<DealPackage[]>(response);
+  }
+
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
     // Create default deal parameters
     const params: DealParameters = {

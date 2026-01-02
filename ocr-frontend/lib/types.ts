@@ -179,3 +179,22 @@ export interface UnderwritingAnalysis {
   historical_noi?: number;
   historical_cap_rate?: number;
 }
+
+export interface DocumentMetadata {
+  document_id: string;
+  filename: string;
+  document_type: string;
+  upload_timestamp: string;
+  file_size: number;
+  extraction_status: string;
+}
+
+export interface DealPackage {
+  package_id: string;
+  property_name: string;
+  created_at: string;
+  updated_at: string;
+  documents: Record<string, DocumentMetadata[]>;
+  normalization_status: string;
+  verification_progress: number;
+}

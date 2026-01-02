@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
 from app.models.schemas import RentRollItem, PropertyMeta, UnderwritingAnalysis, StandardizedExpense, ExpenseCategory, AuditLog, RentRollSummary
 from app.services.normalization_service import NormalizationService
@@ -259,7 +259,7 @@ class IngestionService:
             return income_data.get("total_annual_income", 0.0)
         return 0.0
 
-    def compare_income_sources(self, rent_roll_income: float, pnl_income: float, threshold: float = 0.05) -> str | None:
+    def compare_income_sources(self, rent_roll_income: float, pnl_income: float, threshold: float = 0.05) -> Optional[str]:
         """
         Compares the total annual income from the rent roll and the P&L.
         Returns a warning string if the discrepancy is above the threshold.
@@ -284,7 +284,7 @@ class IngestionService:
         occupancy_rate = occupied_units / total_units if total_units > 0 else 0.0
 
         # Calculate Totals
-        total_monthly_rent = sum(item.current_rent for item in rent_roll if item.current_rent)
+        total_monthly_rent = sum((item.current_rent or 0.0) for item in rent_roll if item.current_rent is not None)
         total_annual_rent = total_monthly_rent * 12
 
         return RentRollSummary(

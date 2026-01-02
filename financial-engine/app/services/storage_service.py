@@ -8,11 +8,18 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from io import BytesIO
 
-from google.cloud import storage
-from google.oauth2 import service_account
-from google.auth.exceptions import DefaultCredentialsError
+from google.cloud import storage  # type: ignore
+from google.oauth2 import service_account  # type: ignore
+from google.auth.exceptions import DefaultCredentialsError  # type: ignore
 
 from app.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# In-memory storage for when GCP is not configured
+_memory_storage: Dict[str, dict] = {}
 import logging
 
 logger = logging.getLogger(__name__)
@@ -120,15 +127,17 @@ class StorageService:
         Returns:
             True if saved successfully
         """
-        if not self.use_gcp:
-            logger.warning("GCP not configured. Package not persisted.")
+        package_id = package_data.get("package_id")
+        if not package_id:
+            logger.error("package_id is required")
             return False
+
+        if not self.use_gcp:
+            logger.warning("GCP not configured. Using in-memory storage.")
+            _memory_storage[package_id] = package_data
+            return True
         
         try:
-            package_id = package_data.get("package_id")
-            if not package_id:
-                raise ValueError("package_id is required")
-            
             # Convert to JSON
             json_data = json.dumps(package_data, indent=2, default=str)
             
@@ -155,7 +164,7 @@ class StorageService:
             Package metadata dictionary or None if not found
         """
         if not self.use_gcp:
-            return None
+            return _memory_storage.get(package_id)
         
         try:
             blob_path = self._get_package_metadata_path(package_id)
@@ -184,7 +193,7 @@ class StorageService:
             List of package metadata dictionaries
         """
         if not self.use_gcp:
-            return []
+            return list(_memory_storage.values())
         
         try:
             # List all metadata files

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ZipUpload from "@/components/ZipUpload";
+import DealHistoryTable from "@/components/DealHistoryTable";
 
 export default function Home() {
   const router = useRouter();
@@ -59,6 +60,14 @@ export default function Home() {
               onUploadSuccess={handleUploadSuccess}
               onUploadError={handleUploadError}
             />
+          </section>
+
+          {/* History Section */}
+          <section>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              Previous Analyses
+            </h2>
+            <DealHistoryTable />
           </section>
         </div>
       </main>

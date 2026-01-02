@@ -161,23 +161,31 @@ class MultiDocumentExtractionService:
                 logger.info(f"Uploaded PDF to Gemini: {uploaded_file.name}")
                 
                 prompt = """
-                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, or Utility Bill) and extract ALL expense line items.
+                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
                 
-                For each expense, provide:
+                Include:
+                1. Operating Expenses (e.g., Taxes, Utilities, Insurance, Management)
+                2. Landlord Responsibilities from Leases (e.g., "LL pays Water/Trash")
+                3. Key Financial Metrics from OM (e.g., "Asking Price", "Pro Forma Cap Rate") - strictly financial values only
+                4. Property Condition Items from Disclosures that imply cost (e.g., "Roof Age: 8 years", "HVAC: Needs service")
+                
+                For each item, provide:
                 1. The exact text/description as it appears in the document
-                2. The amount (annual or monthly - specify which)
+                2. The amount (annual or monthly).
+                   - For unknown/implicit costs (like lease responsibilities), use amount: null.
+                   - For informational items (like "Roof Age"), use amount: null or 0.
                 
                 Return the data as a JSON array with this structure:
                 [
                     {
-                        "raw_text": "Exact expense description",
-                        "amount": 12345.67,
-                        "period": "annual" or "monthly"
+                        "raw_text": "Exact description",
+                        "amount": 12345.67, // or null
+                        "period": "annual" or "monthly" or "one-time"
                     }
                 ]
                 
-                Only include operating expenses. Skip revenue, income, NOI, and total/subtotal rows.
-                If no expenses are found, return an empty array [].
+                Skip general text, headers, and revenue/income rows (unless it's a key metric like "Avg Rent" in an OM).
+                If no relevant items are found, return an empty array [].
                 
                 IMPORTANT: Return ONLY the JSON array, no additional text or explanation.
                 """
@@ -208,9 +216,18 @@ class MultiDocumentExtractionService:
                 # Add source document to each item
                 for expense in expenses_data:
                     expense["source_document"] = filename
+                    
+                    # Handle cases where amount is None (extracted as null)
+                    if expense.get("amount") is None:
+                        expense["amount"] = 0.0
+                        
                     # Convert monthly to annual if needed
                     if expense.get("period") == "monthly":
-                        expense["amount"] = expense["amount"] * 12
+                        try:
+                            expense["amount"] = float(expense["amount"]) * 12
+                        except (ValueError, TypeError):
+                            logger.warning(f"Could not convert amount to float for monthly calculation: {expense.get('amount')}")
+                            expense["amount"] = 0.0
                 
                 logger.info(f"Extracted {len(expenses_data)} expense items from PDF {filename}")
                 return expenses_data
