@@ -27,6 +27,8 @@ export interface DocumentResponse {
   status: DocumentStatus;
   created_at: string;
   updated_at: string;
+  progress_percentage?: number;
+  error_message?: string | null;
   metadata?: {
     page_count?: number;
     file_size?: number;

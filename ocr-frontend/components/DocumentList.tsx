@@ -6,6 +6,8 @@ import { apiClient } from "@/lib/api";
 import { DocumentResponse } from "@/lib/types";
 import LoadingSpinner from "./LoadingSpinner";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8000";
+
 interface DocumentListProps {
   refreshTrigger?: number;
   onDelete?: () => void;
@@ -20,6 +22,7 @@ export default function DocumentList({
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
 
   const fetchDocuments = async () => {
     setIsLoading(true);
@@ -61,39 +64,129 @@ export default function DocumentList({
     fetchDocuments();
   }, [refreshTrigger]);
 
-  // Auto-refresh if any documents are processing (less frequent polling)
-  // Individual document progress is handled by SSE in DocumentViewer
+  // Setup SSE connections for processing documents
   useEffect(() => {
-    const hasProcessingDocs = documents.some(
+    const processingDocs = documents.filter(
       (doc) =>
         doc.status === "pending" ||
         doc.status === "processing" ||
         doc.status === "processing_chunks"
     );
 
-    if (hasProcessingDocs) {
-      console.log("Processing documents found, starting polling.");
-      // Poll every 10 seconds (reduced from 5s since SSE handles real-time updates)
-      // This is just to update the list view status
-      pollingIntervalRef.current = setInterval(() => {
-        console.log("Polling for document updates...");
-        fetchDocuments();
-      }, 10000);
-    } else {
-      // Clear polling if no processing documents
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
+    // Connect to SSE for each processing document
+    processingDocs.forEach((doc) => {
+      const docId = doc.document_id;
+      
+      // Skip if already connected
+      if (eventSourcesRef.current.has(docId)) {
+        return;
       }
-    }
+
+      console.log(`Setting up SSE for document ${docId}`);
+      
+      try {
+        const url = `${API_BASE_URL}/api/documents/${docId}/progress/stream`;
+        const eventSource = new EventSource(url);
+        
+        eventSource.onopen = () => {
+          console.log(`SSE connected for document ${docId}`);
+        };
+
+        // Handle progress events
+        eventSource.addEventListener("progress", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            updateDocumentStatus(docId, data);
+          } catch (err) {
+            console.error(`Failed to parse progress event for ${docId}:`, err);
+          }
+        });
+
+        // Handle completion event
+        eventSource.addEventListener("completed", (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log(`Document ${docId} processing completed`);
+            updateDocumentStatus(docId, data);
+            
+            // Close this SSE connection
+            eventSource.close();
+            eventSourcesRef.current.delete(docId);
+            
+            // Refresh the full list to get final state
+            fetchDocuments();
+          } catch (err) {
+            console.error(`Failed to parse completed event for ${docId}:`, err);
+          }
+        });
+
+        // Handle error events
+        eventSource.addEventListener("error", (event: Event) => {
+          try {
+            const messageEvent = event as MessageEvent;
+            if (messageEvent.data) {
+              const data = JSON.parse(messageEvent.data);
+              console.error(`Document ${docId} processing failed:`, data);
+              updateDocumentStatus(docId, { status: "failed", error_message: data.error });
+            }
+          } catch (err) {
+            console.error(`Failed to parse error event for ${docId}:`, err);
+          }
+          
+          // Close connection on error
+          eventSource.close();
+          eventSourcesRef.current.delete(docId);
+        });
+
+        // Handle connection errors
+        eventSource.onerror = (err) => {
+          console.error(`SSE connection error for document ${docId}:`, err);
+          eventSource.close();
+          eventSourcesRef.current.delete(docId);
+        };
+
+        eventSourcesRef.current.set(docId, eventSource);
+      } catch (err) {
+        console.error(`Failed to create SSE connection for ${docId}:`, err);
+      }
+    });
+
+    // Close SSE connections for documents that are no longer processing
+    const processingDocIds = new Set(processingDocs.map(d => d.document_id));
+    eventSourcesRef.current.forEach((eventSource, docId) => {
+      if (!processingDocIds.has(docId)) {
+        console.log(`Closing SSE for completed document ${docId}`);
+        eventSource.close();
+        eventSourcesRef.current.delete(docId);
+      }
+    });
 
     // Cleanup on unmount
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
+      eventSourcesRef.current.forEach((eventSource, docId) => {
+        console.log(`Cleaning up SSE for document ${docId}`);
+        eventSource.close();
+      });
+      eventSourcesRef.current.clear();
     };
   }, [documents]);
+
+  // Helper function to update document status in real-time
+  const updateDocumentStatus = (documentId: string, data: Partial<DocumentResponse> & { overall_progress?: number }) => {
+    setDocuments((prevDocs) =>
+      prevDocs.map((doc) => {
+        if (doc.document_id === documentId) {
+          return {
+            ...doc,
+            status: data.status || doc.status,
+            progress_percentage: data.overall_progress || data.progress_percentage || doc.progress_percentage,
+            error_message: data.error_message || doc.error_message,
+          };
+        }
+        return doc;
+      })
+    );
+  };
 
   // Deduplicate documents by document_id to prevent React key warnings
   const uniqueDocuments = useMemo(() => {
