@@ -2,6 +2,8 @@ from fastapi import FastAPI
 import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports
 from fastapi.middleware.cors import CORSMiddleware
+import os
+import json
 
 app = FastAPI(
     title="Valiance Financial Engine",
@@ -9,9 +11,13 @@ app = FastAPI(
     version="1.0.0"
 )
 
-origins = [
-    "http://localhost:3000",
-]
+# Read CORS origins from environment variable
+cors_origins_str = os.getenv("CORS_ORIGINS", '["http://localhost:3000"]')
+try:
+    origins = json.loads(cors_origins_str)
+except json.JSONDecodeError:
+    # Fallback to default if JSON parsing fails
+    origins = ["http://localhost:3000"]
 
 app.add_middleware(
     CORSMiddleware,

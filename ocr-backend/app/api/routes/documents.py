@@ -170,11 +170,37 @@ async def get_document_content(document_id: str):
     Get the raw content of a document.
     """
     try:
+        # Get document record
         doc = await document_service._get_document_record(document_id)
         if not doc:
+            logger.error(f"Document not found: {document_id}")
             raise HTTPException(status_code=404, detail="Document not found")
-
-        file_data = await document_service.storage_service.get_file(doc["storage_path"])
+        
+        # Check if storage_path exists
+        if "storage_path" not in doc or not doc["storage_path"]:
+            logger.error(f"Document {document_id} has no storage_path")
+            raise HTTPException(
+                status_code=500,
+                detail="Document storage path not found"
+            )
+        
+        logger.info(f"Retrieving document content for {document_id} from {doc['storage_path']}")
+        
+        # Retrieve file from storage
+        try:
+            file_data = await document_service.storage_service.get_file(doc["storage_path"])
+        except FileNotFoundError as e:
+            logger.error(f"File not found in storage for document {document_id}: {str(e)}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Document file not found in storage: {doc['storage_path']}"
+            )
+        except Exception as storage_error:
+            logger.error(f"Storage error for document {document_id}: {str(storage_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to retrieve file from storage: {str(storage_error)}"
+            )
 
         from io import BytesIO
         return StreamingResponse(
@@ -182,8 +208,10 @@ async def get_document_content(document_id: str):
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={doc['filename']}"}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to get document content: {str(e)}")
+        logger.error(f"Unexpected error getting document content for {document_id}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve document content: {str(e)}"
