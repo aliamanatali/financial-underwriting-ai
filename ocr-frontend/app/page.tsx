@@ -2,23 +2,18 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import DocumentUpload from "@/components/DocumentUpload";
-import DocumentList from "@/components/DocumentList";
+import ZipUpload from "@/components/ZipUpload";
 
 export default function Home() {
   const router = useRouter();
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const handleUploadSuccess = (documentId: string) => {
-    // Refresh the document list
-    setRefreshTrigger((prev) => prev + 1);
-
-    // Optionally navigate to the document detail page
-    // router.push(`/documents/${documentId}`);
+  const handleUploadSuccess = (packageId: string) => {
+    // Navigation is handled by ZipUpload component
+    console.log(`Package ${packageId} uploaded successfully`);
   };
 
-  const handleDelete = () => {
-    // Refresh is handled automatically by DocumentList
+  const handleUploadError = (error: string) => {
+    console.error("Upload error:", error);
   };
 
   return (
@@ -42,10 +37,10 @@ export default function Home() {
             </svg>
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
-                OCR Document Processor
+                Financial Underwriting AI
               </h1>
               <p className="mt-1 text-sm text-gray-600">
-                Upload PDF documents and extract text using OCR
+                Upload deal packages for automated analysis and verification
               </p>
             </div>
           </div>
@@ -58,16 +53,11 @@ export default function Home() {
           {/* Upload Section */}
           <section>
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Upload Document
+              Upload Deal Package
             </h2>
-            <DocumentUpload onUploadSuccess={handleUploadSuccess} />
-          </section>
-
-          {/* Documents List Section */}
-          <section>
-            <DocumentList
-              refreshTrigger={refreshTrigger}
-              onDelete={handleDelete}
+            <ZipUpload
+              onUploadSuccess={handleUploadSuccess}
+              onUploadError={handleUploadError}
             />
           </section>
         </div>
@@ -77,7 +67,7 @@ export default function Home() {
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <p className="text-center text-sm text-gray-500">
-            OCR Document Processor - Powered by FastAPI & Next.js
+            Financial Underwriting AI - Powered by FastAPI & Next.js
           </p>
         </div>
       </footer>

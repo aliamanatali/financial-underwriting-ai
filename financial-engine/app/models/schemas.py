@@ -3,6 +3,22 @@ from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 
 # --- 1. Enums ---
+
+class DocumentType(str, Enum):
+    """
+    The 8 document categories that constitute the inputs for underwriting analysis.
+    Each folder will contain documents of a specific type.
+    """
+    OFFERING_MEMORANDUM = "Offering Memorandum"
+    RENT_ROLL = "Rent Roll"
+    LEASES = "Leases"
+    FINANCIALS = "Financials"  # T12, P&L statements, etc.
+    BUILDING_PLANS_PERMITS = "Building Plans & Permits"
+    DISCLOSURES = "Disclosures"
+    TAX_BILLS = "Tax Bills"
+    UTILITIES = "Utilities"
+
+
 class ExpenseCategory(str, Enum):
     REAL_ESTATE_TAXES = "Real Estate Taxes"
     INSURANCE = "Insurance"
@@ -74,6 +90,59 @@ class StandardizedExpense(BaseModel):
     amount: float
     confidence: float
     audit_log: AuditLog
+    user_verified: bool = False  # Track if user has manually verified/corrected this mapping
+    user_corrected_category: Optional[ExpenseCategory] = None  # If user changed the mapping
+
+# --- 2.5 Multi-Document Support Models ---
+
+class DocumentMetadata(BaseModel):
+    """Metadata for an uploaded document"""
+    document_id: str
+    filename: str
+    document_type: DocumentType
+    upload_timestamp: str
+    file_size: int
+    page_count: Optional[int] = None
+    extraction_status: str = "pending"  # pending, processing, completed, failed
+    
+class NormalizedDataItem(BaseModel):
+    """
+    Generic normalized data item for the verification UI.
+    Represents a single row in the split-screen verification table.
+    """
+    id: str  # Unique identifier for this item
+    raw_text: str  # What was extracted from the PDF
+    normalized_value: str  # What it was mapped to
+    field_type: str  # e.g., "expense_category", "unit_type", "lease_date"
+    confidence: float  # 0.0 to 1.0
+    user_verified: bool = False
+    user_correction: Optional[str] = None
+    source_document: str  # Which document this came from
+    
+class DocumentNormalizationResult(BaseModel):
+    """
+    Result of normalizing a single document.
+    Contains all the normalized items that need user verification.
+    """
+    document_id: str
+    document_type: DocumentType
+    normalized_items: List[NormalizedDataItem]
+    total_items: int
+    verified_items: int = 0
+    confidence_average: float
+    
+class DealPackage(BaseModel):
+    """
+    A complete deal package containing all 8 document types.
+    This is the top-level container for a property underwriting.
+    """
+    package_id: str
+    property_name: str
+    created_at: str
+    updated_at: str
+    documents: Dict[DocumentType, List[DocumentMetadata]] = {}  # Multiple docs per type
+    normalization_status: str = "pending"  # pending, in_progress, completed
+    verification_progress: float = 0.0  # Percentage of items verified by user
 
 # --- 3. Main Analysis Model ---
 class UnderwritingAnalysis(BaseModel):

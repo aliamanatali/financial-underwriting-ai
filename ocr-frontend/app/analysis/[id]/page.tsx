@@ -30,19 +30,52 @@ export default function AnalysisResultPage() {
           console.log(`Starting analysis for document: ${id}`);
           console.log(`API URL: ${API_BASE_URL}`);
 
-          // Trigger the analysis endpoint
-          const response = await fetch(`${API_BASE_URL}/api/v1/analysis/${id}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              growth_rate: 0.03,
-              exit_cap_rate: 0.06,
-              vacancy_rate: 0.03,
-              loan_amount: 5000000,
-            }),
-          });
+          // First, check if this is a multi-document package
+          let isPackage = false;
+          try {
+            const packageCheck = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}`);
+            if (packageCheck.ok) {
+              isPackage = true;
+              console.log("Detected multi-document package");
+            }
+          } catch (e) {
+            // Not a package, continue with single-document flow
+            console.log("Not a package, using single-document flow");
+          }
+
+          let response;
+          if (isPackage) {
+            // Use multi-document analysis endpoint
+            response = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analyze`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                growth_rate: 0.03,
+                exit_cap_rate: 0.06,
+                vacancy_rate: 0.03,
+                loan_amount: 5000000,
+                min_unit_count: 15,
+                max_unit_count: 80,
+                max_build_year: 1970,
+              }),
+            });
+          } else {
+            // Use single-document analysis endpoint
+            response = await fetch(`${API_BASE_URL}/api/v1/analysis/${id}`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                growth_rate: 0.03,
+                exit_cap_rate: 0.06,
+                vacancy_rate: 0.03,
+                loan_amount: 5000000,
+              }),
+            });
+          }
 
           if (!response.ok) {
             const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));

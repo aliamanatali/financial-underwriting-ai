@@ -156,7 +156,7 @@ export interface DealParameters {
 
 export interface AuditEntry {
   field_name: string;
-  extracted_value: any;
+  extracted_value: string | number | boolean | null;
   source: string;
   method: string;
   confidence_score?: number;
