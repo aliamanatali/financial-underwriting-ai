@@ -52,7 +52,7 @@ export default function VerificationPage() {
   const [normalizing, setNormalizing] = useState(false);
 
   const baseUrl =
-    process.env.NEXT_PUBLIC_FINANCIAL_ENGINE_URL || "http://localhost:8001";
+    process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
   // Fetch deal package details
   useEffect(() => {
