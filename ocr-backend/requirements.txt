@@ -23,6 +23,10 @@ pymongo
 # MinIO object storage
 minio
 
+# GCP Cloud Storage
+google-cloud-storage
+google-auth
+
 # Async file operations
 aiofiles
 

@@ -48,9 +48,47 @@ class Settings(BaseSettings):
     minio_bucket: str = "documents"
     minio_use_ssl: bool = False
 
+    # GCP Cloud Storage settings
+    gcp_project_id: Optional[str] = None
+    gcp_storage_bucket: Optional[str] = None
+    gcp_credentials_path: Optional[str] = None
+    
+    # GCP Service Account Credentials (environment variables method)
+    gcp_type: Optional[str] = None
+    gcp_private_key_id: Optional[str] = None
+    gcp_private_key: Optional[str] = None
+    gcp_client_email: Optional[str] = None
+    gcp_client_id: Optional[str] = None
+    gcp_auth_uri: Optional[str] = None
+    gcp_token_uri: Optional[str] = None
+    gcp_auth_provider_x509_cert_url: Optional[str] = None
+    gcp_client_x509_cert_url: Optional[str] = None
+    gcp_universe_domain: Optional[str] = None
+
     # Database settings
     mongodb_uri: Optional[str] = None
     mongodb_database: Optional[str] = None
+
+    @property
+    def use_gcp(self) -> bool:
+        """Check if GCP Cloud Storage is configured."""
+        # Method 1: Environment variables (recommended for production)
+        has_env_credentials = all([
+            self.gcp_project_id,
+            self.gcp_storage_bucket,
+            self.gcp_type,
+            self.gcp_private_key,
+            self.gcp_client_email
+        ])
+        
+        # Method 2: Credentials file (legacy support)
+        has_file_credentials = all([
+            self.gcp_project_id,
+            self.gcp_storage_bucket,
+            self.gcp_credentials_path
+        ])
+        
+        return has_env_credentials or has_file_credentials
 
     @property
     def use_minio(self) -> bool:
