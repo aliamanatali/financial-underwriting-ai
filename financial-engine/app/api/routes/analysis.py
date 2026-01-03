@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.services.ingestion_service import IngestionService
 from app.services.financial_service import FinancialService
 from app.services.excel_service import ExcelService
-from app.models.schemas import UnderwritingAnalysis, DealParameters
+from app.services.storage_service import storage_service
+from app.models.schemas import UnderwritingAnalysis, DealParameters, DealPackage
 from typing import Dict, Any
 from app.dependencies import get_ingestion_service, get_financial_service, get_excel_service
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -96,5 +98,38 @@ async def perform_analysis(
     logger.info(f"Analysis complete. Final status: {analysis.pass_fail_status}")
     logger.info(f"FINAL analysis object before return: {analysis.model_dump_json(indent=2)}")
     
+    # ===== SAVE TO STORAGE =====
+    # Save the analysis result so it can be retrieved later
+    analysis_dict = analysis.model_dump()
+    await storage_service.save_analysis_result(document_id, analysis_dict)
+
+    # Also update/create a DealPackage entry for this single document analysis
+    # This allows it to show up in the history list alongside multi-doc packages
+    existing_package = await storage_service.get_deal_package(document_id)
+    now = datetime.utcnow().isoformat()
+    
+    if existing_package:
+        # Update existing
+        package = DealPackage(**existing_package)
+        package.updated_at = now
+        package.normalization_status = "completed"
+        # Ensure property name is set
+        if not package.property_name or package.property_name == "Unknown":
+            package.property_name = analysis.property_meta.address or f"Deal {document_id[:8]}"
+    else:
+        # Create new "wrapper" package for this single document
+        package = DealPackage(
+            package_id=document_id,
+            property_name=analysis.property_meta.address or f"Deal {document_id[:8]}",
+            created_at=now,
+            updated_at=now,
+            documents={}, # Single doc flow doesn't populate this yet, but that's fine
+            normalization_status="completed",
+            verification_progress=1.0
+        )
+    
+    await storage_service.save_deal_package(package.model_dump())
+    logger.info(f"Saved analysis and package wrapper for {document_id}")
+
     # Return a dictionary created from the model, ensuring correct field names
     return analysis

@@ -1,7 +1,8 @@
-from app.models.schemas import UnderwritingAnalysis, DealParameters, ProFormaExpenseItem
-from typing import Dict, Any, List
+import numpy_financial as npf # type: ignore
+import math
+from app.models.schemas import UnderwritingAnalysis, DealParameters, ProFormaExpenseItem, ExpenseCategory
+from typing import Dict, Any, List, Optional
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -10,117 +11,64 @@ from app.services.audit_log_service import AuditLogService
 class FinancialService:
     def __init__(self, audit_log_service: AuditLogService):
         self.audit_log_service = audit_log_service
+
     def check_deal_viability(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
+        """
+        Checks hard gating criteria (Unit Count, Loan Amount, etc.)
+        """
         reasons = []
         status = "PASS"
+        # Ensure parameters exist, else use defaults
         params = analysis.deal_parameters or DealParameters()
         
-        unit_count = analysis.property_meta.total_units
+        # 1. Unit Count Check
+        unit_count = analysis.property_meta.total_units or 0
         if not (params.min_unit_count <= unit_count <= params.max_unit_count):
             status = "FAIL"
-            reasons.append(f"Unit count FAIL: {unit_count} units is outside the range of {params.min_unit_count}-{params.max_unit_count} units.")
+            reasons.append(f"Unit count FAIL: {unit_count} units is outside range {params.min_unit_count}-{params.max_unit_count}.")
         
-        loan_amount = analysis.property_meta.current_loan_balance or params.loan_amount
-        if loan_amount < 5_000_000:
-            status = "FAIL"
-            reasons.append(f"Loan amount FAIL: ${loan_amount:,.0f} is below minimum of $5,000,000.")
+        # 2. Loan Amount Check (Preliminary, based on Purchase Price if available)
+        # Note: True Loan Amount is calculated in Step 4, but we can check rough sizing here.
+        purchase_price = analysis.property_meta.purchase_price or 0
         
-        year_built = analysis.property_meta.year_built
-        if year_built < params.max_build_year and not analysis.property_meta.is_renovated:
+        # Only check if Purchase Price is known. If 0/Missing, we defer to Step 4 (Implied Valuation).
+        if purchase_price > 0:
+            estimated_loan = purchase_price * params.ltv
+            if estimated_loan < params.min_loan_amount:
+                status = "FAIL"
+                reasons.append(f"Loan amount FAIL: Estimated loan ${estimated_loan:,.0f} is below minimum of ${params.min_loan_amount:,.0f}.")
+        
+        # 3. Vintage Check
+        year_built = analysis.property_meta.year_built or 0
+        if year_built > 0 and year_built < params.max_build_year and not analysis.property_meta.is_renovated:
             status = "FAIL"
             reasons.append(f"Property vintage FAIL: Built in {year_built} (before {params.max_build_year}) and not renovated.")
         
         return {"status": status, "reasons": reasons}
 
-    def calculate_pro_forma(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
-        if not analysis.deal_parameters:
-            raise ValueError("Deal parameters required for pro forma calculation")
-        
-        self.audit_log_service.add_log(analysis, "Pro Forma Start", "Initiating pro forma calculation.", "System", "Orchestration")
-        
-        gpr = sum(item.market_rent * 12 for item in analysis.rent_roll)
-        self.audit_log_service.add_log(analysis, "Pro Forma GPR", f"${gpr:,.2f}", "Rent Roll", "Sum of Market Rents")
-
-        vacancy_loss = gpr * analysis.deal_parameters.vacancy_rate
-        egi = gpr - vacancy_loss
-        self.audit_log_service.add_log(analysis, "Pro Forma EGI", f"${egi:,.2f}", "Valiance Logic", f"GPR minus {analysis.deal_parameters.vacancy_rate:.1%} Vacancy")
-
-        total_historical_expenses = sum(expense.amount for expense in analysis.historical_expenses)
-        historical_noi = sum(item.current_rent * 12 for item in analysis.rent_roll) - total_historical_expenses
-        
-        pro_forma_expenses_list = self._calculate_pro_forma_expenses_breakdown(analysis, egi)
-        pro_forma_expenses = sum(item.amount for item in pro_forma_expenses_list)
-        pro_forma_noi = egi - pro_forma_expenses
-        analysis.pro_forma_expenses = pro_forma_expenses
-        analysis.pro_forma_expenses_detailed = pro_forma_expenses_list
-        
-        purchase_price = analysis.property_meta.purchase_price or 0
-        cap_rate = pro_forma_noi / purchase_price if purchase_price > 0 else 0
-        analysis.cap_rate = cap_rate
-        analysis.exit_cap_rate = analysis.deal_parameters.exit_cap_rate
-
-        return {
-            "historical_noi": historical_noi,
-            "gross_potential_rent": gpr,
-            "effective_gross_income": egi,
-            "pro_forma_expenses": pro_forma_expenses,
-            "pro_forma_noi": pro_forma_noi,
-            "cap_rate": cap_rate,
-            "exit_cap_rate": analysis.deal_parameters.exit_cap_rate,
-        }
-
-    def _calculate_pro_forma_expenses_breakdown(self, analysis: UnderwritingAnalysis, egi: float) -> List[ProFormaExpenseItem]:
-        expense_breakdown: List[ProFormaExpenseItem] = []
-        total_expense_budget = egi * 0.38
-        self.audit_log_service.add_log(analysis, "Target Expense Budget", f"${total_expense_budget:,.0f}", "Valiance Logic", "38% of EGI Rule")
-
-        purchase_price = analysis.property_meta.purchase_price or 0
-        if purchase_price > 0:
-            estimated_tax = purchase_price * 0.0125
-            tax_explanation = f"Calculated Property Tax based on purchase price of ${purchase_price:,.2f} at 1.25%."
-        else:
-            estimated_tax = total_expense_budget * 0.30
-            tax_explanation = "Purchase price not available. Allocated 30% of expense budget to Property Tax."
-        
-        expense_breakdown.append(ProFormaExpenseItem(name="Property Tax", amount=estimated_tax))
-        self.audit_log_service.add_log(analysis, "Pro Forma Expense: Property Tax", tax_explanation, "Valiance Logic", "Calculated based on purchase price or expense budget")
-
-        remaining_budget = total_expense_budget - estimated_tax
-        expense_allocations = {
-            "Insurance": 0.15, "Utilities": 0.20, "Management Fee": 0.10,
-            "Repairs & Maintenance": 0.15, "General & Administrative": 0.05, "Landscaping": 0.05
-        }
-
-        for name, percentage in expense_allocations.items():
-            amount = remaining_budget * percentage
-            expense_breakdown.append(ProFormaExpenseItem(name=name, amount=amount))
-            self.audit_log_service.add_log(analysis, f"Pro Forma Expense: {name}", f"Allocated {percentage:.0%} of remaining budget: ${amount:,.2f}", "Valiance Logic", "Allocation of remaining budget")
-            
-        return expense_breakdown
-
-    def calculate_pro_forma_with_expense_ratio(self, analysis: UnderwritingAnalysis, expense_ratio: float = 0.38) -> Dict[str, float]:
-        gpr = sum(item.market_rent * 12 for item in analysis.rent_roll)
-        vacancy_loss = gpr * analysis.deal_parameters.vacancy_rate
-        egi = gpr - vacancy_loss
-        pro_forma_expenses = egi * expense_ratio
-        pro_forma_noi = egi - pro_forma_expenses
-        purchase_price = analysis.property_meta.purchase_price or 0
-        cap_rate = pro_forma_noi / purchase_price if purchase_price > 0 else 0
-
-        return {
-            "pro_forma_noi": pro_forma_noi,
-            "pro_forma_expenses": pro_forma_expenses,
-            "cap_rate": cap_rate,
-            "exit_cap_rate": analysis.deal_parameters.exit_cap_rate,
-        }
-
     def calculate_historical(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
+        """
+        Calculates T12 historical performance based on extracted data.
+        """
         hgi = sum(item.current_rent * 12 for item in analysis.rent_roll)
-        total_expenses = sum(expense.amount for expense in analysis.historical_expenses) if analysis.historical_expenses else 0
-        analysis.historical_total_expenses = total_expenses
+        
+        total_expenses = 0.0
+        if analysis.historical_expenses:
+            total_expenses = sum(expense.amount for expense in analysis.historical_expenses)
+            if total_expenses == 0:
+                logger.warning("Historical expenses list is present but total amount is 0. Check normalization.")
+        else:
+            logger.warning("No historical expenses found in analysis object.")
+
         historical_noi = hgi - total_expenses
+        
         purchase_price = analysis.property_meta.purchase_price or 0
         historical_cap_rate = historical_noi / purchase_price if purchase_price > 0 else 0
+        
+        # Save to Analysis Object
+        analysis.historical_total_expenses = total_expenses
+        analysis.historical_noi = historical_noi
+        analysis.historical_cap_rate = historical_cap_rate
         
         return {
             "gross_income": hgi,
@@ -129,174 +77,314 @@ class FinancialService:
             "historical_cap_rate": historical_cap_rate,
         }
 
+    def calculate_pro_forma(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
+        """
+        Executes the 5-Step Deterministic Financial Model.
+        """
+        if not analysis.deal_parameters:
+            analysis.deal_parameters = DealParameters()
+            
+        self.audit_log_service.add_log(analysis, "Pro Forma Start", "Initiating 5-Step Calculation", "System", "Orchestration")
+
+        # Step 1: Revenue Logic
+        self._calculate_revenue(analysis)
+        
+        # Step 2: Expense Logic
+        self._calculate_expenses(analysis)
+        
+        # Step 3: Profitability Metrics (NOI)
+        self._calculate_profitability(analysis)
+        
+        # Step 4: Debt & Cash Flow
+        self._calculate_debt_and_cash_flow(analysis)
+        
+        # Step 5: Time-Based Returns (IRR & MOIC)
+        self._calculate_returns(analysis)
+        
+        return {
+            "status": "Success",
+            "pro_forma_noi": analysis.pro_forma_noi,
+            "pro_forma_expenses": analysis.pro_forma_expenses,
+            "cap_rate": analysis.cap_rate,
+            "exit_cap_rate": analysis.deal_parameters.exit_cap_rate if analysis.deal_parameters else 0.0,
+            "irr": analysis.irr,
+            "moic": analysis.moic
+        }
+
+    # --- Step 1: Revenue Logic ---
+    def _calculate_revenue(self, analysis: UnderwritingAnalysis):
+        params = analysis.deal_parameters or DealParameters()
+
+        # VALIDATION: Ensure rent_growth is valid
+        if params.growth_rate is None or math.isnan(params.growth_rate):
+            logger.warning(f"Rent Growth was {params.growth_rate}. Defaulting to 3%.")
+            params.growth_rate = 0.03
+        
+        # 1. Gross Potential Rent (GPR)
+        # Formula: Total Units * Market Rent per Unit * 12
+        # Note: We sum up individual units from Rent Roll for accuracy
+        gpr = sum((item.market_rent or 0) * 12 for item in analysis.rent_roll)
+        analysis.gross_potential_rent = gpr
+        self.audit_log_service.add_log(analysis, "GPR", f"${gpr:,.0f}", "Rent Roll", "Sum of (Market Rent * 12)")
+
+        # 2. Loss to Lease
+        # Formula: GPR - (Current Rent Roll Sum * 12)
+        current_rent_annual = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
+        loss_to_lease = gpr - current_rent_annual
+        analysis.loss_to_lease = loss_to_lease
+        self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent Annualized")
+
+        # 3. Vacancy Loss
+        # Formula: GPR * 0.03 (Valiance Constraint)
+        vacancy_loss = gpr * params.vacancy_rate
+        analysis.vacancy_loss = vacancy_loss
+        self.audit_log_service.add_log(analysis, "Vacancy Loss", f"${vacancy_loss:,.0f}", "Valiance Rule", f"{params.vacancy_rate:.1%} of GPR")
+
+        # 4. Effective Gross Income (EGI)
+        # Formula: GPR - LossToLease - VacancyLoss + Other Income
+        # Note: Assuming 'Other Income' is 0 for now as it's not in the base extraction yet, 
+        # but could be added from T12 extraction if available.
+        other_income = 0 
+        egi = gpr - loss_to_lease - vacancy_loss + other_income
+        analysis.effective_gross_income = egi
+        self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation", "GPR - LossToLease - VacancyLoss")
+
+    # --- Step 2: Expense Logic ---
+    def _calculate_expenses(self, analysis: UnderwritingAnalysis):
+        params = analysis.deal_parameters or DealParameters()
+        egi = analysis.effective_gross_income or 0
+        purchase_price = analysis.property_meta.purchase_price or 0
+        
+        expense_breakdown: List[ProFormaExpenseItem] = []
+
+        # 1. Property Taxes (Prop 13 Reset)
+        # Formula: (Purchase Price * Tax Rate) + Special Assessments
+        pro_forma_tax = purchase_price * params.tax_rate
+        expense_breakdown.append(ProFormaExpenseItem(name="Property Taxes", amount=pro_forma_tax))
+        self.audit_log_service.add_log(analysis, "Expense: Taxes", f"${pro_forma_tax:,.0f}", "Valiance Rule", f"Purchase Price * {params.tax_rate:.2%}")
+
+        # 2. Management Fee
+        # Formula: EGI * 0.04
+        mgmt_fee = egi * params.management_fee_rate
+        expense_breakdown.append(ProFormaExpenseItem(name="Management Fee", amount=mgmt_fee))
+        self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}", "Valiance Rule", f"{params.management_fee_rate:.1%} of EGI")
+
+        # 3. Other Operating Expenses (Sourced from T12)
+        # We aggregate historical expenses by category, excluding Taxes and Mgmt Fees which are recalculated.
+        other_expenses_map: Dict[str, float] = {}
+        has_t12_data = False
+        
+        if analysis.historical_expenses:
+            has_t12_data = True
+            for expense in analysis.historical_expenses:
+                # Skip if it's Taxes or Mgmt Fee - we use the calculated values above
+                if expense.mapped_category in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.MANAGEMENT_FEES]:
+                    continue
+                    
+                cat_name = expense.mapped_category.value
+                other_expenses_map[cat_name] = other_expenses_map.get(cat_name, 0.0) + expense.amount
+        else:
+             self.audit_log_service.add_log(analysis, "Data Warning", "No T12 Expenses Found", "Extraction", "Using only calculated Taxes & Mgmt Fee")
+             analysis.gating_reasons.append("CRITICAL: No T12 Expense Data extracted. Pro Forma expenses may be understated.")
+        
+        # Add aggregated other expenses to breakdown
+        total_other_opex = 0.0
+        for name, amount in other_expenses_map.items():
+            expense_breakdown.append(ProFormaExpenseItem(name=name, amount=amount))
+            total_other_opex += amount
+            
+        if has_t12_data:
+            self.audit_log_service.add_log(analysis, "Other OpEx", f"${total_other_opex:,.0f}", "Aggregation", "Sum of T12 Expenses (Excl. Tax/Mgmt)")
+
+        total_opex = sum(item.amount for item in expense_breakdown)
+        analysis.pro_forma_expenses = total_opex
+        analysis.pro_forma_expenses_detailed = expense_breakdown
+        
+        # 4. Expense Ratio Evaluation (Check, don't force)
+        expense_ratio = total_opex / egi if egi > 0 else 0
+        
+        if expense_ratio < 0.20:
+             analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is suspiciously low (<20%). Check if T12 data was extracted.")
+        elif expense_ratio > 0.60:
+            analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is unusually high (>60%)")
+        
+        self.audit_log_service.add_log(analysis, "Total OpEx", f"${total_opex:,.0f}", "Summation", f"Calculated Ratio: {expense_ratio:.1%}")
+
+    # --- Step 3: Profitability Metrics (NOI) ---
+    def _calculate_profitability(self, analysis: UnderwritingAnalysis):
+        egi = analysis.effective_gross_income or 0
+        opex = analysis.pro_forma_expenses or 0
+        purchase_price = analysis.property_meta.purchase_price or 0
+        params = analysis.deal_parameters or DealParameters()
+
+        # 1. Net Operating Income (NOI)
+        # Formula: EGI - OpEx
+        noi = egi - opex
+        analysis.pro_forma_noi = noi
+        self.audit_log_service.add_log(analysis, "NOI", f"${noi:,.0f}", "Calculation", "EGI - OpEx")
+
+        # 2. Yield on Cost (Unlevered Yield)
+        # Formula: NOI / Total Project Cost
+        # Total Project Cost = Purchase Price + Closing Costs + Renovation Budget
+        total_project_cost = purchase_price + params.closing_costs + params.renovation_budget
+        analysis.total_project_cost = total_project_cost
+        
+        yield_on_cost = noi / total_project_cost if total_project_cost > 0 else 0
+        analysis.yield_on_cost = yield_on_cost
+        self.audit_log_service.add_log(analysis, "Yield on Cost", f"{yield_on_cost:.2%}", "Calculation", "NOI / Total Project Cost")
+
+        # 3. Entry Cap Rate
+        # Formula: NOI / Purchase Price
+        entry_cap_rate = noi / purchase_price if purchase_price > 0 else 0
+        analysis.cap_rate = entry_cap_rate
+        self.audit_log_service.add_log(analysis, "Entry Cap Rate", f"{entry_cap_rate:.2%}", "Calculation", "NOI / Purchase Price")
+
+    # --- Step 4: Debt & Cash Flow ---
+    def _calculate_debt_and_cash_flow(self, analysis: UnderwritingAnalysis):
+        params = analysis.deal_parameters or DealParameters()
+        purchase_price = analysis.property_meta.purchase_price or 0
+        noi = analysis.pro_forma_noi or 0
+        total_project_cost = analysis.total_project_cost or 0
+
+        # 1. Loan Amount Logic
+        # CASE A: Purchase Price is known -> Standard LTV calculation
+        if purchase_price > 0:
+            loan_amount = purchase_price * params.ltv
+            method = f"Purchase Price * {params.ltv:.0%} LTV"
+        
+        # CASE B: Purchase Price is missing (0) -> Back-solve from NOI/Cap Rate (Implied Value)
+        else:
+            # Assume a market cap rate (e.g., 5.5% or exit cap rate) to estimate value
+            # If NOI is negative, implied value is 0 (cannot have negative property value for loan purposes)
+            implied_value = max(0.0, noi / params.exit_cap_rate if params.exit_cap_rate > 0 else 0)
+            loan_amount = implied_value * params.ltv
+            method = f"Implied Value (NOI/{params.exit_cap_rate:.1%}) * {params.ltv:.0%} LTV (Price Missing)"
+            
+            # Update purchase price in meta so other metrics (Cap Rate) work?
+            # Ideally, we flag this as an estimate.
+            if implied_value > 0:
+                logger.warning(f"Purchase Price missing. Using Implied Value ${implied_value:,.0f} for Loan calc.")
+                # We won't overwrite extracted Purchase Price to preserve data integrity,
+                # but we will use this implied loan amount.
+
+        analysis.loan_amount = loan_amount
+        self.audit_log_service.add_log(analysis, "Loan Amount", f"${loan_amount:,.0f}", "Calculation", method)
+
+        # Gating Logic
+        if loan_amount < params.min_loan_amount:
+            # Check if this is a hard fail or just a warning? Usually hard fail for lending criteria.
+            # We set status to FAIL but proceed with calcs.
+            analysis.pass_fail_status = "FAIL"
+            analysis.gating_reasons.append(f"Loan Amount ${loan_amount:,.0f} < ${params.min_loan_amount:,.0f}")
+
+        # 2. Debt Service (Interest Only - "Bridge Debt")
+        # Formula: SOFR + Spread
+        interest_rate = params.sofr_rate + params.bridge_spread
+        annual_debt_service = loan_amount * interest_rate
+        analysis.annual_debt_service = annual_debt_service
+        self.audit_log_service.add_log(analysis, "Debt Service", f"${annual_debt_service:,.0f}", "Calculation", f"Loan * {interest_rate:.2%} (IO)")
+
+        # 3. Levered Cash Flow
+        # Formula: NOI - Annual Debt Service
+        cash_flow = noi - annual_debt_service
+        analysis.cash_flow = cash_flow
+        self.audit_log_service.add_log(analysis, "Cash Flow", f"${cash_flow:,.0f}", "Calculation", "NOI - Debt Service")
+
+        # 4. Cash on Cash Return
+        # Formula: Cash Flow / Equity Invested
+        # Equity Invested = Total Project Cost - Loan Amount
+        equity_invested = total_project_cost - loan_amount
+        analysis.equity_invested = equity_invested
+        
+        coc = cash_flow / equity_invested if equity_invested > 0 else 0
+        analysis.cash_on_cash_return = coc
+        self.audit_log_service.add_log(analysis, "Cash on Cash", f"{coc:.2%}", "Calculation", "Cash Flow / Equity Invested")
+        
+        # Additional Metrics
+        analysis.dscr = noi / annual_debt_service if annual_debt_service > 0 else 0
+        analysis.debt_yield = noi / loan_amount if loan_amount > 0 else 0
+
+    # --- Step 5: Time-Based Returns (IRR & MOIC) ---
+    def _calculate_returns(self, analysis: UnderwritingAnalysis):
+        params = analysis.deal_parameters or DealParameters()
+
+        # VALIDATION: Ensure rent_growth is valid before projection
+        if params.growth_rate is None or math.isnan(params.growth_rate):
+             params.growth_rate = 0.03
+        
+        # 1. Revenue Growth Logic
+        # 5-Year Array/Loop
+        cash_flows = []
+        equity_invested = analysis.equity_invested or 0
+        
+        # Year 0: Investment (Negative)
+        cash_flows.append(-equity_invested)
+        
+        # Current NOI is Year 1 Base
+        current_noi = analysis.pro_forma_noi or 0
+        
+        # IMPORTANT: We assume NOI grows at the same rate as Revenue for simplicity in this model,
+        # OR we could grow Revenue and Expenses separately.
+        # Given the prompt says "Rents grow 3% annually", we'll apply growth to NOI for simplicity 
+        # unless full pro-forma tables are needed. 
+        # Re-reading prompt: "Year N Revenue = Year N-1 Revenue * 1.03".
+        # It doesn't specify Expense growth, but usually expenses grow too (at 2-3%).
+        # Let's assume NOI grows at 3% to keep it consistent with Revenue growth, 
+        # or implies Revenue grows and Expenses stay flat (which is aggressive).
+        # Better approach: Grow Revenue by 3%, Expenses by 3% (Standard), so NOI grows by 3%.
+        
+        annual_noi = current_noi
+        
+        # Years 1-4 Cash Flow
+        for year in range(1, params.hold_period):
+            # Cash Flow = NOI - Debt Service
+            cf = annual_noi - (analysis.annual_debt_service or 0)
+            cash_flows.append(cf)
+            
+            # Grow NOI for next year
+            annual_noi *= (1 + params.growth_rate)
+            
+        # Year 5 (Exit Year)
+        year_5_noi = annual_noi
+        # Note: Sell on Year 6 NOI (forward NOI)
+        year_6_noi = year_5_noi * (1 + params.growth_rate)
+        
+        # 2. Exit Valuation
+        # Formula: Year 6 NOI / Exit Cap Rate
+        sale_price = year_6_noi / params.exit_cap_rate
+        analysis.exit_valuation = sale_price
+        
+        # 3. Net Sale Proceeds
+        # Formula: Sale Price - Sales Costs (2%) - Outstanding Loan Balance
+        sales_costs = sale_price * params.sales_cost_rate
+        loan_balance = analysis.loan_amount or 0 # Interest Only, so balance is constant
+        net_proceeds = sale_price - sales_costs - loan_balance
+        analysis.net_sale_proceeds = net_proceeds
+        
+        # Year 5 Cash Flow includes Operations + Sale
+        year_5_cf = (year_5_noi - (analysis.annual_debt_service or 0)) + net_proceeds
+        cash_flows.append(year_5_cf)
+        
+        # 4. MOIC
+        # Formula: Sum(Positive Cash Flows) / Equity Invested
+        # Note: cash_flows[0] is negative equity.
+        total_inflows = sum(cf for cf in cash_flows if cf > 0)
+        moic = total_inflows / equity_invested if equity_invested > 0 else 0
+        analysis.moic = moic
+        
+        # 5. IRR
+        try:
+            irr = npf.irr(cash_flows)
+            # Handle case where IRR might be NaN or infinite
+            if irr is None or isinstance(irr, complex): 
+                irr = 0.0
+        except Exception:
+            irr = 0.0
+            
+        analysis.irr = irr
+        
+        self.audit_log_service.add_log(analysis, "IRR", f"{irr:.2%}", "Numpy Financial", "IRR of 5-Year Cash Flows")
+        self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Equity Invested")
+
     def get_audit_trail(self, analysis: UnderwritingAnalysis) -> List[Dict[str, Any]]:
         return analysis.audit_trail
-
-# from app.models.schemas import UnderwritingAnalysis, DealParameters, ProFormaExpenseItem
-# from typing import Dict, Any, List
-# from app.services.audit_log_service import AuditLogService
-
-# class FinancialService:
-#     def __init__(self, audit_log_service: AuditLogService):
-#         self.audit_log_service = audit_log_service
-
-#     def check_deal_viability(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
-#         reasons = []
-#         status = "PASS"
-#         params = analysis.deal_parameters or DealParameters()
-        
-#         # 1. Units
-#         units = analysis.property_meta.total_units or 0
-#         if units < params.min_unit_count:
-#             status = "FAIL"
-#             reasons.append(f"Unit count FAIL: {units} < {params.min_unit_count}")
-        
-#         # 2. Loan
-#         loan = params.loan_amount
-#         if loan < 5_000_000:
-#             status = "FAIL"
-#             reasons.append(f"Loan amount FAIL: ${loan:,.0f} < $5M")
-            
-#         return {"status": status, "reasons": reasons}
-
-#     def calculate_historical(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
-#         # 1. Revenue
-#         hgi = sum((i.current_rent or 0) * 12 for i in analysis.rent_roll)
-        
-#         # 2. Expenses (Summing Standardized Expenses)
-#         total_expenses = sum(e.amount for e in analysis.historical_expenses)
-        
-#         # 3. NOI
-#         noi = hgi - total_expenses
-        
-#         # 4. Save
-#         analysis.historical_gross_income = hgi
-#         analysis.historical_total_expenses = total_expenses
-#         analysis.historical_noi = noi
-        
-#         price = analysis.property_meta.purchase_price or 0
-#         analysis.historical_cap_rate = noi / price if price > 0 else 0
-        
-#         return {
-#             "historical_noi": noi,
-#             "historical_cap_rate": analysis.historical_cap_rate,
-#             "total_expenses": total_expenses,
-#             "historical_gross_income": hgi
-#         }
-
-#     def calculate_pro_forma(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
-#         if not analysis.deal_parameters:
-#             analysis.deal_parameters = DealParameters()
-#         params = analysis.deal_parameters
-        
-#         # --- REVENUE ---
-#         gpr = sum((i.market_rent or 0) * 12 for i in analysis.rent_roll)
-#         self.audit_log_service.add_log(analysis, "Pro Forma GPR", f"${gpr:,.0f}", "Rent Roll", "Sum of Market Rents")
-
-#         vacancy_loss = gpr * params.vacancy_rate
-#         egi = gpr - vacancy_loss
-#         self.audit_log_service.add_log(analysis, "Pro Forma EGI", f"${egi:,.0f}", "Valiance Logic", f"GPR minus {params.vacancy_rate:.1%} Vacancy")
-
-#         # --- EXPENSES (Targeting 38% Ratio) ---
-#         target_expense_budget = egi * 0.38
-#         self.audit_log_service.add_log(analysis, "Target Expense Budget", f"${target_expense_budget:,.0f}", "Valiance Logic", "38% of EGI Rule")
-        
-#         # Breakdown Calculation
-#         breakdown = self._calculate_pro_forma_breakdown(analysis, target_expense_budget)
-        
-#         # Final Sum
-#         pf_expenses = sum(item.amount for item in breakdown)
-#         analysis.pro_forma_expenses_detailed = breakdown
-#         analysis.pro_forma_expenses = pf_expenses
-        
-#         # --- NOI & CAP ---
-#         pf_noi = egi - pf_expenses
-#         analysis.pro_forma_noi = pf_noi
-        
-#         price = analysis.property_meta.purchase_price or 0
-#         analysis.cap_rate = pf_noi / price if price > 0 else 0
-#     def calculate_loan_parameters(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
-#         """Calculates key loan metrics based on pro forma NOI and deal parameters."""
-#         if not analysis.pro_forma_noi or not analysis.deal_parameters:
-#             return {}
-
-#         noi = analysis.pro_forma_noi
-#         params = analysis.deal_parameters
-        
-#         # 1. Debt Service
-#         # Assuming monthly payments for a 30-year amortization
-#         loan_amount = params.loan_amount
-#         monthly_interest_rate = params.interest_rate / 12
-#         number_of_payments = params.amortization_period * 12
-        
-#         if monthly_interest_rate > 0:
-#             monthly_payment = (loan_amount * monthly_interest_rate * (1 + monthly_interest_rate) ** number_of_payments) / \
-#                               ((1 + monthly_interest_rate) ** number_of_payments - 1)
-#         else:
-#             monthly_payment = loan_amount / number_of_payments if number_of_payments > 0 else 0
-            
-#         annual_debt_service = monthly_payment * 12
-#         self.audit_log_service.add_log(analysis, "Loan: Annual Debt Service", f"${annual_debt_service:,.2f}", "Loan Logic", "Calculated based on loan amount, interest rate, and amortization period")
-
-#         # 2. Debt Service Coverage Ratio (DSCR)
-#         dscr = noi / annual_debt_service if annual_debt_service > 0 else 0
-#         self.audit_log_service.add_log(analysis, "Loan: DSCR", f"{dscr:.2f}x", "Loan Logic", "Pro Forma NOI / Annual Debt Service")
-
-#         # 3. Debt Yield
-#         debt_yield = noi / loan_amount if loan_amount > 0 else 0
-#         self.audit_log_service.add_log(analysis, "Loan: Debt Yield", f"{debt_yield:.2%}", "Loan Logic", "Pro Forma NOI / Loan Amount")
-        
-#         # Save to analysis object
-#         analysis.debt_yield = debt_yield
-#         analysis.dscr = dscr
-        
-#         return {
-#             "debt_yield": debt_yield,
-#             "dscr": dscr,
-#             "annual_debt_service": annual_debt_service
-#         }
-
-#     def run_full_analysis(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
-#         """Runs all financial calculations in the correct order."""
-#         self.audit_log_service.add_log(analysis, "Analysis Start", "Starting full financial analysis", "System", "Orchestration")
-        
-#         self.calculate_historical(analysis)
-#         self.calculate_pro_forma(analysis)
-#         # Note: calculate_loan_parameters is called within calculate_pro_forma
-        
-#         self.audit_log_service.add_log(analysis, "Analysis Complete", "All financial calculations are complete", "System", "Orchestration")
-#         return analysis
-#         analysis.exit_cap_rate = params.exit_cap_rate
-
-#         self.audit_log_service.add_log(analysis, "Pro Forma NOI", f"${pf_noi:,.0f}", "Calculation", "EGI - Total Expenses")
-
-#         return {"pro_forma_noi": pf_noi}
-
-#     def _calculate_pro_forma_breakdown(self, analysis: UnderwritingAnalysis, budget: float) -> List[ProFormaExpenseItem]:
-#         breakdown = []
-        
-#         # 1. Taxes (Fixed)
-#         price = analysis.property_meta.purchase_price or 0
-#         tax = price * 0.0125 if price > 0 else budget * 0.30
-#         breakdown.append(ProFormaExpenseItem(name="Property Tax", amount=tax))
-        
-#         # 2. Variable Allocations
-#         remaining = budget - tax
-#         if remaining < 0: remaining = 0
-        
-#         # Allocating the rest to match the 38% target naturally
-#         allocations = {
-#             "Insurance": 0.15,
-#             "Utilities": 0.20,
-#             "Management": 0.10,
-#             "Repairs": 0.15,
-#             "Admin": 0.05,
-#             "Landscaping": 0.05,
-#             "Reserves": 0.30  # Ensures we use 100% of the remaining budget
-#         }
-        
-#         for name, pct in allocations.items():
-#             amt = remaining * pct
-#             breakdown.append(ProFormaExpenseItem(name=name, amount=amt))
-            
-#         return breakdown

@@ -12,3 +12,4 @@ google-genai
 google-cloud-storage
 pandas
 python-multipart
+numpy-financial

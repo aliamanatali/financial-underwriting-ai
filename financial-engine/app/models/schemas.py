@@ -76,10 +76,29 @@ class ProFormaExpenseItem(BaseModel):
     amount: float
 
 class DealParameters(BaseModel):
+    # Revenue & Expense Assumptions
     growth_rate: float = 0.03
-    exit_cap_rate: float = 0.06 
     vacancy_rate: float = 0.03
-    loan_amount: float = 5_000_000
+    management_fee_rate: float = 0.04
+    expense_ratio_target: float = 0.38
+    tax_rate: float = 0.012  # ~1.2% for CA
+    
+    # Exit Assumptions
+    exit_cap_rate: float = 0.06
+    sales_cost_rate: float = 0.02
+    hold_period: int = 5
+    
+    # Loan/Debt Assumptions
+    ltv: float = 0.65  # Loan to Value
+    sofr_rate: float = 0.053 # Base rate
+    bridge_spread: float = 0.02 # Spread over SOFR
+    
+    # Project Cost Assumptions
+    closing_costs: float = 100_000.0
+    renovation_budget: float = 0.0
+    
+    # Gating Thresholds
+    min_loan_amount: float = 5_000_000
     min_unit_count: int = 15
     max_unit_count: int = 80
     max_build_year: int = 1970
@@ -118,6 +137,7 @@ class NormalizedDataItem(BaseModel):
     user_verified: bool = False
     user_correction: Optional[str] = None
     source_document: str  # Which document this came from
+    metadata: Optional[Dict[str, Any]] = {}
     
 class DocumentNormalizationResult(BaseModel):
     """
@@ -161,11 +181,36 @@ class UnderwritingAnalysis(BaseModel):
     
     pro_forma_expenses_detailed: List[ProFormaExpenseItem] = []
 
-    pro_forma_noi: Optional[float] = 0.0
+    # Pro Forma (Day 1)
+    gross_potential_rent: Optional[float] = 0.0
+    loss_to_lease: Optional[float] = 0.0
+    vacancy_loss: Optional[float] = 0.0
+    effective_gross_income: Optional[float] = 0.0
     pro_forma_expenses: Optional[float] = 0.0
-    cap_rate: Optional[float] = 0.0
+    pro_forma_noi: Optional[float] = 0.0
+    
+    # Valuation Metrics
+    yield_on_cost: Optional[float] = 0.0
+    cap_rate: Optional[float] = 0.0 # Entry Cap Rate
     exit_cap_rate: Optional[float] = 0.0
     
+    # Debt & Cash Flow
+    total_project_cost: Optional[float] = 0.0
+    loan_amount: Optional[float] = 0.0
+    equity_invested: Optional[float] = 0.0
+    annual_debt_service: Optional[float] = 0.0
+    cash_flow: Optional[float] = 0.0
+    cash_on_cash_return: Optional[float] = 0.0
+    dscr: Optional[float] = 0.0
+    debt_yield: Optional[float] = 0.0
+
+    # Return Metrics (5-Year Hold)
+    exit_valuation: Optional[float] = 0.0
+    net_sale_proceeds: Optional[float] = 0.0
+    moic: Optional[float] = 0.0
+    irr: Optional[float] = 0.0
+    
+    # Historical
     historical_noi: Optional[float] = 0.0
     historical_total_expenses: float = 0.0
     historical_cap_rate: Optional[float] = 0.0

@@ -164,7 +164,9 @@ export default function UnderwritingDashboard({
               <span className="text-gray-600">Total Expenses</span>
               <span className="font-semibold text-red-600">
                 -{formatCurrency(
-                  analysis.historical_expenses?.reduce((sum, e) => sum + e.value, 0) || 0
+                  analysis.historical_total_expenses ||
+                  analysis.historical_expenses?.reduce((sum, e) => sum + e.amount, 0) ||
+                  0
                 )}
               </span>
             </div>
@@ -196,9 +198,7 @@ export default function UnderwritingDashboard({
             <div className="flex justify-between pb-2 border-b">
               <span className="text-gray-600">Total Expenses</span>
               <span className="font-semibold text-red-600">
-                -{formatCurrency(
-                  analysis.historical_expenses?.reduce((sum, e) => sum + e.value, 0) || 0
-                )}
+                -{formatCurrency(analysis.pro_forma_expenses || 0)}
               </span>
             </div>
             <div className="flex justify-between bg-green-50 p-3 rounded font-bold text-lg">

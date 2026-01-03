@@ -137,6 +137,16 @@ export interface RentRollSummary {
   total_annual_rent: number;
 }
 
+export interface StandardizedExpense {
+  original_text: string;
+  mapped_category: string;
+  amount: number;
+  confidence: number;
+  audit_log: AuditEntry;
+  user_verified: boolean;
+  user_corrected_category?: string;
+}
+
 export interface FinancialLineItem {
   category: string;
   value: number;
@@ -171,13 +181,15 @@ export interface UnderwritingAnalysis {
   property_meta: PropertyMeta;
   rent_roll: RentRollItem[];
   rent_roll_summary: RentRollSummary;
-  historical_expenses: FinancialLineItem[];
+  historical_expenses: StandardizedExpense[];
   deal_parameters?: DealParameters;
   audit_trail?: AuditEntry[];
   pro_forma_noi?: number;
   cap_rate?: number;
   historical_noi?: number;
   historical_cap_rate?: number;
+  historical_total_expenses?: number;
+  pro_forma_expenses?: number;
 }
 
 export interface DocumentMetadata {

@@ -33,10 +33,11 @@ class OMScraperService:
         # return PropertyMeta(**om_data)
         
         # The above code is commented out because it is conceptual.
+        # Returning a default object with 0s to indicate extraction is needed
         return PropertyMeta(
             address="123 Main St",
             year_built=2022,
-            purchase_price=1000000.0,
+            purchase_price=0.0, # Value should be extracted from OM
             total_units=32
         )
 

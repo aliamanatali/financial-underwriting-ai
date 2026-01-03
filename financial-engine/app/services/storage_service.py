@@ -111,6 +111,10 @@ class StorageService:
     def _get_package_metadata_path(self, package_id: str) -> str:
         """Get storage path for package metadata."""
         return f"deal-packages/{package_id}/metadata.json"
+
+    def _get_analysis_result_path(self, package_id: str) -> str:
+        """Get storage path for analysis result."""
+        return f"deal-packages/{package_id}/analysis_result.json"
     
     def _get_document_path(self, package_id: str, document_id: str, filename: str) -> str:
         """Get storage path for document file."""
@@ -152,6 +156,70 @@ class StorageService:
         except Exception as e:
             logger.error(f"Failed to save deal package: {str(e)}")
             return False
+
+    async def save_analysis_result(self, package_id: str, analysis_data: dict) -> bool:
+        """
+        Save underwriting analysis result to GCP Cloud Storage.
+        
+        Args:
+            package_id: Package identifier
+            analysis_data: Dictionary containing analysis result
+            
+        Returns:
+            True if saved successfully
+        """
+        if not self.use_gcp:
+            logger.warning("GCP not configured. Using in-memory storage for analysis result.")
+            _memory_storage[f"{package_id}_analysis"] = analysis_data
+            return True
+        
+        try:
+            # Convert to JSON
+            json_data = json.dumps(analysis_data, indent=2, default=str)
+            
+            # Save to GCP
+            blob_path = self._get_analysis_result_path(package_id)
+            blob = self.bucket.blob(blob_path)
+            blob.upload_from_string(json_data, content_type="application/json")
+            
+            logger.info(f"Saved analysis result: {package_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save analysis result: {str(e)}")
+            return False
+
+    async def get_analysis_result(self, package_id: str) -> Optional[dict]:
+        """
+        Retrieve underwriting analysis result from GCP Cloud Storage.
+        
+        Args:
+            package_id: Package identifier
+            
+        Returns:
+            Analysis result dictionary or None if not found
+        """
+        if not self.use_gcp:
+            return _memory_storage.get(f"{package_id}_analysis")
+        
+        try:
+            blob_path = self._get_analysis_result_path(package_id)
+            blob = self.bucket.blob(blob_path)
+            
+            if not blob.exists():
+                logger.warning(f"Analysis result not found in GCP: {package_id}")
+                return None
+            
+            # Download and parse JSON
+            json_data = blob.download_as_text()
+            analysis_data = json.loads(json_data)
+            
+            logger.info(f"Retrieved analysis result: {package_id}")
+            return analysis_data
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve analysis result: {str(e)}")
+            return None
     
     async def get_deal_package(self, package_id: str) -> Optional[dict]:
         """
