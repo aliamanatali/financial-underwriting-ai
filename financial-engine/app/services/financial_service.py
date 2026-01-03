@@ -12,6 +12,21 @@ class FinancialService:
     def __init__(self, audit_log_service: AuditLogService):
         self.audit_log_service = audit_log_service
 
+    def _sanitize_value(self, value: Optional[float]) -> float:
+        """
+        Safely sanitize float values to ensure they are JSON compliant.
+        Replaces NaN and Infinity with 0.0.
+        """
+        if value is None:
+            return 0.0
+        try:
+            if isinstance(value, (float, int)):
+                if math.isnan(value) or math.isinf(value):
+                    return 0.0
+        except Exception:
+            return 0.0
+        return value
+
     def check_deal_viability(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
         """
         Checks hard gating criteria (Unit Count, Loan Amount, etc.)
@@ -66,15 +81,15 @@ class FinancialService:
         historical_cap_rate = historical_noi / purchase_price if purchase_price > 0 else 0
         
         # Save to Analysis Object
-        analysis.historical_total_expenses = total_expenses
-        analysis.historical_noi = historical_noi
-        analysis.historical_cap_rate = historical_cap_rate
+        analysis.historical_total_expenses = self._sanitize_value(total_expenses)
+        analysis.historical_noi = self._sanitize_value(historical_noi)
+        analysis.historical_cap_rate = self._sanitize_value(historical_cap_rate)
         
         return {
             "gross_income": hgi,
             "total_expenses": total_expenses,
             "historical_noi": historical_noi,
-            "historical_cap_rate": historical_cap_rate,
+            "historical_cap_rate": analysis.historical_cap_rate,
         }
 
     def calculate_pro_forma(self, analysis: UnderwritingAnalysis) -> Dict[str, Any]:
@@ -83,6 +98,9 @@ class FinancialService:
         """
         if not analysis.deal_parameters:
             analysis.deal_parameters = DealParameters()
+        
+        # Sanitize parameters to prevent NaN propagation
+        self._sanitize_parameters(analysis.deal_parameters)
             
         self.audit_log_service.add_log(analysis, "Pro Forma Start", "Initiating 5-Step Calculation", "System", "Orchestration")
 
@@ -111,42 +129,50 @@ class FinancialService:
             "moic": analysis.moic
         }
 
+    def _sanitize_parameters(self, params: DealParameters):
+        """Helper to ensure no NaN values in deal parameters"""
+        if math.isnan(params.growth_rate): params.growth_rate = 0.03
+        if math.isnan(params.vacancy_rate): params.vacancy_rate = 0.05
+        if math.isnan(params.management_fee_rate): params.management_fee_rate = 0.04
+        if math.isnan(params.tax_rate): params.tax_rate = 0.012
+        if math.isnan(params.exit_cap_rate): params.exit_cap_rate = 0.06
+        if math.isnan(params.ltv): params.ltv = 0.65
+        if math.isnan(params.sofr_rate): params.sofr_rate = 0.05
+        if math.isnan(params.bridge_spread): params.bridge_spread = 0.02
+        if math.isnan(params.closing_costs): params.closing_costs = 0.0
+        if math.isnan(params.renovation_budget): params.renovation_budget = 0.0
+
     # --- Step 1: Revenue Logic ---
     def _calculate_revenue(self, analysis: UnderwritingAnalysis):
         params = analysis.deal_parameters or DealParameters()
 
-        # VALIDATION: Ensure rent_growth is valid
-        if params.growth_rate is None or math.isnan(params.growth_rate):
-            logger.warning(f"Rent Growth was {params.growth_rate}. Defaulting to 3%.")
-            params.growth_rate = 0.03
-        
         # 1. Gross Potential Rent (GPR)
         # Formula: Total Units * Market Rent per Unit * 12
         # Note: We sum up individual units from Rent Roll for accuracy
         gpr = sum((item.market_rent or 0) * 12 for item in analysis.rent_roll)
-        analysis.gross_potential_rent = gpr
+        analysis.gross_potential_rent = self._sanitize_value(gpr)
         self.audit_log_service.add_log(analysis, "GPR", f"${gpr:,.0f}", "Rent Roll", "Sum of (Market Rent * 12)")
 
         # 2. Loss to Lease
         # Formula: GPR - (Current Rent Roll Sum * 12)
         current_rent_annual = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
         loss_to_lease = gpr - current_rent_annual
-        analysis.loss_to_lease = loss_to_lease
+        analysis.loss_to_lease = self._sanitize_value(loss_to_lease)
         self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent Annualized")
 
         # 3. Vacancy Loss
         # Formula: GPR * 0.03 (Valiance Constraint)
         vacancy_loss = gpr * params.vacancy_rate
-        analysis.vacancy_loss = vacancy_loss
+        analysis.vacancy_loss = self._sanitize_value(vacancy_loss)
         self.audit_log_service.add_log(analysis, "Vacancy Loss", f"${vacancy_loss:,.0f}", "Valiance Rule", f"{params.vacancy_rate:.1%} of GPR")
 
         # 4. Effective Gross Income (EGI)
         # Formula: GPR - LossToLease - VacancyLoss + Other Income
-        # Note: Assuming 'Other Income' is 0 for now as it's not in the base extraction yet, 
+        # Note: Assuming 'Other Income' is 0 for now as it's not in the base extraction yet,
         # but could be added from T12 extraction if available.
-        other_income = 0 
+        other_income = 0
         egi = gpr - loss_to_lease - vacancy_loss + other_income
-        analysis.effective_gross_income = egi
+        analysis.effective_gross_income = self._sanitize_value(egi)
         self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation", "GPR - LossToLease - VacancyLoss")
 
     # --- Step 2: Expense Logic ---
@@ -159,13 +185,13 @@ class FinancialService:
 
         # 1. Property Taxes (Prop 13 Reset)
         # Formula: (Purchase Price * Tax Rate) + Special Assessments
-        pro_forma_tax = purchase_price * params.tax_rate
+        pro_forma_tax = self._sanitize_value(purchase_price * params.tax_rate)
         expense_breakdown.append(ProFormaExpenseItem(name="Property Taxes", amount=pro_forma_tax))
         self.audit_log_service.add_log(analysis, "Expense: Taxes", f"${pro_forma_tax:,.0f}", "Valiance Rule", f"Purchase Price * {params.tax_rate:.2%}")
 
         # 2. Management Fee
         # Formula: EGI * 0.04
-        mgmt_fee = egi * params.management_fee_rate
+        mgmt_fee = self._sanitize_value(egi * params.management_fee_rate)
         expense_breakdown.append(ProFormaExpenseItem(name="Management Fee", amount=mgmt_fee))
         self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}", "Valiance Rule", f"{params.management_fee_rate:.1%} of EGI")
 
@@ -190,14 +216,15 @@ class FinancialService:
         # Add aggregated other expenses to breakdown
         total_other_opex = 0.0
         for name, amount in other_expenses_map.items():
-            expense_breakdown.append(ProFormaExpenseItem(name=name, amount=amount))
-            total_other_opex += amount
+            safe_amount = self._sanitize_value(amount)
+            expense_breakdown.append(ProFormaExpenseItem(name=name, amount=safe_amount))
+            total_other_opex += safe_amount
             
         if has_t12_data:
             self.audit_log_service.add_log(analysis, "Other OpEx", f"${total_other_opex:,.0f}", "Aggregation", "Sum of T12 Expenses (Excl. Tax/Mgmt)")
 
         total_opex = sum(item.amount for item in expense_breakdown)
-        analysis.pro_forma_expenses = total_opex
+        analysis.pro_forma_expenses = self._sanitize_value(total_opex)
         analysis.pro_forma_expenses_detailed = expense_breakdown
         
         # 4. Expense Ratio Evaluation (Check, don't force)
@@ -220,7 +247,7 @@ class FinancialService:
         # 1. Net Operating Income (NOI)
         # Formula: EGI - OpEx
         noi = egi - opex
-        analysis.pro_forma_noi = noi
+        analysis.pro_forma_noi = self._sanitize_value(noi)
         self.audit_log_service.add_log(analysis, "NOI", f"${noi:,.0f}", "Calculation", "EGI - OpEx")
 
         # 2. Yield on Cost (Unlevered Yield)
@@ -230,13 +257,13 @@ class FinancialService:
         analysis.total_project_cost = total_project_cost
         
         yield_on_cost = noi / total_project_cost if total_project_cost > 0 else 0
-        analysis.yield_on_cost = yield_on_cost
+        analysis.yield_on_cost = self._sanitize_value(yield_on_cost)
         self.audit_log_service.add_log(analysis, "Yield on Cost", f"{yield_on_cost:.2%}", "Calculation", "NOI / Total Project Cost")
 
         # 3. Entry Cap Rate
         # Formula: NOI / Purchase Price
         entry_cap_rate = noi / purchase_price if purchase_price > 0 else 0
-        analysis.cap_rate = entry_cap_rate
+        analysis.cap_rate = self._sanitize_value(entry_cap_rate)
         self.audit_log_service.add_log(analysis, "Entry Cap Rate", f"{entry_cap_rate:.2%}", "Calculation", "NOI / Purchase Price")
 
     # --- Step 4: Debt & Cash Flow ---
@@ -267,7 +294,7 @@ class FinancialService:
                 # We won't overwrite extracted Purchase Price to preserve data integrity,
                 # but we will use this implied loan amount.
 
-        analysis.loan_amount = loan_amount
+        analysis.loan_amount = self._sanitize_value(loan_amount)
         self.audit_log_service.add_log(analysis, "Loan Amount", f"${loan_amount:,.0f}", "Calculation", method)
 
         # Gating Logic
@@ -281,28 +308,28 @@ class FinancialService:
         # Formula: SOFR + Spread
         interest_rate = params.sofr_rate + params.bridge_spread
         annual_debt_service = loan_amount * interest_rate
-        analysis.annual_debt_service = annual_debt_service
+        analysis.annual_debt_service = self._sanitize_value(annual_debt_service)
         self.audit_log_service.add_log(analysis, "Debt Service", f"${annual_debt_service:,.0f}", "Calculation", f"Loan * {interest_rate:.2%} (IO)")
 
         # 3. Levered Cash Flow
         # Formula: NOI - Annual Debt Service
         cash_flow = noi - annual_debt_service
-        analysis.cash_flow = cash_flow
+        analysis.cash_flow = self._sanitize_value(cash_flow)
         self.audit_log_service.add_log(analysis, "Cash Flow", f"${cash_flow:,.0f}", "Calculation", "NOI - Debt Service")
 
         # 4. Cash on Cash Return
         # Formula: Cash Flow / Equity Invested
         # Equity Invested = Total Project Cost - Loan Amount
         equity_invested = total_project_cost - loan_amount
-        analysis.equity_invested = equity_invested
+        analysis.equity_invested = self._sanitize_value(equity_invested)
         
         coc = cash_flow / equity_invested if equity_invested > 0 else 0
-        analysis.cash_on_cash_return = coc
+        analysis.cash_on_cash_return = self._sanitize_value(coc)
         self.audit_log_service.add_log(analysis, "Cash on Cash", f"{coc:.2%}", "Calculation", "Cash Flow / Equity Invested")
         
         # Additional Metrics
-        analysis.dscr = noi / annual_debt_service if annual_debt_service > 0 else 0
-        analysis.debt_yield = noi / loan_amount if loan_amount > 0 else 0
+        analysis.dscr = self._sanitize_value(noi / annual_debt_service if annual_debt_service > 0 else 0)
+        analysis.debt_yield = self._sanitize_value(noi / loan_amount if loan_amount > 0 else 0)
 
     # --- Step 5: Time-Based Returns (IRR & MOIC) ---
     def _calculate_returns(self, analysis: UnderwritingAnalysis):
@@ -351,15 +378,18 @@ class FinancialService:
         
         # 2. Exit Valuation
         # Formula: Year 6 NOI / Exit Cap Rate
-        sale_price = year_6_noi / params.exit_cap_rate
-        analysis.exit_valuation = sale_price
+        if params.exit_cap_rate and params.exit_cap_rate > 0:
+            sale_price = year_6_noi / params.exit_cap_rate
+        else:
+            sale_price = 0.0
+        analysis.exit_valuation = self._sanitize_value(sale_price)
         
         # 3. Net Sale Proceeds
         # Formula: Sale Price - Sales Costs (2%) - Outstanding Loan Balance
         sales_costs = sale_price * params.sales_cost_rate
         loan_balance = analysis.loan_amount or 0 # Interest Only, so balance is constant
         net_proceeds = sale_price - sales_costs - loan_balance
-        analysis.net_sale_proceeds = net_proceeds
+        analysis.net_sale_proceeds = self._sanitize_value(net_proceeds)
         
         # Year 5 Cash Flow includes Operations + Sale
         year_5_cf = (year_5_noi - (analysis.annual_debt_service or 0)) + net_proceeds
@@ -370,18 +400,18 @@ class FinancialService:
         # Note: cash_flows[0] is negative equity.
         total_inflows = sum(cf for cf in cash_flows if cf > 0)
         moic = total_inflows / equity_invested if equity_invested > 0 else 0
-        analysis.moic = moic
+        analysis.moic = self._sanitize_value(moic)
         
         # 5. IRR
         try:
             irr = npf.irr(cash_flows)
             # Handle case where IRR might be NaN or infinite
-            if irr is None or isinstance(irr, complex): 
+            if irr is None or isinstance(irr, complex) or math.isnan(irr) or math.isinf(irr):
                 irr = 0.0
         except Exception:
             irr = 0.0
             
-        analysis.irr = irr
+        analysis.irr = self._sanitize_value(irr)
         
         self.audit_log_service.add_log(analysis, "IRR", f"{irr:.2%}", "Numpy Financial", "IRR of 5-Year Cash Flows")
         self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Equity Invested")

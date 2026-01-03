@@ -32,28 +32,34 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6 font-sans">
       {error && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          ❌ {error}
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-sm flex items-center">
+          <svg className="w-5 h-5 mr-2 text-rose-500" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+          </svg>
+          {error}
         </div>
       )}
 
       {success && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-          ✓ {success}
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm flex items-center">
+          <svg className="w-5 h-5 mr-2 text-emerald-500" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          </svg>
+          {success}
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Excel Export */}
         <button
           onClick={() => handleExport("excel")}
           disabled={isExporting !== null}
-          className={`flex items-center justify-center gap-3 px-6 py-4 rounded-lg font-semibold transition-all ${
+          className={`group flex items-center justify-center gap-4 px-8 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
             isExporting === "excel"
-              ? "bg-blue-100 text-blue-700 cursor-not-allowed"
-              : "bg-blue-600 text-white hover:bg-blue-700 active:scale-95"
+              ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+              : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50"
           }`}
         >
           {isExporting === "excel" ? (
@@ -63,8 +69,15 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
             </>
           ) : (
             <>
-              <span className="text-xl">📊</span>
-              Export Excel Model
+              <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 group-hover:scale-110 transition-transform">
+                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                 </svg>
+              </div>
+              <div className="text-left">
+                  <div className="text-lg font-bold">Download Excel Model</div>
+                  <div className="text-xs text-slate-500 font-normal mt-1">Full underwriting model (.xlsx)</div>
+              </div>
             </>
           )}
         </button>
@@ -73,10 +86,10 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
         <button
           onClick={() => handleExport("memo")}
           disabled={isExporting !== null}
-          className={`flex items-center justify-center gap-3 px-6 py-4 rounded-lg font-semibold transition-all ${
+          className={`group flex items-center justify-center gap-4 px-8 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
             isExporting === "memo"
-              ? "bg-green-100 text-green-700 cursor-not-allowed"
-              : "bg-green-600 text-white hover:bg-green-700 active:scale-95"
+              ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+              : "bg-white border-slate-200 text-slate-700 hover:border-blue-500 hover:text-blue-700 hover:bg-blue-50/50"
           }`}
         >
           {isExporting === "memo" ? (
@@ -86,19 +99,44 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
             </>
           ) : (
             <>
-              <span className="text-xl">📝</span>
-              Export Investment Memo
+               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 group-hover:bg-blue-200 group-hover:scale-110 transition-transform">
+                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                 </svg>
+              </div>
+              <div className="text-left">
+                  <div className="text-lg font-bold">Download Investment Memo</div>
+                  <div className="text-xs text-slate-500 font-normal mt-1">Executive summary & analysis (.docx)</div>
+              </div>
             </>
           )}
         </button>
       </div>
 
-      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-gray-700">
-        <p className="font-semibold mb-2">📌 What you're exporting:</p>
-        <ul className="space-y-1 text-xs">
-          <li>✓ <strong>Excel Model:</strong> Professional T12 vs F12 side-by-side analysis with all calculations</li>
-          <li>✓ <strong>Investment Memo:</strong> AI-generated executive summary with SWOT, key questions, and recommendations</li>
-        </ul>
+      <div className="p-6 bg-slate-50 border border-slate-200 rounded-xl">
+        <h4 className="font-bold text-slate-900 mb-3 text-sm uppercase tracking-wide">Included in Export Package</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+             <ul className="space-y-2 text-sm text-slate-600">
+                <li className="flex items-center gap-2">
+                    <span className="text-emerald-500">✓</span>
+                    <strong>Excel Model:</strong> Professional T12 vs F12 analysis
+                </li>
+                <li className="flex items-center gap-2">
+                    <span className="text-emerald-500">✓</span>
+                    Live formulas and sensitivity tables
+                </li>
+            </ul>
+            <ul className="space-y-2 text-sm text-slate-600">
+                <li className="flex items-center gap-2">
+                    <span className="text-blue-500">✓</span>
+                    <strong>Investment Memo:</strong> AI-generated executive summary
+                </li>
+                <li className="flex items-center gap-2">
+                    <span className="text-blue-500">✓</span>
+                    SWOT analysis and key risks
+                </li>
+            </ul>
+        </div>
       </div>
     </div>
   );

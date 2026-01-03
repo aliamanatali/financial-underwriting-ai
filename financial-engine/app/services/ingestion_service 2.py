@@ -72,16 +72,6 @@ class IngestionService:
         # 1. Extract PropertyMeta (SAFE METHOD)
         property_meta_prompt = """
         Extract the property address, year built, purchase price, total units, AND current_loan_balance from the document.
-        
-        CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
-        - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
-        - It is often on the cover page or Executive Summary.
-        - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
-        - If "Unpriced", "TBD", or "Best Offer", look for a "Strike Price" or "Guidance" elsewhere. If still not found, return 0.0.
-        
-        CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
-        - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
-        
         Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance".
 
         Example:
@@ -114,11 +104,6 @@ class IngestionService:
         # 2. Extract RentRoll (SAFE METHOD)
         rent_roll_prompt = f"""
         Extract the rent roll from the document for {property_meta.total_units} units.
-        
-        CRITICAL FOR MARKET RENT:
-        - Look for "Market Rent", "Pro Forma Rent", "Potential Rent", or "Street Rent".
-        - If Market Rent is not explicitly listed for a unit, DO NOT invent one. Return null or 0.0.
-        
         Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "tenant_name", "current_rent", "market_rent", "lease_start", "lease_end".
         """
         pdf_bytes = await self.ocr_backend_client.get_document_bytes(document_id)
@@ -148,46 +133,46 @@ class IngestionService:
         audit_trail_entries.append({
             "field_name": "Property Address",
             "extracted_value": property_meta.address,
-            "source": "OM / PDF",
+            "source_doc": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from Operating Memorandum cover page"
+            "reasoning": "Extracted from Operating Memorandum cover page"
         })
         audit_trail_entries.append({
             "field_name": "Year Built",
             "extracted_value": property_meta.year_built,
-            "source": "OM / PDF",
+            "source_doc": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from property description section"
+            "reasoning": "Extracted from property description section"
         })
         audit_trail_entries.append({
             "field_name": "Purchase Price",
             "extracted_value": property_meta.purchase_price,
-            "source": "OM / PDF",
+            "source_doc": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from offering summary"
+            "reasoning": "Extracted from offering summary"
         })
         audit_trail_entries.append({
             "field_name": "Total Units",
             "extracted_value": property_meta.total_units,
-            "source": "Rent Roll / PDF",
+            "source_doc": "Rent Roll / PDF",
             "confidence_score": 0.95,
-            "method": "Counted from rent roll line items"
+            "reasoning": "Counted from rent roll line items"
         })
         
         # Add Rent Roll summary audit logs
         audit_trail_entries.append({
             "field_name": "Occupancy Rate",
             "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}",
-            "source": "Rent Roll / PDF",
+            "source_doc": "Rent Roll / PDF",
             "confidence_score": 0.98,
-            "method": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total"
+            "reasoning": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total"
         })
         audit_trail_entries.append({
             "field_name": "Total Annual Rent (T12)",
             "extracted_value": rent_roll_summary.total_annual_rent,
-            "source": "Rent Roll / PDF",
+            "source_doc": "Rent Roll / PDF",
             "confidence_score": 0.98,
-            "method": "Summed current rents from all unit line items"
+            "reasoning": "Summed current rents from all unit line items"
         })
         
         # Add Normalized Expenses audit logs
@@ -228,9 +213,9 @@ class IngestionService:
             audit_trail_entries.append({
                 "field_name": "Income Source Reconciliation",
                 "extracted_value": f"Rent Roll: ${rent_roll_income:,.2f}, P&L: ${pnl_income:,.2f}",
-                "source": "Rent Roll vs. P&L",
+                "source_doc": "Rent Roll vs. P&L",
                 "confidence_score": 0.85,
-                "method": income_discrepancy_warning
+                "reasoning": income_discrepancy_warning
             })
         
         return analysis
@@ -244,13 +229,8 @@ class IngestionService:
         prompt = """
         Analyze this T12 Income Statement. Extract all EXPENSE line items.
         Ignore Income line items.
-        
-        CRITICAL FOR AMOUNTS:
-        - If the amount is in parentheses like (500), it is a positive expense.
-        - If the amount has a minus sign like -500, it is a positive expense.
-        - Return the absolute value of the expense.
-        
         Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00}, ...]
+        If the amount is in parentheses (500), treat it as a positive expense number.
         """
 
         raw_expenses = self.gemini_client.generate_structured_data(f"{prompt}\n\n{raw_text}", pdf_data=None)

@@ -87,6 +87,11 @@ export interface ProcessingProgress {
   event?: string;
 }
 
+export interface FinancialAnalysisProgress {
+  percentage: number;
+  message: string;
+}
+
 export interface ExtractedText {
   document_id: string;
   text: string;
@@ -166,12 +171,32 @@ export interface DealParameters {
 
 export interface AuditEntry {
   field_name: string;
-  extracted_value: string | number | boolean | null;
+  extracted_value: any;
   source: string;
   method: string;
   confidence_score?: number;
   timestamp?: string;
   reasons?: string[];
+}
+
+export interface ExplanationSource {
+  document: string;
+  fields_used: string[];
+  data_type: string;
+}
+
+export interface ExplanationCalculation {
+  formula: string;
+  inputs: Record<string, number | string>;
+}
+
+export interface ExplainabilityMetadata {
+  metric: string;
+  value: number | string | null;
+  source: ExplanationSource;
+  calculation: ExplanationCalculation;
+  adjustments: string[];
+  classification: string;
 }
 
 export interface UnderwritingAnalysis {
@@ -190,6 +215,13 @@ export interface UnderwritingAnalysis {
   historical_cap_rate?: number;
   historical_total_expenses?: number;
   pro_forma_expenses?: number;
+  irr?: number;
+  moic?: number;
+  cash_on_cash_return?: number;
+  dscr?: number;
+  debt_yield?: number;
+  annual_debt_service?: number;
+  explainability?: Record<string, ExplainabilityMetadata>;
 }
 
 export interface DocumentMetadata {

@@ -166,7 +166,7 @@ class MultiDocumentExtractionService:
                 Include:
                 1. Operating Expenses (e.g., Taxes, Utilities, Insurance, Management)
                 2. Landlord Responsibilities from Leases (e.g., "LL pays Water/Trash")
-                3. Key Financial Metrics from OM (e.g., "Asking Price", "Purchase Price", "Pro Forma Cap Rate") - strictly financial values only.
+                3. Key Financial Metrics from OM (e.g., "Asking Price", "Pro Forma Cap Rate") - strictly financial values only
                 4. Property Condition Items from Disclosures that imply cost (e.g., "Roof Age: 8 years", "HVAC: Needs service")
                 
                 For each item, provide:
@@ -174,19 +174,17 @@ class MultiDocumentExtractionService:
                 2. The amount (annual or monthly).
                    - For unknown/implicit costs (like lease responsibilities), use amount: null.
                    - For informational items (like "Roof Age"), use amount: null or 0.
-                3. The item type (optional): "expense", "property_metric", "condition_report", or "other".
                 
                 Return the data as a JSON array with this structure:
                 [
                     {
                         "raw_text": "Exact description",
                         "amount": 12345.67, // or null
-                        "period": "annual" or "monthly" or "one-time",
-                        "type": "expense" // or "property_metric"
+                        "period": "annual" or "monthly" or "one-time"
                     }
                 ]
                 
-                Skip general text, headers, and revenue/income rows (unless it's a key metric like "Avg Rent" or "Purchase Price" in an OM).
+                Skip general text, headers, and revenue/income rows (unless it's a key metric like "Avg Rent" in an OM).
                 If no relevant items are found, return an empty array [].
                 
                 IMPORTANT: Return ONLY the JSON array, no additional text or explanation.
@@ -356,21 +354,13 @@ class MultiDocumentExtractionService:
     
     async def process_financial_documents(
         self,
-        documents: List[Dict[str, Any]],
-        progress_service: Any = None,
-        task_id: Optional[str] = None,
-        progress_start: int = 20,
-        progress_end: int = 80
+        documents: List[Dict[str, Any]]
     ) -> List[NormalizedDataItem]:
         """
         Process multiple financial documents and return normalized expense items.
         
         Args:
             documents: List of dicts with 'content' (bytes), 'filename', and 'type' (pdf/excel)
-            progress_service: Optional service to update progress
-            task_id: Optional task ID for progress updates
-            progress_start: Starting percentage for progress updates (default: 20)
-            progress_end: Ending percentage for progress updates (default: 80)
             
         Returns:
             List of NormalizedDataItem objects ready for user verification
@@ -385,20 +375,6 @@ class MultiDocumentExtractionService:
             file_content = doc.get("content")
             filename = doc.get("filename", "unknown")
             file_type = doc.get("type", "").lower()
-            
-            if progress_service and task_id:
-                # Calculate progress based on provided range
-                start_pct = progress_start
-                end_pct = progress_end
-                # If we have documents, calculate step. If 0 documents, logic won't run loop anyway.
-                pct_per_doc = (end_pct - start_pct) / max(len(documents), 1)
-                current_pct = int(start_pct + (idx * pct_per_doc))
-                
-                await progress_service.update_progress(
-                    task_id,
-                    current_pct,
-                    f"Processing file: {filename}"
-                )
             
             logger.info(f"Processing document {idx+1}/{len(documents)}: {filename} (type: {file_type})")
             
@@ -453,71 +429,37 @@ class MultiDocumentExtractionService:
         
         if not all_expenses:
             logger.warning("No expenses were extracted from any document")
-            # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
-                logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
+                # If we had errors, raise them so the user knows what went wrong
+                raise Exception(f"Failed to extract expenses. Errors: {'; '.join(errors)}")
             return []
         
         # Normalize each expense using batch processing for better performance
-        normalized_items: List[NormalizedDataItem] = []
+        normalized_items = []
         logger.info(f"Starting normalization of {len(all_expenses)} expenses...")
         
         # Use fallback categorization for better performance with large datasets
         # For production, consider implementing batch Gemini API calls
         for idx, expense in enumerate(all_expenses):
             try:
-                raw_text = expense["raw_text"]
-                amount = expense.get("amount")
-                item_type = expense.get("type", "expense") # Default to expense if not provided by LLM
-
-                # Special handling for Property Metrics (Purchase Price, etc.)
-                is_property_metric = False
-                if item_type == "property_metric":
-                    is_property_metric = True
-                else:
-                    # Fallback check for keywords if LLM didn't tag it explicitly
-                    lower_text = raw_text.lower()
-                    if "purchase price" in lower_text or "asking price" in lower_text or "offering price" in lower_text:
-                         is_property_metric = True
-                    elif "year built" in lower_text or "total units" in lower_text:
-                         is_property_metric = True
-
-                if is_property_metric:
-                    # Create a Property Meta item instead of an expense
-                    item = NormalizedDataItem(
-                        id=f"meta_{len(normalized_items)}",
-                        raw_text=raw_text,
-                        normalized_value=raw_text, # Keep original text as value for now
-                        field_type="property_meta",
-                        confidence=0.95,
-                        user_verified=False,
-                        source_document=expense["source_document"],
-                        metadata={
-                            "amount": amount,
-                            "reasoning": "Extracted as Key Property Metric"
-                        }
-                    )
-                    normalized_items.append(item)
-                else:
-                    # Standard Expense Normalization
-                    normalization = self._fallback_categorization(raw_text)
-                    
-                    item = NormalizedDataItem(
-                        id=f"exp_{len(normalized_items)}",
-                        raw_text=raw_text,
-                        normalized_value=normalization["normalized_value"],
-                        field_type="expense_category",
-                        confidence=normalization["confidence"],
-                        user_verified=False,
-                        source_document=expense["source_document"],
-                        metadata={
-                            "amount": amount,
-                            "reasoning": normalization.get("reasoning", ""),
-                            "row_count": expense.get("row_count"),
-                            "categories_found": expense.get("categories_found")
-                        }
-                    )
-                    normalized_items.append(item)
+                # Use fallback categorization which is much faster
+                # This avoids making 100+ sequential API calls to Gemini
+                normalization = self._fallback_categorization(expense["raw_text"])
+                
+                item = NormalizedDataItem(
+                    id=f"exp_{len(normalized_items)}",
+                    raw_text=expense["raw_text"],
+                    normalized_value=normalization["normalized_value"],
+                    field_type="expense_category",
+                    confidence=normalization["confidence"],
+                    user_verified=False,
+                    source_document=expense["source_document"],
+                    metadata={
+                        "amount": expense.get("amount"),
+                        "reasoning": normalization.get("reasoning", "")
+                    }
+                )
+                normalized_items.append(item)
                 
                 # Log progress every 20 items
                 if (idx + 1) % 20 == 0:

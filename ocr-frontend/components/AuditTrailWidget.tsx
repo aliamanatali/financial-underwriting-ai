@@ -16,11 +16,11 @@ export default function AuditTrailWidget({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const getConfidenceBadgeColor = (score?: number) => {
-    if (!score) return "bg-gray-100 text-gray-700";
-    if (score >= 0.95) return "bg-green-100 text-green-700";
+    if (!score) return "bg-slate-100 text-slate-700";
+    if (score >= 0.95) return "bg-emerald-100 text-emerald-700";
     if (score >= 0.85) return "bg-blue-100 text-blue-700";
-    if (score >= 0.70) return "bg-yellow-100 text-yellow-700";
-    return "bg-orange-100 text-orange-700";
+    if (score >= 0.70) return "bg-amber-100 text-amber-700";
+    return "bg-rose-100 text-rose-700";
   };
 
   const getSourceIcon = (source: string) => {
@@ -42,15 +42,15 @@ export default function AuditTrailWidget({
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-6">
-      <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
+      <h3 className="text-xl font-bold text-slate-900 mb-2 flex items-center gap-2">
         🔍 {title}
       </h3>
-      <p className="text-sm text-gray-600 mb-4">
+      <p className="text-sm text-slate-500 mb-6">
         Hover over fields to see where the data came from and how it was calculated
       </p>
 
-      <div className="space-y-2">
+      <div className="space-y-3">
         {auditTrail.map((entry, index) => (
           <div key={index} className="relative">
             {/* Main Entry Box */}
@@ -60,12 +60,12 @@ export default function AuditTrailWidget({
               }
               onMouseEnter={() => setHoveredIndex(index)}
               onMouseLeave={() => setHoveredIndex(null)}
-              className={`w-full text-left p-4 rounded-lg border-2 transition-all duration-200 ${
+              className={`w-full text-left p-5 rounded-lg border-2 transition-all duration-200 ${
                 expandedIndex === index
-                  ? "border-blue-400 bg-blue-50"
+                  ? "border-blue-400 bg-blue-50/50"
                   : hoveredIndex === index
-                  ? "border-gray-300 bg-gray-50"
-                  : "border-gray-200 bg-white hover:border-gray-300"
+                  ? "border-slate-300 bg-slate-50"
+                  : "border-slate-200 bg-white hover:border-slate-300"
               }`}
             >
               <div className="flex items-start justify-between gap-4">
@@ -73,17 +73,17 @@ export default function AuditTrailWidget({
                   <div className="flex items-center gap-3">
                     <span className="text-xl">{getSourceIcon(entry.source)}</span>
                     <div>
-                      <h4 className="font-semibold text-gray-900">{entry.field_name}</h4>
-                      <p className="text-sm text-gray-500 mt-1">
-                        Source: <strong>{entry.source}</strong>
+                      <h4 className="font-semibold text-slate-900">{entry.field_name}</h4>
+                      <p className="text-xs text-slate-500 mt-1 uppercase tracking-wide">
+                        Source: <strong className="text-slate-700">{entry.source}</strong>
                       </p>
                     </div>
                   </div>
 
                   {/* Tooltip Preview */}
                   {hoveredIndex === index && !expandedIndex && (
-                    <div className="mt-3 p-3 bg-white border border-gray-200 rounded text-sm text-gray-700 animate-in fade-in">
-                      <p className="font-semibold mb-1">Method:</p>
+                    <div className="mt-3 p-3 bg-white border border-slate-200 rounded-md text-sm text-slate-600 shadow-sm animate-in fade-in">
+                      <p className="font-semibold mb-1 text-slate-800">Method:</p>
                       <p className="text-xs">{entry.method}</p>
                     </div>
                   )}
@@ -91,12 +91,12 @@ export default function AuditTrailWidget({
 
                 {/* Right side: Value + Confidence */}
                 <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-mono text-gray-900 truncate max-w-xs">
+                  <p className="text-sm font-mono text-slate-900 truncate max-w-xs bg-slate-100 px-2 py-1 rounded">
                     {formatValue(entry.extracted_value).split("\n")}
                   </p>
                   {entry.confidence_score !== undefined && (
                     <div
-                      className={`mt-2 inline-block px-2 py-1 rounded text-xs font-semibold ${getConfidenceBadgeColor(
+                      className={`mt-2 inline-block px-2 py-1 rounded text-[10px] uppercase font-bold tracking-wide ${getConfidenceBadgeColor(
                         entry.confidence_score
                       )}`}
                     >
@@ -106,7 +106,7 @@ export default function AuditTrailWidget({
                 </div>
 
                 {/* Expand Icon */}
-                <div className="text-gray-400">
+                <div className="text-slate-400">
                   {expandedIndex === index ? "▼" : "▶"}
                 </div>
               </div>
@@ -114,56 +114,56 @@ export default function AuditTrailWidget({
 
             {/* Expanded Details */}
             {expandedIndex === index && (
-              <div className="mt-2 p-4 bg-blue-50 border-2 border-blue-200 rounded-lg animate-in fade-in slide-in-from-top-2">
-                <div className="space-y-3">
+              <div className="mt-2 p-5 bg-slate-50 border border-slate-200 rounded-lg animate-in fade-in slide-in-from-top-2 shadow-inner">
+                <div className="space-y-4">
                   {/* Value */}
                   <div>
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                       Value
                     </p>
-                    <p className="mt-1 text-gray-900 font-mono whitespace-pre-wrap break-words">
+                    <p className="mt-1 text-slate-900 font-mono text-sm whitespace-pre-wrap break-words bg-white p-2 rounded border border-slate-200">
                       {formatValue(entry.extracted_value)}
                     </p>
                   </div>
 
                   {/* Source */}
-                  <div className="pt-3 border-t border-blue-200">
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                  <div className="pt-4 border-t border-slate-200">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                       Source Document
                     </p>
-                    <p className="mt-1 text-gray-900">{entry.source}</p>
+                    <p className="mt-1 text-slate-900 text-sm">{entry.source}</p>
                   </div>
 
                   {/* Method */}
-                  <div className="pt-3 border-t border-blue-200">
-                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                  <div className="pt-4 border-t border-slate-200">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                       Calculation Method
                     </p>
-                    <p className="mt-1 text-gray-900">{entry.method}</p>
+                    <p className="mt-1 text-slate-900 text-sm">{entry.method}</p>
                   </div>
 
                   {/* Confidence */}
                   {entry.confidence_score !== undefined && (
-                    <div className="pt-3 border-t border-blue-200">
-                      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    <div className="pt-4 border-t border-slate-200">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                         Confidence Score
                       </p>
                       <div className="mt-2 flex items-center gap-3">
-                        <div className="flex-1 bg-gray-200 rounded-full h-2">
+                        <div className="flex-1 bg-slate-200 rounded-full h-2">
                           <div
                             className={`h-2 rounded-full transition-all ${
                               entry.confidence_score! >= 0.95
-                                ? "bg-green-500"
+                                ? "bg-emerald-500"
                                 : entry.confidence_score! >= 0.85
                                 ? "bg-blue-500"
                                 : entry.confidence_score! >= 0.70
-                                ? "bg-yellow-500"
-                                : "bg-orange-500"
+                                ? "bg-amber-500"
+                                : "bg-rose-500"
                             }`}
                             style={{ width: `${(entry.confidence_score! * 100)}%` }}
                           ></div>
                         </div>
-                        <span className="text-sm font-semibold text-gray-900 w-16">
+                        <span className="text-sm font-bold text-slate-900 w-16 text-right">
                           {(entry.confidence_score! * 100).toFixed(1)}%
                         </span>
                       </div>
@@ -172,14 +172,14 @@ export default function AuditTrailWidget({
 
                   {/* Gating Reasons */}
                   {entry.reasons && entry.reasons.length > 0 && (
-                    <div className="pt-3 border-t border-blue-200">
-                      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    <div className="pt-4 border-t border-slate-200">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">
                         Gating Concerns
                       </p>
-                      <ul className="mt-2 space-y-1">
+                      <ul className="mt-2 space-y-2">
                         {entry.reasons.map((reason, idx) => (
-                          <li key={idx} className="text-sm text-red-700 flex items-start gap-2">
-                            <span className="text-red-500 mt-1">⚠</span>
+                          <li key={idx} className="text-sm text-rose-700 bg-rose-50 p-2 rounded border border-rose-100 flex items-start gap-2">
+                            <span className="text-rose-500 mt-0.5">⚠</span>
                             {reason}
                           </li>
                         ))}
@@ -189,8 +189,8 @@ export default function AuditTrailWidget({
 
                   {/* Timestamp */}
                   {entry.timestamp && (
-                    <div className="pt-3 border-t border-blue-200">
-                      <p className="text-xs text-gray-500">
+                    <div className="pt-4 border-t border-slate-200">
+                      <p className="text-xs text-slate-400">
                         Extracted: {new Date(entry.timestamp).toLocaleString()}
                       </p>
                     </div>
@@ -203,7 +203,7 @@ export default function AuditTrailWidget({
       </div>
 
       {auditTrail.length === 0 && (
-        <div className="text-center py-8 text-gray-500">
+        <div className="text-center py-12 bg-slate-50 rounded-lg border-2 border-dashed border-slate-200 text-slate-500">
           <p>No audit trail data available</p>
         </div>
       )}

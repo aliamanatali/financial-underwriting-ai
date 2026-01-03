@@ -51,9 +51,9 @@ export default function DataVerificationTable({
   };
 
   const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.95) return "text-green-600 bg-green-50";
-    if (confidence >= 0.85) return "text-yellow-600 bg-yellow-50";
-    return "text-red-600 bg-red-50";
+    if (confidence >= 0.95) return "text-emerald-700 bg-emerald-50 border border-emerald-100";
+    if (confidence >= 0.85) return "text-amber-700 bg-amber-50 border border-amber-100";
+    return "text-rose-700 bg-rose-50 border border-rose-100";
   };
 
   const verifiedCount = items.filter((item) => item.user_verified).length;
@@ -61,25 +61,25 @@ export default function DataVerificationTable({
   const progressPercentage = totalCount > 0 ? (verifiedCount / totalCount) * 100 : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Header with Progress */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
+        <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">
+            <h2 className="text-2xl font-bold text-slate-900">
               Data Verification
             </h2>
-            <p className="text-sm text-gray-600 mt-1">
+            <p className="text-base text-slate-500 mt-1">
               Review and correct AI-mapped categories
             </p>
           </div>
           <button
             onClick={onVerifyAll}
             disabled={verifiedCount === totalCount}
-            className={`px-4 py-2 rounded-md font-medium ${
+            className={`px-6 py-2.5 rounded-lg font-medium transition-colors ${
               verifiedCount === totalCount
-                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-700"
+                ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                : "bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
             }`}
           >
             Verify All
@@ -87,16 +87,16 @@ export default function DataVerificationTable({
         </div>
 
         {/* Progress Bar */}
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm text-gray-600">
+        <div className="space-y-3">
+          <div className="flex justify-between text-sm font-medium text-slate-600">
             <span>
-              Verified: {verifiedCount} / {totalCount}
+              Verified: <span className="text-slate-900">{verifiedCount}</span> / {totalCount}
             </span>
-            <span>{progressPercentage.toFixed(0)}%</span>
+            <span className="text-slate-900">{progressPercentage.toFixed(0)}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3">
+          <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
             <div
-              className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+              className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
               style={{ width: `${progressPercentage}%` }}
             />
           </div>
@@ -104,48 +104,53 @@ export default function DataVerificationTable({
       </div>
 
       {/* Split-Screen Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-slate-200">
+            <thead className="bg-slate-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Source Document
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Raw Text (PDF)
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Mapped Category
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Confidence
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-slate-200">
               {items.map((item) => (
                 <tr
                   key={item.id}
-                  className={`${
-                    item.user_verified ? "bg-green-50" : "hover:bg-gray-50"
+                  className={`transition-colors duration-150 ${
+                    item.user_verified ? "bg-emerald-50/30" : "hover:bg-slate-50"
                   }`}
                 >
                   {/* Source Document */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {item.source_document}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                    <div className="flex items-center">
+                        <svg className="w-4 h-4 mr-2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        {item.source_document}
+                    </div>
                   </td>
 
                   {/* Raw Text */}
-                  <td className="px-6 py-4 text-sm text-gray-900">
+                  <td className="px-6 py-4 text-sm text-slate-900">
                     <div className="max-w-xs">
-                      <span className="font-mono bg-gray-100 px-2 py-1 rounded">
+                      <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200">
                         {item.raw_text}
                       </span>
                     </div>
@@ -157,7 +162,7 @@ export default function DataVerificationTable({
                       <select
                         value={editValue}
                         onChange={(e) => setEditValue(e.target.value)}
-                        className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
                         autoFocus
                       >
                         {availableCategories.map((category) => (
@@ -171,15 +176,15 @@ export default function DataVerificationTable({
                         <span
                           className={`font-medium ${
                             item.user_correction
-                              ? "text-blue-600"
-                              : "text-gray-900"
+                              ? "text-blue-700"
+                              : "text-slate-900"
                           }`}
                         >
                           {item.user_correction || item.normalized_value}
                         </span>
                         {item.user_correction && (
-                          <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
-                            Corrected
+                          <span className="text-[10px] uppercase font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">
+                            Edited
                           </span>
                         )}
                       </div>
@@ -200,9 +205,9 @@ export default function DataVerificationTable({
                   {/* Status */}
                   <td className="px-6 py-4 whitespace-nowrap">
                     {item.user_verified ? (
-                      <span className="inline-flex items-center text-green-600">
+                      <span className="inline-flex items-center text-emerald-700 font-medium text-sm">
                         <svg
-                          className="w-5 h-5 mr-1"
+                          className="w-4 h-4 mr-1.5"
                           fill="currentColor"
                           viewBox="0 0 20 20"
                         >
@@ -215,45 +220,55 @@ export default function DataVerificationTable({
                         Verified
                       </span>
                     ) : (
-                      <span className="text-gray-500 text-sm">Pending</span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                        Pending
+                      </span>
                     )}
                   </td>
 
                   {/* Actions */}
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {editingId === item.id ? (
-                      <div className="flex space-x-2">
+                      <div className="flex space-x-3">
                         <button
                           onClick={() => handleSave(item.id)}
-                          className="text-green-600 hover:text-green-900 font-medium"
+                          className="text-emerald-600 hover:text-emerald-800 font-semibold"
                         >
                           Save
                         </button>
                         <button
                           onClick={handleCancel}
-                          className="text-gray-600 hover:text-gray-900 font-medium"
+                          className="text-slate-500 hover:text-slate-700 font-medium"
                         >
                           Cancel
                         </button>
                       </div>
                     ) : (
-                      <div className="flex space-x-2">
+                      <div className="flex items-center space-x-4">
                         {!item.user_verified && (
                           <>
                             <button
                               onClick={() => handleEdit(item)}
-                              className="text-blue-600 hover:text-blue-900 font-medium"
+                              className="text-slate-500 hover:text-blue-600 font-medium transition-colors"
                             >
                               Edit
                             </button>
                             <button
                               onClick={() => onVerify(item.id)}
-                              className="text-green-600 hover:text-green-900 font-medium"
+                              className="text-blue-600 hover:text-blue-800 font-semibold transition-colors flex items-center"
                             >
-                              ✓ Verify
+                              Verify
                             </button>
                           </>
                         )}
+                         {item.user_verified && (
+                             <button
+                              onClick={() => handleEdit(item)}
+                              className="text-slate-400 hover:text-blue-600 text-xs transition-colors"
+                            >
+                              Re-Edit
+                            </button>
+                         )}
                       </div>
                     )}
                   </td>
@@ -265,22 +280,22 @@ export default function DataVerificationTable({
       </div>
 
       {/* Legend */}
-      <div className="bg-gray-50 rounded-lg p-4">
-        <h3 className="text-sm font-medium text-gray-700 mb-2">
-          Confidence Levels:
+      <div className="bg-white rounded-lg p-4 border border-slate-200">
+        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+          Confidence Score Legend
         </h3>
-        <div className="flex space-x-4 text-xs">
+        <div className="flex space-x-6 text-sm">
           <div className="flex items-center">
-            <span className="inline-block w-3 h-3 bg-green-600 rounded-full mr-1"></span>
-            <span className="text-gray-600">High (≥95%)</span>
+            <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full mr-2"></span>
+            <span className="text-slate-600">High Confidence (≥95%)</span>
           </div>
           <div className="flex items-center">
-            <span className="inline-block w-3 h-3 bg-yellow-600 rounded-full mr-1"></span>
-            <span className="text-gray-600">Medium (85-94%)</span>
+            <span className="w-2.5 h-2.5 bg-amber-500 rounded-full mr-2"></span>
+            <span className="text-slate-600">Medium Confidence (85-94%)</span>
           </div>
           <div className="flex items-center">
-            <span className="inline-block w-3 h-3 bg-red-600 rounded-full mr-1"></span>
-            <span className="text-gray-600">Low (&lt;85%)</span>
+            <span className="w-2.5 h-2.5 bg-rose-500 rounded-full mr-2"></span>
+            <span className="text-slate-600">Low Confidence (Less than 85%)</span>
           </div>
         </div>
       </div>

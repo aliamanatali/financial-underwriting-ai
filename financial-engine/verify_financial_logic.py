@@ -54,21 +54,21 @@ def verify_logic():
                 mapped_category=ExpenseCategory.INSURANCE,
                 amount=15000.0,
                 confidence=0.9,
-                audit_log=AuditLog(field_name="Insurance", extracted_value="15000", source_doc="T12", confidence_score=0.9, reasoning="Exact Match")
+                audit_log=AuditLog(field_name="Insurance", extracted_value="15000", source="T12", confidence_score=0.9, method="Exact Match")
             ),
             StandardizedExpense(
                 original_text="Repairs",
                 mapped_category=ExpenseCategory.REPAIRS_MAINTENANCE,
                 amount=35000.0,
                 confidence=0.8,
-                audit_log=AuditLog(field_name="Repairs", extracted_value="35000", source_doc="T12", confidence_score=0.8, reasoning="Exact Match")
+                audit_log=AuditLog(field_name="Repairs", extracted_value="35000", source="T12", confidence_score=0.8, method="Exact Match")
             ),
              StandardizedExpense(
                 original_text="Utilities",
                 mapped_category=ExpenseCategory.UTILITIES,
                 amount=45000.0,
                 confidence=0.9,
-                audit_log=AuditLog(field_name="Utilities", extracted_value="45000", source_doc="T12", confidence_score=0.9, reasoning="Exact Match")
+                audit_log=AuditLog(field_name="Utilities", extracted_value="45000", source="T12", confidence_score=0.9, method="Exact Match")
             ),
             # Add some others to simulate a full T12
             StandardizedExpense(
@@ -76,7 +76,7 @@ def verify_logic():
                 mapped_category=ExpenseCategory.GENERAL_ADMINISTRATIVE,
                 amount=10000.0,
                 confidence=0.7,
-                audit_log=AuditLog(field_name="G&A", extracted_value="10000", source_doc="T12", confidence_score=0.7, reasoning="Exact Match")
+                audit_log=AuditLog(field_name="G&A", extracted_value="10000", source="T12", confidence_score=0.7, method="Exact Match")
             )
         ],
         deal_parameters=DealParameters(

@@ -6,31 +6,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 class NormalizationService:
-    def __init__(self, llm_service: Any):
+    def __init__(self, llm_service: "GeminiService"):
         self.llm_service = llm_service
-
-    def _parse_amount(self, value: Any) -> float:
-        """Helper to safely parse amount strings/floats."""
-        if value is None:
-            return 0.0
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            # Remove currency symbols, commas, and whitespace
-            clean_val = value.replace('$', '').replace(',', '').strip()
-            # Handle negative values in parentheses e.g. (500)
-            if clean_val.startswith('(') and clean_val.endswith(')'):
-                clean_val = '-' + clean_val[1:-1]
-            
-            # Handle negative signs with spaces e.g. "- 500" -> "-500"
-            if clean_val.startswith('-') and ' ' in clean_val:
-                 clean_val = clean_val.replace(' ', '')
-
-            try:
-                return float(clean_val)
-            except ValueError:
-                return 0.0
-        return 0.0
 
     def normalize_expenses(self, raw_expenses: List[Dict]) -> List[StandardizedExpense]:
         """
@@ -62,26 +39,20 @@ class NormalizationService:
                     )
                     category_enum = ExpenseCategory.UNCATEGORIZED
 
-                # Expenses are outflows, so we normalize them to positive magnitudes.
-                # If the OCR picked up "(500)" or "-500", parse_amount returns -500.
-                # We take abs() to ensure subtraction logic in FinancialService works correctly.
-                parsed_amount = abs(self._parse_amount(item.get("amount")))
-
                 # Build audit log for this normalized expense
-                # Updated to match new schema: source_doc -> source, reasoning -> method
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
-                    extracted_value=parsed_amount,
-                    source="T12 Income Statement",
+                    extracted_value=item["amount"],
+                    source_doc="T12 Income Statement",
                     confidence_score=item.get("confidence", 0.85),
-                    method=f"LLM mapped '{item.get('original_text', '')}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence"
+                    reasoning=f"LLM mapped '{item['original_text']}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence"
                 )
 
                 normalized_expenses.append(
                     StandardizedExpense(
                         original_text=item.get("original_text", ""),
                         mapped_category=category_enum,
-                        amount=parsed_amount,
+                        amount=item.get("amount", 0.0),
                         confidence=item.get("confidence", 0.85),
                         audit_log=audit_log
                     )
@@ -102,7 +73,7 @@ class NormalizationService:
         normalized_expenses = []
         for expense in raw_expenses:
             description = expense.get("description", "").lower()
-            amount = abs(self._parse_amount(expense.get("amount")))
+            amount = expense.get("amount", 0.0)
             
             # Simple keyword matching
             mapped_category = ExpenseCategory.UNCATEGORIZED
@@ -124,13 +95,12 @@ class NormalizationService:
                 mapped_category = ExpenseCategory.ADVERTISING_MARKETING
             
             # Build audit log
-            # Updated to match new schema: source_doc -> source, reasoning -> method
             audit_log = AuditLog(
                 field_name=f"Expense: {mapped_category.value}",
                 extracted_value=amount,
-                source="T12 Income Statement",
+                source_doc="T12 Income Statement",
                 confidence_score=0.65,  # Lower confidence for fallback
-                method=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching"
+                reasoning=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching"
             )
             
             normalized_expenses.append(

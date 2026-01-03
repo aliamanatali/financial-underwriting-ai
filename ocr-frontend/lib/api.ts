@@ -1,4 +1,4 @@
-import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText, DealPackage } from "./types";
+import { DocumentResponse, UnderwritingAnalysis, UploadResponse, DealParameters, ProcessingProgress, ExtractedText, DealPackage, FinancialAnalysisProgress } from "./types";
 
 const OCR_API_URL = process.env.NEXT_PUBLIC_OCR_API_URL;
 const FIN_API_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -96,6 +96,22 @@ class ApiClient {
     eventSource.onerror = (err) => {
       console.error("EventSource failed:", err);
       eventSource.close();
+    };
+    return eventSource;
+  }
+
+  streamFinancialAnalysisProgress(documentId: string, onProgress: (progress: FinancialAnalysisProgress) => void): EventSource {
+    const eventSource = new EventSource(`${FIN_API_URL}/api/v1/progress/${documentId}`);
+    eventSource.onmessage = (event) => {
+      const progress = JSON.parse(event.data);
+      onProgress(progress);
+    };
+    eventSource.onerror = (err) => {
+      // It's normal for the connection to close when finished or on error,
+      // the caller should handle closing explicitly or we can let it auto-retry if needed.
+      // For now, logging error.
+      console.log("Financial Progress EventSource closed/error", err);
+      // eventSource.close();
     };
     return eventSource;
   }

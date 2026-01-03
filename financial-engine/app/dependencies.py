@@ -1,3 +1,4 @@
+from app.services.progress_service import ProgressService
 import app.config
 from fastapi import Depends
 from app.services.gemini_client import GeminiClient
@@ -7,6 +8,7 @@ from app.services.excel_service import ExcelService
 from app.services.memo_service import MemoService
 from app.services.audit_log_service import AuditLogService
 from app.services.ingestion_service import IngestionService
+from app.services.explainability_service import ExplainabilityService
 
 def get_gemini_service():
     return GeminiClient()
@@ -28,3 +30,11 @@ def get_memo_service(gemini_service: GeminiClient = Depends(get_gemini_service))
 
 def get_ingestion_service():
     return IngestionService()
+
+def get_explainability_service():
+    return ExplainabilityService()
+# Singleton instance
+progress_service = ProgressService()
+
+def get_progress_service():
+    return progress_service

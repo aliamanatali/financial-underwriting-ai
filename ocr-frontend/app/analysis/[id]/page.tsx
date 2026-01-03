@@ -1,19 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { UnderwritingAnalysis } from "@/lib/types";
+import { useParams, useRouter } from "next/navigation";
+import { UnderwritingAnalysis, FinancialAnalysisProgress } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
+import { apiClient } from "@/lib/api";
 
 export default function AnalysisResultPage() {
   const params = useParams();
+  const router = useRouter();
   const id = params.id as string;
   const [analysis, setAnalysis] = useState<UnderwritingAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
   const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">(
     "dashboard"
   );
@@ -26,6 +29,12 @@ export default function AnalysisResultPage() {
         try {
           setIsLoading(true);
           setError(null);
+          setProgress({ percentage: 0, message: "Starting analysis..." });
+
+          // Start progress stream
+          const eventSource = apiClient.streamFinancialAnalysisProgress(id, (progressUpdate) => {
+            setProgress(progressUpdate);
+          });
 
           console.log(`Starting analysis for document: ${id}`);
           console.log(`API URL: ${API_BASE_URL}`);
@@ -105,6 +114,7 @@ export default function AnalysisResultPage() {
           const result: UnderwritingAnalysis = await response.json();
           setAnalysis(result);
           setError(null);
+          eventSource.close();
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : "Failed to fetch analysis results.";
           console.error("Analysis error:", errorMessage, err);
@@ -119,12 +129,24 @@ export default function AnalysisResultPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <LoadingSpinner />
-          <h2 className="mt-6 text-2xl font-bold text-gray-900">Analyzing Deal...</h2>
-          <p className="mt-2 text-gray-600">
-            Extracting documents and performing financial calculations
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="bg-white p-10 rounded-2xl shadow-xl border border-slate-100 max-w-md w-full text-center">
+          <LoadingSpinner size="lg" className="mx-auto" />
+          <h2 className="mt-8 text-2xl font-bold text-slate-900">Analyzing Deal...</h2>
+          <p className="text-slate-500 mt-2">Processing financials and generating insights</p>
+          
+          <div className="mt-8 w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div
+              className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
+              style={{ width: `${progress.percentage}%` }}
+            ></div>
+          </div>
+          
+          <p className="mt-4 text-sm font-semibold text-blue-600 animate-pulse">
+            {progress.message}
+          </p>
+          <p className="mt-2 text-xs text-slate-400 font-medium">
+            {progress.percentage}% Complete
           </p>
         </div>
       </div>
@@ -136,61 +158,64 @@ export default function AnalysisResultPage() {
     const isLikelyPackage = error.includes('package') || error.includes('multi-document') || error.includes('Deal package');
     
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+      <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
+        <div className="max-w-2xl w-full">
+          <div className="bg-white border border-rose-200 rounded-2xl shadow-lg p-8">
             <div className="flex items-start">
-              <svg
-                className="h-6 w-6 text-red-600 mr-4 mt-0.5 flex-shrink-0"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                  clipRule="evenodd"
-                />
-              </svg>
+              <div className="flex-shrink-0 w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center mr-6">
+                <svg
+                    className="h-6 w-6 text-rose-600"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                >
+                    <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                </svg>
+              </div>
               <div className="flex-1">
-                <h2 className="text-2xl font-bold text-red-900 mb-2">Analysis Failed</h2>
-                <p className="text-red-700 mb-6 font-mono text-sm bg-red-100 p-4 rounded break-words">
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Analysis Failed</h2>
+                <p className="text-rose-600 mb-6 font-mono text-sm bg-rose-50 p-4 rounded-lg break-words border border-rose-100">
                   {error}
                 </p>
-                <div className="bg-red-100 p-4 rounded mb-6 text-sm text-red-800">
-                  <p className="font-semibold mb-2">Troubleshooting Tips:</p>
-                  <ul className="list-disc list-inside space-y-1">
-                    <li>Ensure the financial-engine backend is running on <code className="bg-red-50 px-2 py-1 rounded">{API_BASE_URL}</code></li>
+                <div className="bg-slate-50 p-5 rounded-xl mb-8 text-sm text-slate-700 border border-slate-100">
+                  <p className="font-bold text-slate-900 mb-3 uppercase tracking-wide text-xs">Troubleshooting Tips</p>
+                  <ul className="list-disc list-inside space-y-2 ml-1">
+                    <li>Ensure the financial-engine backend is running on <code className="bg-slate-200 px-1.5 py-0.5 rounded text-slate-800">{API_BASE_URL}</code></li>
                     {isLikelyPackage ? (
                       <>
                         <li>Verify the deal package was successfully uploaded via the multi-document upload page</li>
-                        <li>Check that the package ID is correct: <code className="bg-red-50 px-2 py-1 rounded">{id}</code></li>
+                        <li>Check that the package ID is correct: <code className="bg-slate-200 px-1.5 py-0.5 rounded text-slate-800">{id}</code></li>
                         <li>The package may have been deleted or expired from storage</li>
                         <li>Try re-uploading your ZIP file with the deal package documents</li>
                       </>
                     ) : (
                       <>
                         <li>Verify the document was successfully processed by OCR backend</li>
-                        <li>Check that the document ID is correct: <code className="bg-red-50 px-2 py-1 rounded">{id}</code></li>
+                        <li>Check that the document ID is correct: <code className="bg-slate-200 px-1.5 py-0.5 rounded text-slate-800">{id}</code></li>
                         <li>The document may have been deleted or expired from storage</li>
                         <li>Try re-uploading your document</li>
                       </>
                     )}
                     <li>Verify network connectivity and firewall settings</li>
-                    <li>Check browser console (F12) for additional error details</li>
                   </ul>
                 </div>
                 <div className="flex gap-4">
-                  <a
-                    href="/"
-                    className="inline-block px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                  <button
+                    onClick={() => router.push("/")}
+                    className="inline-flex items-center px-6 py-3 bg-slate-800 text-white rounded-lg hover:bg-slate-900 transition-colors font-medium"
                   >
-                    ← Back to Upload
-                  </a>
+                    ← Back to Dashboard
+                  </button>
                   <button
                     onClick={() => window.location.reload()}
-                    className="inline-block px-6 py-2 bg-red-100 text-red-700 border border-red-300 rounded-lg hover:bg-red-200 transition"
+                    className="inline-flex items-center px-6 py-3 bg-white text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors font-medium"
                   >
-                    🔄 Retry
+                    🔄 Retry Analysis
                   </button>
                 </div>
               </div>
@@ -202,93 +227,108 @@ export default function AnalysisResultPage() {
   }
 
   if (!analysis) {
-    return <div className="text-center mt-10">No analysis data found.</div>;
+    return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <div className="text-center p-10 bg-white rounded-xl shadow-sm border border-slate-200">
+                <div className="text-slate-400 mb-4 text-4xl">📂</div>
+                <h3 className="text-lg font-medium text-slate-900">No analysis data found</h3>
+                <button 
+                    onClick={() => router.push('/')}
+                    className="mt-4 text-blue-600 hover:text-blue-800 font-medium"
+                >
+                    Return to Dashboard
+                </button>
+            </div>
+        </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Financial Analysis</h1>
-              <p className="mt-1 text-sm text-gray-600">Document ID: {id}</p>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+        {/* Navigation */}
+        <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between h-16">
+                    <div className="flex items-center">
+                        <a href="/" className="flex-shrink-0 flex items-center group">
+                             <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center mr-2 group-hover:bg-blue-700 transition-colors">
+                                <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                </svg>
+                             </div>
+                             <span className="font-bold text-xl tracking-tight text-slate-900">Financial Underwriting <span className="text-blue-600">AI</span></span>
+                        </a>
+                    </div>
+                     <div className="flex items-center space-x-4">
+                        <a href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-900">Dashboard</a>
+                        <div className="h-4 w-px bg-slate-300"></div>
+                        <div className="flex items-center px-3 py-1 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm font-medium">
+                            <span className="w-2 h-2 bg-emerald-500 rounded-full mr-2"></span>
+                            Analysis Complete
+                        </div>
+                    </div>
+                </div>
             </div>
-            <a
-              href="/"
-              className="inline-block px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            >
-              ← New Analysis
-            </a>
-          </div>
-        </div>
-      </header>
+        </nav>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Tabs */}
-        <div className="flex gap-4 mb-8 border-b">
-          {[
-            { id: "dashboard", label: "📊 Underwriting Dashboard" },
-            { id: "audit", label: "🔍 Audit Trail" },
-            { id: "export", label: "📥 Download & Export" },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`px-4 py-3 font-semibold border-b-2 transition ${
-                activeTab === tab.id
-                  ? "border-blue-600 text-blue-600"
-                  : "border-transparent text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        {/* Page Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+            <div>
+                <h1 className="text-3xl font-bold text-slate-900">Financial Analysis</h1>
+                <p className="text-slate-500 mt-1">Comprehensive underwriting report and explainability audit</p>
+            </div>
+            <div className="flex gap-3">
+                 <button
+                  onClick={() => router.push("/dashboard")}
+                  className="px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors font-medium text-sm"
+                >
+                  New Analysis
+                </button>
+            </div>
         </div>
 
-        {/* Tab Content */}
-        {activeTab === "dashboard" && <UnderwritingDashboard analysis={analysis} />}
-
-        {activeTab === "audit" && (
-          <AuditTrailWidget auditTrail={(analysis.audit_trail as any) || []} />
-        )}
-
-        {activeTab === "export" && (
-          <div className="space-y-6">
-            <ExportButtons analysis={analysis} />
-
-            {/* Summary Info */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Export Summary</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h4 className="font-semibold text-gray-900 mb-3">Excel Model Includes:</h4>
-                  <ul className="space-y-2 text-sm text-gray-700">
-                    <li>✓ Property meta data (address, units, year built)</li>
-                    <li>✓ T12 (Historical) financials with actual rents</li>
-                    <li>✓ F12 (Pro Forma) projections with market rents</li>
-                    <li>✓ Expense breakdown by category</li>
-                    <li>✓ NOI and Cap Rate calculations</li>
-                    <li>✓ Professional formatting for Investment Committee</li>
-                  </ul>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-gray-900 mb-3">Investment Memo Includes:</h4>
-                  <ul className="space-y-2 text-sm text-gray-700">
-                    <li>✓ Executive Summary</li>
-                    <li>✓ Key Questions & Answers</li>
-                    <li>✓ SWOT Analysis</li>
-                    <li>✓ Investment Highlights</li>
-                    <li>✓ Risk Assessment & Mitigation</li>
-                    <li>✓ Deal Viability Status</li>
-                  </ul>
-                </div>
-              </div>
+        {/* Tabs */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-8">
+            <div className="flex border-b border-slate-100">
+            {[
+                { id: "dashboard", label: "📊 Underwriting Dashboard" },
+                { id: "audit", label: "🔍 Audit Trail" },
+                { id: "export", label: "📥 Download & Export" },
+            ].map((tab) => (
+                <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex-1 px-6 py-4 font-semibold text-sm transition-all relative ${
+                    activeTab === tab.id
+                    ? "text-blue-600 bg-blue-50/50"
+                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+                }`}
+                >
+                {tab.label}
+                {activeTab === tab.id && (
+                    <div className="absolute bottom-0 left-0 w-full h-0.5 bg-blue-600"></div>
+                )}
+                </button>
+            ))}
             </div>
-          </div>
-        )}
+        
+            <div className="p-6 md:p-8 bg-slate-50/50">
+                {/* Tab Content */}
+                {activeTab === "dashboard" && <UnderwritingDashboard analysis={analysis} />}
+
+                {activeTab === "audit" && (
+                <AuditTrailWidget auditTrail={(analysis.audit_trail as any) || []} />
+                )}
+
+                {activeTab === "export" && (
+                 <div className="max-w-4xl mx-auto">
+                    <ExportButtons analysis={analysis} />
+                 </div>
+                )}
+            </div>
+        </div>
       </main>
     </div>
   );

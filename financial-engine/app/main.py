@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 import app.config  # Ensures config is loaded first
-from app.api.routes import analysis, ingest, exports, multi_document
+from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
@@ -32,6 +32,7 @@ app.include_router(analysis.router, prefix="/api/v1", tags=["Analysis"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingestion"])
 app.include_router(exports.router, prefix="/api/v1", tags=["Exports"])
 app.include_router(multi_document.router, tags=["Multi-Document"])
+app.include_router(progress.router, prefix="/api/v1", tags=["Progress"])
 
 @app.get("/health", tags=["Health"])
 async def health_check():

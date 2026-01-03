@@ -197,16 +197,16 @@ export default function ZipUpload({
     <div className="w-full max-w-4xl mx-auto">
       <div
         className={`
-          relative border-2 border-dashed rounded-lg p-12 text-center transition-colors
+          relative border border-dashed rounded-xl p-16 text-center transition-all duration-200 ease-in-out
           ${
             isDragging
-              ? "border-blue-500 bg-blue-50"
-              : "border-gray-300 bg-white"
+              ? "border-blue-500 bg-blue-50/50 shadow-inner"
+              : "border-slate-300 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-400"
           }
           ${
             isUploading
               ? "pointer-events-none opacity-60"
-              : "hover:border-blue-400"
+              : "cursor-pointer"
           }
         `}
         onDragEnter={handleDragEnter}
@@ -230,7 +230,7 @@ export default function ZipUpload({
           <>
             <div className="mx-auto w-24 h-24 mb-4">
               <svg
-                className="w-full h-full text-gray-400"
+                className="w-full h-full text-slate-300 group-hover:text-slate-400 transition-colors"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -238,32 +238,29 @@ export default function ZipUpload({
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  strokeWidth={1.5}
+                  strokeWidth={1}
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 />
               </svg>
             </div>
-            <div className="space-y-4">
-            <div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Upload Deal Package
-              </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                {isLoadingTypes
-                  ? "Upload a ZIP file with organized document folders"
-                  : documentTypes.length > 0
-                  ? `Upload a ZIP file containing ${documentTypes.length} document categories`
-                  : "Upload a ZIP file with organized document folders"
-                }
-              </p>
-            </div>
+            <div className="space-y-6">
+              <div className="max-w-md mx-auto">
+                <p className="text-base text-slate-600 mb-2">
+                  {isLoadingTypes
+                    ? "Upload a ZIP file with organized document folders"
+                    : documentTypes.length > 0
+                    ? `Upload a ZIP file containing ${documentTypes.length} document categories`
+                    : "Upload a ZIP file with organized document folders"
+                  }
+                </p>
+              </div>
               
               <label
                 htmlFor="zip-upload"
-                className="cursor-pointer inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                className="cursor-pointer inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all transform hover:-translate-y-0.5"
               >
                 <svg
-                  className="w-5 h-5 mr-2"
+                  className="w-5 h-5 mr-2.5"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -272,10 +269,10 @@ export default function ZipUpload({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
                   />
                 </svg>
-                Choose Deal Package ZIP
+                Select ZIP File
                 <input
                   id="zip-upload"
                   name="zip-upload"

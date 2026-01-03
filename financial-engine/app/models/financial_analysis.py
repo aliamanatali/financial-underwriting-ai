@@ -18,10 +18,10 @@ class ExpenseCategory(str, Enum):
 class AuditLog(BaseModel):
     field_name: str
     extracted_value: Any
-    source_doc: str      # e.g., "Keystone_OM.pdf"
-    source_page: Optional[int] = None
-    confidence_score: float # 0.0 to 1.0
-    reasoning: Optional[str] = None # "Found in table header on page 4"
+    source: str
+    confidence_score: float
+    method: str
+    timestamp: Optional[str] = None
 
 # --- 3. Rent Roll Schema ---
 class RentRollItem(BaseModel):
@@ -54,7 +54,7 @@ class RentRollSummary(BaseModel):
     average_rent_per_unit_type: Dict[str, float]
 
 class DealParameters(BaseModel):
-    rent_growth: float = 0.03
+    growth_rate: float = 0.03
     vacancy_rate: float = 0.03
     expense_ratio: float = 0.38
     exit_cap_rate: float = 0.06
