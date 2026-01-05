@@ -90,6 +90,13 @@ export interface ProcessingProgress {
 export interface FinancialAnalysisProgress {
   percentage: number;
   message: string;
+  details?: {
+    current_file?: string;
+    file_index?: number;
+    total_files?: number;
+    file_type?: string;
+    [key: string]: any;
+  };
 }
 
 export interface ExtractedText {
@@ -222,6 +229,11 @@ export interface UnderwritingAnalysis {
   debt_yield?: number;
   annual_debt_service?: number;
   explainability?: Record<string, ExplainabilityMetadata>;
+  sensitivity_analysis?: {
+    rows: number[];
+    columns: number[];
+    values: number[][];
+  };
 }
 
 export interface DocumentMetadata {

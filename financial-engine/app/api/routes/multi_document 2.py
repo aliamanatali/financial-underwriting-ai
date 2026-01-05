@@ -25,8 +25,7 @@ from app.services.normalization_service import NormalizationService
 from app.services.gemini_service import GeminiService
 from app.services.multi_document_extraction_service import MultiDocumentExtractionService
 from app.services.storage_service import storage_service
-from app.services.progress_service import ProgressService
-from app.dependencies import get_gemini_service, get_progress_service
+from app.dependencies import get_gemini_service
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
@@ -139,7 +138,7 @@ async def upload_zip_package(
         property_name=property_name,
         created_at=now,
         updated_at=now,
-        documents={doc_type: [] for doc_type in DocumentType},
+        documents={},
         normalization_status="pending",
         verification_progress=0.0
     )
@@ -219,6 +218,8 @@ async def upload_zip_package(
                 )
                 
                 # Add to package
+                if doc_type not in package.documents:
+                    package.documents[doc_type] = []
                 package.documents[doc_type].append(doc_metadata)
                 
                 # Store file content in cache
@@ -308,8 +309,7 @@ async def list_deal_packages():
 async def normalize_package_documents(
     package_id: str,
     document_type: Optional[DocumentType] = None,
-    gemini_service: GeminiService = Depends(get_gemini_service),
-    progress_service: ProgressService = Depends(get_progress_service)
+    gemini_service: GeminiService = Depends(get_gemini_service)
 ):
     """
     Normalize documents in a package.
@@ -319,8 +319,6 @@ async def normalize_package_documents(
     This endpoint extracts data and maps it to standardized categories,
     returning items that need user verification.
     """
-    await progress_service.update_progress(package_id, 5, "Initializing normalization...")
-    
     # Check cache first
     if package_id in deal_packages_cache:
         package = deal_packages_cache[package_id]
@@ -404,39 +402,36 @@ async def normalize_package_documents(
             })
     
     if not documents_to_process:
-        logger.warning(f"No processable documents found for package {package_id}")
-        # Return empty result instead of error for best possible outcome
-        return DocumentNormalizationResult(
-            document_id="multiple",
-            document_type=document_type or DocumentType.FINANCIALS,
-            normalized_items=[],
-            total_items=0,
-            verified_items=0,
-            confidence_average=0.0
+        if document_type:
+            detail_msg = f"No processable documents found for type: {document_type.value}"
+        else:
+            available_types = [dt.value for dt in package.documents.keys()]
+            detail_msg = f"No processable documents found. Available types in package: {', '.join(available_types) if available_types else 'none'}"
+        
+        raise HTTPException(
+            status_code=400,
+            detail=detail_msg
         )
     
     logger.info(f"Processing {len(documents_to_process)} documents for package {package_id}")
     for idx, doc in enumerate(documents_to_process):
         logger.info(f"  Document {idx+1}: {doc['filename']} ({doc['type']}, {len(doc['content'])} bytes)")
     
-    await progress_service.update_progress(package_id, 20, f"Extracting data from {len(documents_to_process)} documents (this may take a minute)...")
-    
     # Process documents and extract normalized data
     try:
-        normalized_items = await extraction_service.process_financial_documents(
-            documents_to_process,
-            progress_service=progress_service,
-            task_id=package_id
-        )
+        normalized_items = await extraction_service.process_financial_documents(documents_to_process)
         logger.info(f"Extraction service returned {len(normalized_items) if normalized_items else 0} normalized items")
     except Exception as e:
         logger.error(f"Error processing documents: {str(e)}", exc_info=True)
-        await progress_service.update_progress(package_id, 0, f"Normalization failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
     
     if not normalized_items:
-        logger.warning("No expense items extracted from documents. Continuing with empty result.")
-        normalized_items = []
+        # Provide more detailed error message
+        doc_summary = ", ".join([f"{doc['filename']} ({doc['type']})" for doc in documents_to_process])
+        raise HTTPException(
+            status_code=400,
+            detail=f"No expense items extracted from documents. Processed: {doc_summary}. Check if documents contain financial data in expected format."
+        )
     
     # Assign unique IDs
     for idx, item in enumerate(normalized_items):
@@ -458,7 +453,6 @@ async def normalize_package_documents(
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
     
-    await progress_service.update_progress(package_id, 100, "Normalization complete.")
     return result
 
 
@@ -514,8 +508,7 @@ async def get_document_types():
 async def analyze_deal_package(
     package_id: str,
     deal_parameters: Dict[str, Any],
-    gemini_service: GeminiService = Depends(get_gemini_service),
-    progress_service: ProgressService = Depends(get_progress_service)
+    gemini_service: GeminiService = Depends(get_gemini_service)
 ):
     """
     Perform financial analysis on a multi-document deal package.
@@ -539,21 +532,9 @@ async def analyze_deal_package(
     from app.services.financial_service import FinancialService
     from app.services.audit_log_service import AuditLogService
     from app.services.excel_service import ExcelService
-    import math
-
-    def sanitize_float(val):
-        try:
-            f = float(val)
-            if math.isnan(f) or math.isinf(f):
-                return 0.0
-            return f
-        except (ValueError, TypeError):
-            return 0.0
     
     logger.info(f"Starting multi-document analysis for package: {package_id}")
     logger.info(f"Received deal parameters: {deal_parameters}")
-    
-    await progress_service.update_progress(package_id, 5, "Initializing analysis...")
     
     # Get the deal package
     if package_id in deal_packages_cache:
@@ -575,18 +556,6 @@ async def analyze_deal_package(
     # Parse deal parameters
     try:
         params = DealParameters(**deal_parameters)
-        # Sanitize params immediately
-        if math.isnan(params.growth_rate): params.growth_rate = 0.03
-        if math.isnan(params.vacancy_rate): params.vacancy_rate = 0.05
-        if math.isnan(params.management_fee_rate): params.management_fee_rate = 0.04
-        if math.isnan(params.tax_rate): params.tax_rate = 0.012
-        if math.isnan(params.exit_cap_rate): params.exit_cap_rate = 0.06
-        if math.isnan(params.ltv): params.ltv = 0.65
-        if math.isnan(params.sofr_rate): params.sofr_rate = 0.05
-        if math.isnan(params.bridge_spread): params.bridge_spread = 0.02
-        if math.isnan(params.closing_costs): params.closing_costs = 0.0
-        if math.isnan(params.renovation_budget): params.renovation_budget = 0.0
-        
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid deal parameters: {str(e)}")
     
@@ -601,7 +570,6 @@ async def analyze_deal_package(
     # In production, this would be stored in the database
     
     try:
-        await progress_service.update_progress(package_id, 20, "Aggregating package data...")
         # Re-extract normalized data from documents
         extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
         
@@ -651,22 +619,21 @@ async def analyze_deal_package(
                 })
         
         if not documents_to_process:
-            logger.warning("No processable documents found in package. Proceeding with defaults.")
+            raise HTTPException(
+                status_code=400,
+                detail="No processable documents found in package"
+            )
         
         logger.info(f"Processing {len(documents_to_process)} documents for analysis")
         
         # Extract normalized data
-        normalized_items = await extraction_service.process_financial_documents(
-            documents_to_process,
-            progress_service=progress_service,
-            task_id=package_id,
-            progress_start=20,
-            progress_end=50
-        )
+        normalized_items = await extraction_service.process_financial_documents(documents_to_process)
         
         if not normalized_items:
-            logger.warning("No data could be extracted from documents. Proceeding with defaults.")
-            normalized_items = []
+            raise HTTPException(
+                status_code=400,
+                detail="No data could be extracted from documents"
+            )
         
         logger.info(f"Extracted {len(normalized_items)} normalized items")
         
@@ -677,22 +644,13 @@ async def analyze_deal_package(
     # ===== STEP 2: CONVERT NORMALIZED DATA TO ANALYSIS STRUCTURE =====
     # Build property metadata, rent roll, and expenses from normalized items
     
-    # Handle missing loan_amount gracefully by using LTV calculation or default
-    current_loan_balance = 0.0
-    # If loan_amount is present (legacy), use it. Else calculate from purchase price * LTV
-    if hasattr(params, 'loan_amount'):
-        current_loan_balance = params.loan_amount
-    elif hasattr(params, 'ltv'):
-        # We don't have purchase price yet, so we'll update this after extraction
-        current_loan_balance = 0.0
-    
     property_meta = PropertyMeta(
         address=package.property_name,
         year_built=1980,  # Default - should be extracted from OM
-        purchase_price=0.0,  # Default to 0, will be updated from extraction
-        total_units=0,  # Default - should be calculated from rent roll
+        purchase_price=10_000_000.0,  # Default - should be extracted from OM
+        total_units=50,  # Default - should be calculated from rent roll
         is_renovated=False,
-        current_loan_balance=current_loan_balance
+        current_loan_balance=params.loan_amount
     )
     
     rent_roll: List[RentRollItem] = []
@@ -700,84 +658,32 @@ async def analyze_deal_package(
     
     # Parse normalized items
     for item in normalized_items:
-        # Check if this is a Property Meta item
-        if item.field_type == "property_meta":
-            try:
-                # Update Property Meta based on content
-                lower_text = item.raw_text.lower()
-                # Safely get amount from metadata
-                amount = 0.0
-                if item.metadata:
-                    metadata_amount = item.metadata.get("amount", 0.0)
-                    # Handle None or 0.0 explicitly
-                    if metadata_amount:
-                        amount = sanitize_float(metadata_amount)
-                
-                if "purchase price" in lower_text or "asking price" in lower_text or "offering price" in lower_text:
-                    if amount and amount > 0:
-                        property_meta.purchase_price = amount
-                        # Also update loan amount if using LTV
-                        if hasattr(params, 'ltv') and params.ltv > 0:
-                             property_meta.current_loan_balance = sanitize_float(amount * params.ltv)
-                        logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
-                
-                elif "year built" in lower_text:
-                    # Try to extract year (might need regex if amount is not clean)
-                    if amount and amount > 1800 and amount < 2030:
-                        property_meta.year_built = int(amount)
-                
-                elif "total units" in lower_text or "number of units" in lower_text:
-                    if amount and amount > 0:
-                        property_meta.total_units = int(amount)
-                
-                elif "existing loan" in lower_text or "current loan" in lower_text or "loan balance" in lower_text:
-                     if amount and amount > 0:
-                        property_meta.current_loan_balance = amount
-                        logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")
-
-            except Exception as e:
-                logger.warning(f"Could not parse property meta item: {item.raw_text}, error: {str(e)}")
-
         # Check if this is an expense item
-        elif item.field_type == "expense_category":
-            # Check for unit count from Rent Roll metadata (fallback)
-            if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
-                row_count = item.metadata.get("row_count")
-                if row_count and row_count > 0 and property_meta.total_units == 0:
-                    property_meta.total_units = int(row_count)
-                    logger.info(f"Updated Total Units from Rent Roll row count: {row_count}")
-                
-                # Don't add Rent Roll summary to expenses
-                continue
-
+        if item.field_type == "expense_category":
             try:
                 # Parse the category
                 category = ExpenseCategory(item.normalized_value)
                 
-                # Use amount from metadata if available, otherwise parse from text
+                # Extract amount from raw_text (assuming format like "Insurance: $5,000")
                 amount = 0.0
-                if item.metadata:
-                    val = item.metadata.get("amount")
-                    if val is not None:
-                        amount = sanitize_float(val)
-                
-                if amount == 0.0 and "$" in item.raw_text:
+                if "$" in item.raw_text:
                     amount_str = item.raw_text.split("$")[-1].replace(",", "").strip()
-                    amount = sanitize_float(amount_str)
-                    if amount == 0.0:
+                    try:
+                        amount = float(amount_str)
+                    except:
                         amount = 1000.0  # Default fallback
                 
                 expense = StandardizedExpense(
                     original_text=item.raw_text,
                     mapped_category=category,
                     amount=amount,
-                    confidence=sanitize_float(item.confidence),
+                    confidence=item.confidence,
                     audit_log=AuditLog(
                         field_name="expense",
                         extracted_value=amount,
-                        source=item.source_document,
-                        confidence_score=sanitize_float(item.confidence),
-                        method=f"Extracted from {item.source_document}"
+                        source_doc=item.source_document,
+                        confidence_score=item.confidence,
+                        reasoning=f"Extracted from {item.source_document}"
                     ),
                     user_verified=item.user_verified,
                     user_corrected_category=ExpenseCategory(item.user_correction) if item.user_correction else None
@@ -789,7 +695,7 @@ async def analyze_deal_package(
     # Create a basic rent roll if none exists
     if not rent_roll:
         # Generate placeholder rent roll based on property size
-        num_units = property_meta.total_units or 0
+        num_units = property_meta.total_units
         for i in range(num_units):
             rent_roll.append(RentRollItem(
                 unit_number=f"Unit {i+1}",
@@ -838,35 +744,19 @@ async def analyze_deal_package(
     )
     
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")
-
-    # Populate Audit Trail with Ingestion Data
-    audit_log_service.add_ingestion_logs(analysis)
     
     # ===== STEP 3: CHECK DEAL VIABILITY =====
-    await progress_service.update_progress(package_id, 50, "Checking deal viability criteria...")
     viability_check = financial_service.check_deal_viability(analysis)
     logger.info(f"Viability check: {viability_check['status']}")
     
-    # Log the check to the audit trail
-    audit_log_service.add_log(
-        analysis,
-        "Deal Viability Status",
-        viability_check["status"],
-        "Gating Logic",
-        "Checked: Units, Loan Amount, Vintage vs. Criteria",
-        1.0,
-        {"reasons": viability_check["reasons"]}
-    )
-
     if viability_check["status"] == "FAIL":
         analysis.pass_fail_status = "FAIL"
         analysis.gating_reasons = viability_check["reasons"]
         logger.warning(f"Deal failed viability check: {viability_check['reasons']}")
-        # Proceed to calculation anyway
+        return analysis
     
     # ===== STEP 4: CALCULATE FINANCIALS =====
     try:
-        await progress_service.update_progress(package_id, 70, "Calculating financial projections...")
         # Calculate historical metrics
         historical_data = financial_service.calculate_historical(analysis)
         logger.info(f"Historical NOI: ${historical_data['historical_noi']:,.2f}")
@@ -884,30 +774,22 @@ async def analyze_deal_package(
         
     except Exception as e:
         logger.error(f"Financial calculation failed: {str(e)}", exc_info=True)
-        await progress_service.update_progress(package_id, 0, f"Calculations failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Financial calculation failed: {str(e)}")
     
     # ===== STEP 5: GENERATE EXCEL (OPTIONAL) =====
     try:
-        await progress_service.update_progress(package_id, 90, "Generating Excel model...")
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
         excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for package: {package_id}")
     except Exception as e:
         logger.warning(f"Excel generation had issues (non-critical): {str(e)}")
     
-    # ===== STEP 6: UPDATE PACKAGE STATUS AND SAVE ANALYSIS =====
-    if analysis.pass_fail_status != "FAIL":
-        analysis.pass_fail_status = "PASS"
-    
+    # ===== STEP 6: UPDATE PACKAGE STATUS =====
+    analysis.pass_fail_status = "PASS"
     package.normalization_status = "completed"
     package.updated_at = datetime.utcnow().isoformat()
     
-    # Save the analysis result separately so it can be retrieved later
-    analysis_dict = analysis.model_dump()
-    await storage_service.save_analysis_result(package_id, analysis_dict)
-    
-    # Update cache and persist package
+    # Update cache and persist
     deal_packages_cache[package_id] = package
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
@@ -915,24 +797,7 @@ async def analyze_deal_package(
     logger.info(f"Multi-document analysis complete for package {package_id}")
     logger.info(f"Final status: {analysis.pass_fail_status}")
     
-    await progress_service.update_progress(package_id, 100, "Analysis complete!")
     return analysis
-
-
-@router.get("/packages/{package_id}/analysis")
-async def get_deal_analysis(package_id: str):
-    """
-    Retrieve the stored financial analysis for a deal package.
-    """
-    from app.services.storage_service import storage_service
-    
-    # Check cache/storage for analysis result
-    analysis_data = await storage_service.get_analysis_result(package_id)
-    
-    if not analysis_data:
-        raise HTTPException(status_code=404, detail=f"Analysis not found for package {package_id}. Run analysis first.")
-    
-    return analysis_data
 
 
 @router.delete("/packages/{package_id}")

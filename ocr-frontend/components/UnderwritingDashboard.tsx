@@ -2,6 +2,7 @@
 
 import React from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata } from "@/lib/types";
+import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
@@ -371,6 +372,9 @@ export default function UnderwritingDashboard({
           </div>
         </div>
       </div>
+
+      {/* Sensitivity Analysis */}
+      <SensitivityAnalysisWidget analysis={analysis} />
 
       {/* Rent Roll Summary */}
       <div className="bg-white rounded-xl shadow-sm p-8 ring-1 ring-slate-200">

@@ -6,6 +6,8 @@ import DataVerificationTable, {
   NormalizedDataItem,
 } from "@/components/DataVerificationTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import { apiClient } from "@/lib/api";
+import { FinancialAnalysisProgress } from "@/lib/types";
 
 interface DocumentMetadata {
   document_id: string;
@@ -50,6 +52,7 @@ export default function VerificationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [normalizing, setNormalizing] = useState(false);
+  const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
 
   const baseUrl =
     process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -84,6 +87,12 @@ export default function VerificationPage() {
   const handleNormalize = async () => {
     setNormalizing(true);
     setError(null);
+    setProgress({ percentage: 0, message: "Starting normalization..." });
+
+    // Start progress stream
+    const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
+        setProgress(progressUpdate);
+    });
 
     try {
       const response = await fetch(
@@ -103,6 +112,7 @@ export default function VerificationPage() {
       setError(err instanceof Error ? err.message : "Normalization failed");
     } finally {
       setNormalizing(false);
+      eventSource.close();
     }
   };
 
@@ -257,25 +267,66 @@ export default function VerificationPage() {
               <h3 className="text-xl font-semibold text-gray-900 mb-2">
                 Ready to Normalize Data
               </h3>
-              <p className="text-gray-600 mb-6">
-                Click the button below to extract and normalize data from your
-                uploaded documents. The AI will map expense categories and other
-                fields to standardized values.
-              </p>
-              <button
-                onClick={handleNormalize}
-                disabled={normalizing}
-                className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-              >
-                {normalizing ? (
-                  <span className="flex items-center">
-                    <LoadingSpinner size="sm" className="mr-2" />
-                    Normalizing...
-                  </span>
-                ) : (
-                  "Start Normalization"
-                )}
-              </button>
+              {!normalizing ? (
+                <>
+                  <p className="text-gray-600 mb-6">
+                    Click the button below to extract and normalize data from your
+                    uploaded documents. The AI will map expense categories and other
+                    fields to standardized values.
+                  </p>
+                  <button
+                    onClick={handleNormalize}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+                  >
+                    Start Normalization
+                  </button>
+                </>
+              ) : (
+                <div className="w-full max-w-md mx-auto mt-6">
+                  <div className="flex items-center justify-center mb-4">
+                    <LoadingSpinner size="lg" />
+                  </div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    {progress.message || "Normalizing..."}
+                  </h3>
+
+                  <div className="w-full bg-gray-200 rounded-full h-4 mb-2 overflow-hidden">
+                    <div
+                      className="bg-blue-600 h-4 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${progress.percentage}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="flex justify-between text-sm text-gray-600">
+                    <span>{progress.percentage}%</span>
+                  </div>
+
+                  {progress.details?.current_file && (
+                    <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200 text-left shadow-sm">
+                      <div className="flex items-start">
+                        <div className="flex-shrink-0 mr-3">
+                           <svg className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                           </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-1">
+                                Processing File
+                            </p>
+                            <p className="text-sm font-medium text-slate-900 truncate" title={progress.details.current_file}>
+                                {progress.details.current_file}
+                            </p>
+                             {progress.details.total_files && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                    {progress.details.file_index} of {progress.details.total_files} files
+                                </p>
+                            )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ) : (

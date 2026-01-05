@@ -236,6 +236,9 @@ class UnderwritingAnalysis(BaseModel):
     historical_total_expenses: float = 0.0
     historical_cap_rate: Optional[float] = 0.0
 
+    # Sensitivity Analysis
+    sensitivity_analysis: Optional[Dict[str, Any]] = None
+
 
 
 

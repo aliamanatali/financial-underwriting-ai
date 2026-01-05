@@ -10,4 +10,12 @@ async def progress_stream(task_id: str, progress_service: ProgressService = Depe
     """
     Stream progress updates for a specific task using Server-Sent Events (SSE).
     """
-    return StreamingResponse(progress_service.stream_progress(task_id), media_type="text/event-stream")
+    return StreamingResponse(
+        progress_service.stream_progress(task_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )

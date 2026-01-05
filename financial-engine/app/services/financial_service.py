@@ -338,6 +338,9 @@ class FinancialService:
         # VALIDATION: Ensure rent_growth is valid before projection
         if params.growth_rate is None or math.isnan(params.growth_rate):
              params.growth_rate = 0.03
+             
+        # Generate Sensitivity Matrix
+        self._generate_sensitivity_matrix(analysis)
         
         # 1. Revenue Growth Logic
         # 5-Year Array/Loop
@@ -415,6 +418,84 @@ class FinancialService:
         
         self.audit_log_service.add_log(analysis, "IRR", f"{irr:.2%}", "Numpy Financial", "IRR of 5-Year Cash Flows")
         self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Equity Invested")
+
+    def _calculate_irr_simulation(self, analysis: UnderwritingAnalysis, growth_rate: float, exit_cap_rate: float) -> float:
+        """
+        Helper to simulate IRR for Sensitivity Analysis.
+        Does not modify analysis object.
+        """
+        params = analysis.deal_parameters or DealParameters()
+        
+        equity_invested = analysis.equity_invested or 0
+        current_noi = analysis.pro_forma_noi or 0
+        annual_debt_service = analysis.annual_debt_service or 0
+        loan_amount = analysis.loan_amount or 0
+        
+        cash_flows = []
+        # Year 0
+        cash_flows.append(-equity_invested)
+        
+        annual_noi = current_noi
+        
+        # Years 1 to (Hold-1)
+        for year in range(1, params.hold_period):
+            cf = annual_noi - annual_debt_service
+            cash_flows.append(cf)
+            annual_noi *= (1 + growth_rate)
+            
+        # Year 5 (Exit)
+        year_exit_noi = annual_noi
+        
+        # Sell on forward NOI
+        year_forward_noi = year_exit_noi * (1 + growth_rate)
+        
+        if exit_cap_rate > 0:
+            sale_price = year_forward_noi / exit_cap_rate
+        else:
+            sale_price = 0.0
+            
+        sales_costs = sale_price * params.sales_cost_rate
+        net_proceeds = sale_price - sales_costs - loan_amount
+        
+        # Year 5 Cash Flow
+        year_exit_cf = (year_exit_noi - annual_debt_service) + net_proceeds
+        cash_flows.append(year_exit_cf)
+        
+        try:
+            irr = npf.irr(cash_flows)
+            if irr is None or isinstance(irr, complex) or math.isnan(irr) or math.isinf(irr):
+                return 0.0
+            return float(irr)
+        except Exception:
+            return 0.0
+
+    def _generate_sensitivity_matrix(self, analysis: UnderwritingAnalysis):
+        params = analysis.deal_parameters or DealParameters()
+        base_exit_cap = params.exit_cap_rate
+        base_growth = params.growth_rate
+        
+        # Rows: Exit Cap Rate (Base-0.5%, Base, Base+0.5%)
+        # Columns: Rent Growth (Base-1%, Base, Base+1%)
+        
+        row_steps = [-0.005, 0.0, 0.005]
+        col_steps = [-0.01, 0.0, 0.01]
+        
+        exit_caps = [max(0, base_exit_cap + step) for step in row_steps]
+        growth_rates = [base_growth + step for step in col_steps]
+        
+        values = []
+        for cap in exit_caps:
+            row_vals = []
+            for growth in growth_rates:
+                irr = self._calculate_irr_simulation(analysis, growth, cap)
+                row_vals.append(irr)
+            values.append(row_vals)
+            
+        analysis.sensitivity_analysis = {
+            "rows": exit_caps,
+            "columns": growth_rates,
+            "values": values
+        }
 
     def get_audit_trail(self, analysis: UnderwritingAnalysis) -> List[Dict[str, Any]]:
         return analysis.audit_trail

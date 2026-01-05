@@ -397,7 +397,13 @@ class MultiDocumentExtractionService:
                 await progress_service.update_progress(
                     task_id,
                     current_pct,
-                    f"Processing file: {filename}"
+                    f"Processing file: {filename}",
+                    details={
+                        "current_file": filename,
+                        "file_index": idx + 1,
+                        "total_files": len(documents),
+                        "file_type": file_type
+                    }
                 )
             
             logger.info(f"Processing document {idx+1}/{len(documents)}: {filename} (type: {file_type})")

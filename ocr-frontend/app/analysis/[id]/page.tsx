@@ -145,6 +145,16 @@ export default function AnalysisResultPage() {
           <p className="mt-4 text-sm font-semibold text-blue-600 animate-pulse">
             {progress.message}
           </p>
+          {progress.details?.current_file && (
+            <p className="mt-1 text-xs text-slate-500">
+              Processing: <span className="font-medium">{progress.details.current_file}</span>
+              {progress.details.total_files && (
+                <span className="ml-1">
+                  ({progress.details.file_index}/{progress.details.total_files})
+                </span>
+              )}
+            </p>
+          )}
           <p className="mt-2 text-xs text-slate-400 font-medium">
             {progress.percentage}% Complete
           </p>

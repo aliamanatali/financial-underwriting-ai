@@ -101,18 +101,29 @@ class ApiClient {
   }
 
   streamFinancialAnalysisProgress(documentId: string, onProgress: (progress: FinancialAnalysisProgress) => void): EventSource {
+    console.log(`[SSE] Connecting to progress stream for ${documentId}...`);
     const eventSource = new EventSource(`${FIN_API_URL}/api/v1/progress/${documentId}`);
-    eventSource.onmessage = (event) => {
-      const progress = JSON.parse(event.data);
-      onProgress(progress);
+    
+    eventSource.onopen = () => {
+      console.log(`[SSE] Connection opened for ${documentId}`);
     };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const progress = JSON.parse(event.data);
+        console.log(`[SSE] Progress update for ${documentId}:`, progress);
+        onProgress(progress);
+      } catch (e) {
+        console.error(`[SSE] Error parsing message for ${documentId}:`, e);
+      }
+    };
+
     eventSource.onerror = (err) => {
       // It's normal for the connection to close when finished or on error,
       // the caller should handle closing explicitly or we can let it auto-retry if needed.
-      // For now, logging error.
-      console.log("Financial Progress EventSource closed/error", err);
-      // eventSource.close();
+      console.log(`[SSE] Connection error/closed for ${documentId}:`, err);
     };
+    
     return eventSource;
   }
 
