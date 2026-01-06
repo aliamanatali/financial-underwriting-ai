@@ -407,10 +407,18 @@ class FinancialService:
         
         # 5. IRR
         try:
-            irr = npf.irr(cash_flows)
-            # Handle case where IRR might be NaN or infinite
-            if irr is None or isinstance(irr, complex) or math.isnan(irr) or math.isinf(irr):
+            # Check for zero cash flows or all negative/all positive which breaks IRR
+            if not cash_flows or all(cf >= 0 for cf in cash_flows) or all(cf <= 0 for cf in cash_flows):
                 irr = 0.0
+            else:
+                irr = npf.irr(cash_flows)
+                # Handle complex results
+                if isinstance(irr, complex):
+                    irr = 0.0
+                elif irr is None or math.isnan(irr) or math.isinf(irr):
+                    irr = 0.0
+                else:
+                    irr = float(irr)
         except Exception:
             irr = 0.0
             
@@ -446,7 +454,10 @@ class FinancialService:
         # Year 5 (Exit)
         year_exit_noi = annual_noi
         
-        # Sell on forward NOI
+        # Sell on forward NOI (Year 6)
+        # Note: If exit cap is applied to T12 (Year 5 actual), use year_exit_noi.
+        # If applied to Forward 12 (Year 6), use year_forward_noi.
+        # Standard practice is often Forward 12 for pricing.
         year_forward_noi = year_exit_noi * (1 + growth_rate)
         
         if exit_cap_rate > 0:
@@ -462,11 +473,22 @@ class FinancialService:
         cash_flows.append(year_exit_cf)
         
         try:
-            irr = npf.irr(cash_flows)
-            if irr is None or isinstance(irr, complex) or math.isnan(irr) or math.isinf(irr):
+            # Check for zero cash flows or all negative/all positive which breaks IRR
+            if not cash_flows or all(cf >= 0 for cf in cash_flows) or all(cf <= 0 for cf in cash_flows):
                 return 0.0
+                
+            irr = npf.irr(cash_flows)
+            
+            # Handle complex results (rare but possible with weird polynomials)
+            if isinstance(irr, complex):
+                return 0.0
+                
+            if irr is None or math.isnan(irr) or math.isinf(irr):
+                return 0.0
+                
             return float(irr)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"IRR Simulation failed: {str(e)}")
             return 0.0
 
     def _generate_sensitivity_matrix(self, analysis: UnderwritingAnalysis):

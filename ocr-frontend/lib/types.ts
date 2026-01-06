@@ -206,6 +206,18 @@ export interface ExplainabilityMetadata {
   classification: string;
 }
 
+export interface DecisionImpact {
+  metric: string;
+  decision: string;
+  reasoning: string;
+  impact: string;
+}
+
+export interface Conclusion {
+  summary: string;
+  key_decisions: DecisionImpact[];
+}
+
 export interface UnderwritingAnalysis {
   document_id: string;
   pass_fail_status: string;
@@ -234,6 +246,8 @@ export interface UnderwritingAnalysis {
     columns: number[];
     values: number[][];
   };
+  conclusion?: Conclusion;
+  analyst_commentary?: string;
 }
 
 export interface DocumentMetadata {

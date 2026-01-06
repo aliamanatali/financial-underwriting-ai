@@ -91,12 +91,18 @@ class ExcelService:
         
         return entries
 
-    def create_side_by_side_excel(self, data: List[ProFormaEntry]) -> bytes:
+    async def create_side_by_side_excel(self, data: List[ProFormaEntry]) -> bytes:
         """
-        Creates an Excel file with a side-by-side view of T12 and F12 data.
+        Creates an Excel file with a side-by-side view of T12 and F12 data asynchronously.
         Includes FORMULAS (not hardcoded values) for all calculations.
         Includes professional formatting and styling.
         """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._create_excel_sync, data)
+
+    def _create_excel_sync(self, data: List[ProFormaEntry]) -> bytes:
+        """Synchronous implementation of Excel creation."""
         workbook = openpyxl.Workbook()
         sheet: Worksheet = workbook.active
         sheet.title = "Financial Analysis"

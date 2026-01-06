@@ -1,11 +1,13 @@
 "use client";
 
-import React from "react";
-import { UnderwritingAnalysis, ExplainabilityMetadata } from "@/lib/types";
+import React, { useState } from "react";
+import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
+import ConclusionWidget from "./ConclusionWidget";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
+  onReanalyze?: (params: DealParameters) => void;
 }
 
 const METRIC_DEFINITIONS: Record<string, string> = {
@@ -107,7 +109,47 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
 
 export default function UnderwritingDashboard({
   analysis,
+  onReanalyze,
 }: UnderwritingDashboardProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editParams, setEditParams] = useState<DealParameters>(
+    analysis.deal_parameters || {
+      growth_rate: 0.03,
+      exit_cap_rate: 0.06,
+      vacancy_rate: 0.05,
+      loan_amount: 5000000,
+    }
+  );
+
+  const handleParamChange = (key: keyof DealParameters, value: string) => {
+    // Handle percentage inputs (user types 3 for 3%, we store 0.03)
+    // Handle loan amount (raw number)
+    let numValue = parseFloat(value);
+    
+    if (isNaN(numValue)) numValue = 0;
+
+    if (key === 'growth_rate' || key === 'exit_cap_rate' || key === 'vacancy_rate') {
+      numValue = numValue / 100;
+    }
+
+    setEditParams(prev => ({
+      ...prev,
+      [key]: numValue
+    }));
+  };
+
+  const handleSave = () => {
+    if (onReanalyze) {
+      onReanalyze(editParams);
+      setIsEditing(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditParams(analysis.deal_parameters || editParams);
+    setIsEditing(false);
+  };
+
   const getStatusDisplay = (status: string) => {
     if (status === "PASS") {
       return {
@@ -205,44 +247,130 @@ export default function UnderwritingDashboard({
         </div>
       </div>
 
+      {/* Conclusion & Decision Impact */}
+      <ConclusionWidget analysis={analysis} />
+
       {/* Deal Parameters */}
       {analysis.deal_parameters && (
         <div className="bg-white rounded-xl shadow-sm p-8 ring-1 ring-slate-200">
-          <h3 className="text-xl font-bold text-slate-900 mb-6">Deal Parameters (Valiance Standards)</h3>
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-bold text-slate-900">Deal Parameters (Valiance Standards)</h3>
+            {!isEditing ? (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+              >
+                Edit Parameters
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                 <button
+                  onClick={handleCancel}
+                  className="text-sm text-slate-600 hover:text-slate-800 font-medium px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="text-sm bg-blue-600 text-white hover:bg-blue-700 font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+                >
+                  Save & Regenerate
+                </button>
+              </div>
+            )}
+          </div>
+          
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div className="bg-slate-50 p-5 rounded-lg border border-slate-100">
-              <p className="text-sm text-slate-600 flex items-center mb-1">
+            <div className={`bg-slate-50 p-5 rounded-lg border ${isEditing ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-100'}`}>
+              <div className="text-sm text-slate-600 flex items-center mb-1">
                 Rent Growth Rate <InfoTooltip term="Rent Growth" />
-              </p>
-              <p className="text-2xl font-bold text-slate-900">
-                {formatPercent(analysis.deal_parameters.growth_rate)}
-              </p>
+              </div>
+              {isEditing ? (
+                 <div className="flex items-center">
+                   <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                      value={(editParams.growth_rate * 100).toFixed(1)}
+                      onChange={(e) => handleParamChange('growth_rate', e.target.value)}
+                   />
+                   <span className="ml-1 font-bold text-slate-500">%</span>
+                 </div>
+              ) : (
+                <p className="text-2xl font-bold text-slate-900">
+                  {formatPercent(analysis.deal_parameters.growth_rate)}
+                </p>
+              )}
             </div>
-            <div className="bg-slate-50 p-5 rounded-lg border border-slate-100">
-              <p className="text-sm text-slate-600 flex items-center mb-1">
+
+            <div className={`bg-slate-50 p-5 rounded-lg border ${isEditing ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-100'}`}>
+              <div className="text-sm text-slate-600 flex items-center mb-1">
                 Vacancy Rate <InfoTooltip term="Vacancy Rate" />
-              </p>
-              <p className="text-2xl font-bold text-slate-900">
-                {formatPercent(analysis.deal_parameters.vacancy_rate)}
-              </p>
+              </div>
+              {isEditing ? (
+                 <div className="flex items-center">
+                   <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                      value={(editParams.vacancy_rate * 100).toFixed(1)}
+                      onChange={(e) => handleParamChange('vacancy_rate', e.target.value)}
+                   />
+                   <span className="ml-1 font-bold text-slate-500">%</span>
+                 </div>
+              ) : (
+                <p className="text-2xl font-bold text-slate-900">
+                  {formatPercent(analysis.deal_parameters.vacancy_rate)}
+                </p>
+              )}
             </div>
-            <div className="bg-slate-50 p-5 rounded-lg border border-slate-100">
-              <p className="text-sm text-slate-600 flex items-center mb-1">
+
+            <div className={`bg-slate-50 p-5 rounded-lg border ${isEditing ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-100'}`}>
+              <div className="text-sm text-slate-600 flex items-center mb-1">
                 Exit Cap Rate <InfoTooltip term="Exit Cap" />
-              </p>
-              <p className="text-2xl font-bold text-slate-900">
-                {formatPercent(analysis.deal_parameters.exit_cap_rate)}
-              </p>
+              </div>
+               {isEditing ? (
+                 <div className="flex items-center">
+                   <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                      value={(editParams.exit_cap_rate * 100).toFixed(1)}
+                      onChange={(e) => handleParamChange('exit_cap_rate', e.target.value)}
+                   />
+                   <span className="ml-1 font-bold text-slate-500">%</span>
+                 </div>
+              ) : (
+                <p className="text-2xl font-bold text-slate-900">
+                  {formatPercent(analysis.deal_parameters.exit_cap_rate)}
+                </p>
+              )}
             </div>
-            <div className="bg-slate-50 p-5 rounded-lg border border-slate-100 group relative cursor-help">
-              <p className="text-sm text-slate-600 flex items-center mb-1">
+
+            <div className={`bg-slate-50 p-5 rounded-lg border ${isEditing ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-100'} group relative cursor-help`}>
+              <div className="text-sm text-slate-600 flex items-center mb-1">
                 <span className="border-b border-dashed border-slate-400">Loan Amount</span>
                 <InfoTooltip term="Loan Amount" />
-              </p>
-              <p className="text-2xl font-bold text-slate-900">
-                {formatCurrency(analysis.deal_parameters?.loan_amount || 0)}
-              </p>
-              <ExplanationTooltip metadata={analysis.explainability?.["Loan Amount"]} />
+              </div>
+              {isEditing ? (
+                 <div className="flex items-center">
+                   <span className="mr-1 font-bold text-slate-500">$</span>
+                   <input
+                      type="number"
+                      step="1000"
+                      className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
+                      value={editParams.loan_amount}
+                      onChange={(e) => handleParamChange('loan_amount', e.target.value)}
+                   />
+                 </div>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-slate-900">
+                    {formatCurrency(analysis.deal_parameters?.loan_amount || 0)}
+                  </p>
+                  <ExplanationTooltip metadata={analysis.explainability?.["Loan Amount"]} />
+                </>
+              )}
             </div>
           </div>
         </div>

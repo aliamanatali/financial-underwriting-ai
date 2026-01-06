@@ -91,6 +91,7 @@ class DealParameters(BaseModel):
     
     # Loan/Debt Assumptions
     ltv: float = 0.65  # Loan to Value
+    loan_amount: Optional[float] = None # Manual override for loan amount
     sofr_rate: float = 0.053 # Base rate
     bridge_spread: float = 0.02 # Spread over SOFR
     
@@ -131,6 +132,17 @@ class ExplainabilityMetadata(BaseModel):
     calculation: ExplanationCalculation
     adjustments: List[str]  # e.g., ["Value floored at $0"]
     classification: str  # "Direct", "Derived", "Derived with Assumptions", "Derived with Safeguards", "Invalid / Not Meaningful"
+
+class DecisionImpact(BaseModel):
+    metric: str
+    decision: str  # What the AI decided/calculated
+    reasoning: str # How it came with the decision
+    impact: str    # Impact for the client
+
+class Conclusion(BaseModel):
+    summary: str # High level summary
+    key_decisions: List[DecisionImpact]
+
 # --- 2.5 Multi-Document Support Models ---
 
 class DocumentMetadata(BaseModel):
@@ -238,6 +250,11 @@ class UnderwritingAnalysis(BaseModel):
 
     # Sensitivity Analysis
     sensitivity_analysis: Optional[Dict[str, Any]] = None
+
+    # AI Conclusion & Impact
+    # AI Narrative
+    analyst_commentary: Optional[str] = None
+    conclusion: Optional[Conclusion] = None
 
 
 

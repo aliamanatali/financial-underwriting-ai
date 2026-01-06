@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { UnderwritingAnalysis, FinancialAnalysisProgress } from "@/lib/types";
+import { UnderwritingAnalysis, FinancialAnalysisProgress, DealParameters } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
@@ -20,8 +20,61 @@ export default function AnalysisResultPage() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">(
     "dashboard"
   );
+  
+  // Use a ref to keep track of the current event source so we can close it on unmount/re-run
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
+
+  const closeEventSource = () => {
+    if (eventSourceRef.current) {
+      console.log("Closing existing EventSource");
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  };
+
+  const handleReanalyze = async (newParams: DealParameters) => {
+    console.log("Re-analyzing with params:", newParams);
+    setIsLoading(true);
+    setError(null);
+    setProgress({ percentage: 0, message: "Restarting analysis..." });
+    setAnalysis(null); // Clear existing analysis to show loader
+
+    closeEventSource();
+
+    // Start progress stream
+    eventSourceRef.current = apiClient.streamFinancialAnalysisProgress(id, (progressUpdate) => {
+      setProgress(progressUpdate);
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analyze`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(newParams),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));
+        const errorMessage = errorData.detail || `HTTP ${response.status}: ${response.statusText}`;
+        throw new Error(`Analysis failed: ${errorMessage}`);
+      }
+
+      const result: UnderwritingAnalysis = await response.json();
+      setAnalysis(result);
+      setError(null);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch analysis results.";
+      console.error("Analysis error:", errorMessage, err);
+      setError(errorMessage);
+    } finally {
+      closeEventSource();
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (id) {
@@ -30,9 +83,11 @@ export default function AnalysisResultPage() {
           setIsLoading(true);
           setError(null);
           setProgress({ percentage: 0, message: "Starting analysis..." });
+          
+          closeEventSource();
 
           // Start progress stream
-          const eventSource = apiClient.streamFinancialAnalysisProgress(id, (progressUpdate) => {
+          eventSourceRef.current = apiClient.streamFinancialAnalysisProgress(id, (progressUpdate) => {
             setProgress(progressUpdate);
           });
 
@@ -43,7 +98,7 @@ export default function AnalysisResultPage() {
           // 1. Try to fetch EXISTING analysis first (Dashboard/History flow)
           // This avoids re-running the expensive LLM/Calculation if it's already done
           let existingAnalysisResponse;
-          let shouldRunAnalysis = false;
+          
           try {
             existingAnalysisResponse = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analysis`);
             if (existingAnalysisResponse.ok) {
@@ -52,22 +107,11 @@ export default function AnalysisResultPage() {
               setAnalysis(existingResult);
               setError(null);
               setIsLoading(false);
-              eventSource.close();
+              closeEventSource();
               return; // EXIT EARLY - We found it!
-            } else if (existingAnalysisResponse.status === 404) {
-              // Check if it's "NO_ANALYSIS_YET" or package doesn't exist
-              const errorData = await existingAnalysisResponse.json().catch(() => ({ detail: "" }));
-              if (errorData.detail === "NO_ANALYSIS_YET") {
-                console.log("Package exists but no analysis yet, will run new analysis");
-                shouldRunAnalysis = true;
-              } else {
-                console.log("Could not load existing analysis, proceeding to check package");
-                shouldRunAnalysis = true;
-              }
             }
           } catch (e) {
             console.log("Could not load existing analysis, proceeding to run new analysis");
-            shouldRunAnalysis = true;
           }
 
           // 2. If no existing analysis, determine if it's a package or single doc
@@ -87,12 +131,8 @@ export default function AnalysisResultPage() {
           let response;
           if (isPackage) {
             // Use multi-document analysis endpoint
-            response = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analyze`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
+            // Default params for initial run
+            const defaultParams: DealParameters = {
                 growth_rate: 0.03,
                 exit_cap_rate: 0.06,
                 vacancy_rate: 0.03,
@@ -100,7 +140,14 @@ export default function AnalysisResultPage() {
                 min_unit_count: 15,
                 max_unit_count: 80,
                 max_build_year: 1970,
-              }),
+            };
+
+            response = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analyze`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(defaultParams),
             });
           } else {
             // Use single-document analysis endpoint
@@ -127,17 +174,23 @@ export default function AnalysisResultPage() {
           const result: UnderwritingAnalysis = await response.json();
           setAnalysis(result);
           setError(null);
-          eventSource.close();
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : "Failed to fetch analysis results.";
           console.error("Analysis error:", errorMessage, err);
           setError(errorMessage);
         } finally {
           setIsLoading(false);
+          closeEventSource();
         }
       };
+      
       fetchAnalysis();
     }
+
+    // Cleanup on unmount
+    return () => {
+        closeEventSource();
+    };
   }, [id, API_BASE_URL]);
 
   if (isLoading) {
@@ -339,7 +392,12 @@ export default function AnalysisResultPage() {
         
             <div className="p-6 md:p-8 bg-slate-50/50">
                 {/* Tab Content */}
-                {activeTab === "dashboard" && <UnderwritingDashboard analysis={analysis} />}
+                {activeTab === "dashboard" && (
+                    <UnderwritingDashboard 
+                        analysis={analysis} 
+                        onReanalyze={handleReanalyze}
+                    />
+                )}
 
                 {activeTab === "audit" && (
                 <AuditTrailWidget auditTrail={(analysis.audit_trail as any) || []} />

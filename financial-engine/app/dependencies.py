@@ -31,8 +31,8 @@ def get_memo_service(gemini_service: GeminiClient = Depends(get_gemini_service))
 def get_ingestion_service():
     return IngestionService()
 
-def get_explainability_service():
-    return ExplainabilityService()
+def get_explainability_service(gemini_service: GeminiClient = Depends(get_gemini_service)):
+    return ExplainabilityService(gemini_service)
 # Singleton instance
 progress_service = ProgressService()
 

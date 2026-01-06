@@ -49,6 +49,16 @@ class MultiDocumentExtractionService:
         Returns:
             List with a single dictionary containing aggregated expense data
         """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, self._extract_from_excel_sync, file_content, filename)
+        except Exception as e:
+            logger.error(f"Error extracting from Excel file {filename}: {str(e)}", exc_info=True)
+            raise
+
+    def _extract_from_excel_sync(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
+        """Synchronous implementation of Excel extraction for thread pool execution."""
         try:
             workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
             sheet = workbook.active
@@ -124,7 +134,7 @@ class MultiDocumentExtractionService:
             return [aggregated_entry]  # Return single entry instead of multiple
             
         except Exception as e:
-            logger.error(f"Error extracting from Excel file {filename}: {str(e)}", exc_info=True)
+            logger.error(f"Error inside sync Excel extraction for {filename}: {str(e)}", exc_info=True)
             raise
     
     async def extract_from_pdf(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
@@ -192,7 +202,7 @@ class MultiDocumentExtractionService:
                 IMPORTANT: Return ONLY the JSON array, no additional text or explanation.
                 """
                 
-                response = self.gemini_service.model.generate_content([uploaded_file, prompt])
+                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
                 
                 # Parse JSON response
                 response_text = response.text.strip()
@@ -296,7 +306,7 @@ class MultiDocumentExtractionService:
             - If uncertain, choose the closest match but lower the confidence
             """
             
-            response = self.gemini_service.generate_content(prompt)
+            response = await self.gemini_service.generate_content_async(prompt)
             response_text = response.strip()
             
             # Remove markdown code blocks if present

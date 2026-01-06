@@ -25,8 +25,9 @@ from app.services.normalization_service import NormalizationService
 from app.services.gemini_service import GeminiService
 from app.services.multi_document_extraction_service import MultiDocumentExtractionService
 from app.services.storage_service import storage_service
+from app.services.explainability_service import ExplainabilityService
 from app.services.progress_service import ProgressService
-from app.dependencies import get_gemini_service, get_progress_service
+from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
@@ -543,7 +544,8 @@ async def analyze_deal_package(
     package_id: str,
     deal_parameters: Dict[str, Any],
     gemini_service: GeminiService = Depends(get_gemini_service),
-    progress_service: ProgressService = Depends(get_progress_service)
+    progress_service: ProgressService = Depends(get_progress_service),
+    explainability_service: ExplainabilityService = Depends(get_explainability_service)
 ):
     """
     Perform financial analysis on a multi-document deal package.
@@ -915,11 +917,21 @@ async def analyze_deal_package(
         await progress_service.update_progress(package_id, 0, f"Calculations failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Financial calculation failed: {str(e)}")
     
+    # ===== STEP 4.5: GENERATE EXPLAINABILITY & CONCLUSION =====
+    try:
+        await progress_service.update_progress(package_id, 80, "Generating insights and explanations...")
+        analysis = await explainability_service.generate_explanations(analysis)
+        logger.info("Explainability metadata and conclusion generated successfully.")
+    except Exception as e:
+        logger.error(f"Explainability generation failed: {str(e)}")
+        # Don't fail the pipeline for this, but log it
+        analysis.gating_reasons.append(f"Explainability generation failed: {str(e)}")
+
     # ===== STEP 5: GENERATE EXCEL (OPTIONAL) =====
     try:
         await progress_service.update_progress(package_id, 90, "Generating Excel model...")
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
-        excel_service.create_side_by_side_excel(pro_forma_entries)
+        await excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for package: {package_id}")
     except Exception as e:
         logger.warning(f"Excel generation had issues (non-critical): {str(e)}")
