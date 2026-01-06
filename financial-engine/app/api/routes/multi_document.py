@@ -288,20 +288,48 @@ async def get_deal_package(package_id: str):
     raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
 
 
-@router.get("/packages", response_model=List[DealPackage])
-async def list_deal_packages():
+@router.get("/packages")
+async def list_deal_packages(
+    limit: int = 5,
+    offset: int = 0
+):
     """
-    List all deal packages.
+    List deal packages with pagination.
+    
+    Args:
+        limit: Maximum number of packages to return (default: 5)
+        offset: Number of packages to skip (default: 0)
+    
+    Returns:
+        Paginated response with packages and metadata
     """
     # Get packages from GCP storage
     packages_data = await storage_service.list_deal_packages()
     packages = [DealPackage(**pkg) for pkg in packages_data]
     
+    # Sort by created_at (newest first)
+    packages.sort(key=lambda p: p.created_at, reverse=True)
+    
+    # Calculate pagination metadata
+    total = len(packages)
+    has_more = (offset + limit) < total
+    
+    # Apply pagination
+    paginated_packages = packages[offset:offset + limit]
+    
     # Update cache
-    for package in packages:
+    for package in paginated_packages:
         deal_packages_cache[package.package_id] = package
     
-    return packages
+    logger.info(f"Returning {len(paginated_packages)} packages (offset={offset}, limit={limit}, total={total})")
+    
+    return {
+        "packages": [pkg.model_dump() for pkg in paginated_packages],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more
+    }
 
 
 @router.post("/packages/{package_id}/normalize", response_model=DocumentNormalizationResult)
@@ -923,14 +951,29 @@ async def analyze_deal_package(
 async def get_deal_analysis(package_id: str):
     """
     Retrieve the stored financial analysis for a deal package.
+    Returns 404 with a specific message if analysis hasn't been run yet.
+    This allows the frontend to distinguish between "package not found" and "analysis not run yet".
     """
     from app.services.storage_service import storage_service
+    
+    # First, verify the package exists
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Package {package_id} not found. It may have been deleted or never existed."
+        )
     
     # Check cache/storage for analysis result
     analysis_data = await storage_service.get_analysis_result(package_id)
     
     if not analysis_data:
-        raise HTTPException(status_code=404, detail=f"Analysis not found for package {package_id}. Run analysis first.")
+        # Package exists but analysis hasn't been run yet
+        # Return 404 with a clear message that frontend can handle
+        raise HTTPException(
+            status_code=404,
+            detail=f"NO_ANALYSIS_YET"
+        )
     
     return analysis_data
 

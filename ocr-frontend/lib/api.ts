@@ -165,9 +165,31 @@ class ApiClient {
     return this.handleResponse<UnderwritingAnalysis>(response);
   }
 
-  async getDealPackages(): Promise<DealPackage[]> {
-    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages`);
-    return this.handleResponse<DealPackage[]>(response);
+  async getDealPackages(limit: number = 5, offset: number = 0): Promise<{
+    packages: DealPackage[];
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages?limit=${limit}&offset=${offset}`);
+    return this.handleResponse<{
+      packages: DealPackage[];
+      total: number;
+      limit: number;
+      offset: number;
+      has_more: boolean;
+    }>(response);
+  }
+
+  async deleteDealPackage(packageId: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
   }
 
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {

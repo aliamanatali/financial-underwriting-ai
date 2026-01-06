@@ -43,6 +43,7 @@ export default function AnalysisResultPage() {
           // 1. Try to fetch EXISTING analysis first (Dashboard/History flow)
           // This avoids re-running the expensive LLM/Calculation if it's already done
           let existingAnalysisResponse;
+          let shouldRunAnalysis = false;
           try {
             existingAnalysisResponse = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${id}/analysis`);
             if (existingAnalysisResponse.ok) {
@@ -51,10 +52,22 @@ export default function AnalysisResultPage() {
               setAnalysis(existingResult);
               setError(null);
               setIsLoading(false);
+              eventSource.close();
               return; // EXIT EARLY - We found it!
+            } else if (existingAnalysisResponse.status === 404) {
+              // Check if it's "NO_ANALYSIS_YET" or package doesn't exist
+              const errorData = await existingAnalysisResponse.json().catch(() => ({ detail: "" }));
+              if (errorData.detail === "NO_ANALYSIS_YET") {
+                console.log("Package exists but no analysis yet, will run new analysis");
+                shouldRunAnalysis = true;
+              } else {
+                console.log("Could not load existing analysis, proceeding to check package");
+                shouldRunAnalysis = true;
+              }
             }
           } catch (e) {
             console.log("Could not load existing analysis, proceeding to run new analysis");
+            shouldRunAnalysis = true;
           }
 
           // 2. If no existing analysis, determine if it's a package or single doc

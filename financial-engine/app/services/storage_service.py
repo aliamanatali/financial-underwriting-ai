@@ -261,7 +261,12 @@ class StorageService:
             List of package metadata dictionaries
         """
         if not self.use_gcp:
-            return list(_memory_storage.values())
+            # Filter out analysis results (keys ending with _analysis)
+            packages = [
+                pkg for key, pkg in _memory_storage.items()
+                if not key.endswith('_analysis') and isinstance(pkg, dict) and 'package_id' in pkg
+            ]
+            return packages
         
         try:
             # List all metadata files
@@ -282,7 +287,7 @@ class StorageService:
             return packages
             
         except Exception as e:
-            logger.error(f"Failed to list deal packages: {str(e)}")
+            logger.error(f"Failed to list deal packages: {str(e)}", exc_info=True)
             return []
     
     async def delete_deal_package(self, package_id: str) -> bool:
