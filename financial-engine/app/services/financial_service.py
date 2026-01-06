@@ -407,8 +407,14 @@ class FinancialService:
         
         # 5. IRR
         try:
-            # Check for zero cash flows or all negative/all positive which breaks IRR
-            if not cash_flows or all(cf >= 0 for cf in cash_flows) or all(cf <= 0 for cf in cash_flows):
+            # Check for zero cash flows
+            if not cash_flows:
+                irr = 0.0
+            # If all cash flows are negative (total loss), return -1.0 (-100%)
+            elif all(cf <= 0 for cf in cash_flows):
+                irr = -1.0
+            # If all cash flows are positive (no investment?), return 0.0 (undefined)
+            elif all(cf >= 0 for cf in cash_flows):
                 irr = 0.0
             else:
                 irr = npf.irr(cash_flows)
@@ -473,8 +479,14 @@ class FinancialService:
         cash_flows.append(year_exit_cf)
         
         try:
-            # Check for zero cash flows or all negative/all positive which breaks IRR
-            if not cash_flows or all(cf >= 0 for cf in cash_flows) or all(cf <= 0 for cf in cash_flows):
+            # Check for zero cash flows
+            if not cash_flows:
+                return 0.0
+            # If all cash flows are negative (total loss), return -1.0 (-100%)
+            if all(cf <= 0 for cf in cash_flows):
+                return -1.0
+            # If all cash flows are positive, return 0.0
+            if all(cf >= 0 for cf in cash_flows):
                 return 0.0
                 
             irr = npf.irr(cash_flows)

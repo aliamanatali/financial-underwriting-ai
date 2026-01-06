@@ -24,22 +24,25 @@ const METRIC_DEFINITIONS: Record<string, string> = {
   "Upside": "Potential increase in value or income.",
   "Occupancy": "Percentage of units currently rented.",
   "Avg Monthly Rent": "Average rental income per unit per month.",
-  "Total Units": "Total number of rental units in the property."
+  "Total Units": "Total number of rental units in the property.",
+  "IRR": "Internal Rate of Return: The annual rate of growth that an investment is expected to generate.",
+  "MOIC": "Multiple on Invested Capital: Total cash returned divided by total cash invested.",
+  "Cash on Cash": "Cash-on-Cash Return: Annual pre-tax cash flow divided by actual cash invested."
 };
 
 function InfoTooltip({ term }: { term: string }) {
   const definition = METRIC_DEFINITIONS[term] || METRIC_DEFINITIONS[Object.keys(METRIC_DEFINITIONS).find(k => term.includes(k)) || ""] || term;
   
   return (
-    <div className="group/info relative inline-block ml-1.5 align-middle">
-      <div className="w-3.5 h-3.5 rounded-full border border-slate-400 text-slate-400 flex items-center justify-center text-[9px] font-serif italic cursor-help hover:border-blue-600 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+    <span className="group/info relative inline-block ml-1.5 align-middle">
+      <span className="w-3.5 h-3.5 rounded-full border border-slate-400 text-slate-400 flex items-center justify-center text-[9px] font-serif italic cursor-help hover:border-blue-600 hover:text-blue-600 hover:bg-blue-50 transition-colors">
         i
-      </div>
-      <div className="absolute z-[60] bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/info:block w-48 p-2 bg-slate-900 text-white text-xs rounded shadow-lg text-center font-normal leading-snug pointer-events-none">
+      </span>
+      <span className="absolute z-[60] bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/info:block w-48 p-2 bg-slate-900 text-white text-xs rounded shadow-lg text-center font-normal leading-snug pointer-events-none">
         {definition}
-        <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
-      </div>
-    </div>
+        <span className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-slate-900" />
+      </span>
+    </span>
   );
 }
 
@@ -359,7 +362,7 @@ export default function UnderwritingDashboard({
                       type="number"
                       step="1000"
                       className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
-                      value={editParams.loan_amount}
+                      value={editParams.loan_amount ?? 0}
                       onChange={(e) => handleParamChange('loan_amount', e.target.value)}
                    />
                  </div>
@@ -467,6 +470,51 @@ export default function UnderwritingDashboard({
         </div>
       </div>
 
+      {/* Investment Returns */}
+      <div className="bg-white rounded-xl shadow-sm p-8 ring-1 ring-slate-200">
+        <h3 className="text-xl font-bold text-slate-900 mb-6 flex items-center">
+          <svg className="w-6 h-6 mr-2 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Investment Returns (5-Year Hold)
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-purple-50 p-5 rounded-lg border border-purple-100">
+            <div className="text-sm text-purple-900 flex items-center mb-1 font-semibold">
+              IRR (Levered) <InfoTooltip term="IRR" />
+            </div>
+            <p className="text-3xl font-bold text-purple-700">
+              {formatPercent(analysis.irr || 0)}
+            </p>
+            <p className="text-xs text-purple-600 mt-2">
+              Internal Rate of Return
+            </p>
+          </div>
+          <div className="bg-blue-50 p-5 rounded-lg border border-blue-100">
+            <div className="text-sm text-blue-900 flex items-center mb-1 font-semibold">
+              MOIC <InfoTooltip term="MOIC" />
+            </div>
+            <p className="text-3xl font-bold text-blue-700">
+              {(analysis.moic || 0).toFixed(2)}x
+            </p>
+             <p className="text-xs text-blue-600 mt-2">
+              Multiple on Invested Capital
+            </p>
+          </div>
+           <div className="bg-emerald-50 p-5 rounded-lg border border-emerald-100">
+            <div className="text-sm text-emerald-900 flex items-center mb-1 font-semibold">
+              Cash-on-Cash <InfoTooltip term="Cash on Cash" />
+            </div>
+            <p className="text-3xl font-bold text-emerald-700">
+              {formatPercent(analysis.cash_on_cash_return || 0)}
+            </p>
+             <p className="text-xs text-emerald-600 mt-2">
+              Avg. Annual Cash Yield
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Upside Potential */}
       <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl shadow-sm p-8 border border-blue-100">
         <h3 className="text-xl font-bold text-blue-900 mb-6 flex items-center">
@@ -477,9 +525,9 @@ export default function UnderwritingDashboard({
         </h3>
         <div className="grid grid-cols-2 gap-8">
           <div className="bg-white/60 p-6 rounded-lg backdrop-blur-sm border border-blue-100">
-            <p className="text-slate-600 text-sm mb-3 flex items-center uppercase tracking-wide font-semibold">
+            <div className="text-slate-600 text-sm mb-3 flex items-center uppercase tracking-wide font-semibold">
               NOI Upside <InfoTooltip term="Upside" />
-            </p>
+            </div>
             <p className="text-4xl font-extrabold text-blue-600">
               {formatCurrency(noiChange)}
             </p>
@@ -488,9 +536,9 @@ export default function UnderwritingDashboard({
             </p>
           </div>
           <div className="bg-white/60 p-6 rounded-lg backdrop-blur-sm border border-blue-100">
-            <p className="text-slate-600 text-sm mb-3 flex items-center uppercase tracking-wide font-semibold">
+            <div className="text-slate-600 text-sm mb-3 flex items-center uppercase tracking-wide font-semibold">
               Cap Rate Upside <InfoTooltip term="Upside" />
-            </p>
+            </div>
             <p className="text-4xl font-extrabold text-blue-600">
               {(capRateChange * 100).toFixed(2)}%
             </p>
@@ -509,27 +557,27 @@ export default function UnderwritingDashboard({
         <h3 className="text-xl font-bold text-slate-900 mb-6">Rent Roll Summary</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <div className="bg-slate-50 p-5 rounded-lg border border-slate-100">
-            <p className="text-sm text-slate-600 flex items-center mb-1">
+            <div className="text-sm text-slate-600 flex items-center mb-1">
               Total Units <InfoTooltip term="Total Units" />
-            </p>
+            </div>
             <p className="text-3xl font-bold text-slate-900">{totalUnits}</p>
           </div>
           <div className="bg-emerald-50 p-5 rounded-lg border border-emerald-100">
-            <p className="text-sm text-emerald-800 flex items-center mb-1">
+            <div className="text-sm text-emerald-800 flex items-center mb-1">
               Occupied Units <InfoTooltip term="Occupancy" />
-            </p>
+            </div>
             <p className="text-3xl font-bold text-emerald-700">{occupiedUnits}</p>
           </div>
           <div className="bg-amber-50 p-5 rounded-lg border border-amber-100">
-            <p className="text-sm text-amber-800 flex items-center mb-1">
+            <div className="text-sm text-amber-800 flex items-center mb-1">
               Occupancy Rate <InfoTooltip term="Occupancy" />
-            </p>
+            </div>
             <p className="text-3xl font-bold text-amber-700">{formatPercent(occupancyRate)}</p>
           </div>
           <div className="bg-indigo-50 p-5 rounded-lg border border-indigo-100">
-            <p className="text-sm text-indigo-800 flex items-center mb-1">
+            <div className="text-sm text-indigo-800 flex items-center mb-1">
               Avg Monthly Rent <InfoTooltip term="Avg Monthly Rent" />
-            </p>
+            </div>
             <p className="text-2xl font-bold text-indigo-700">
               {formatCurrency(
                 analysis.rent_roll_summary?.total_monthly_rent
