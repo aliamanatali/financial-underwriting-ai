@@ -47,16 +47,25 @@ class FinancialService:
         purchase_price = analysis.property_meta.purchase_price or 0
         
         # Only check if Purchase Price is known. If 0/Missing, we defer to Step 4 (Implied Valuation).
-        if purchase_price > 0:
-            # Check if loan amount is explicitly provided in parameters
-            if hasattr(params, 'loan_amount') and params.loan_amount > 0:
-                estimated_loan = params.loan_amount
+        # OR if user explicitly provided a loan amount, we can check it regardless of purchase price.
+        
+        explicit_loan = None
+        if params.loan_amount is not None and params.loan_amount > 0:
+             explicit_loan = float(params.loan_amount)
+
+        if explicit_loan or purchase_price > 0:
+            if explicit_loan:
+                estimated_loan = explicit_loan
             else:
                 estimated_loan = purchase_price * params.ltv
                 
             if estimated_loan < params.min_loan_amount:
                 status = "FAIL"
                 reasons.append(f"Loan amount FAIL: Estimated loan ${estimated_loan:,.0f} is below minimum of ${params.min_loan_amount:,.0f}.")
+        elif explicit_loan is None and purchase_price == 0:
+             # Case where we have NO info to estimate loan
+             status = "FAIL"
+             reasons.append(f"Loan amount FAIL: Could not calculate loan (missing Purchase Price) and no manual Loan Amount provided.")
         
         # 3. Vintage Check
         year_built = analysis.property_meta.year_built or 0
@@ -322,8 +331,11 @@ class FinancialService:
 
         # 1. Loan Amount Logic
         # PRIORITY: If user explicitly provided loan_amount in parameters, use that
-        if hasattr(params, 'loan_amount') and params.loan_amount is not None and params.loan_amount > 0:
-            loan_amount = params.loan_amount
+        # Log the incoming param for debugging
+        logger.info(f"Loan Calculation - Params Loan Amount: {params.loan_amount}, Purchase Price: {purchase_price}, LTV: {params.ltv}")
+
+        if params.loan_amount is not None and params.loan_amount > 0:
+            loan_amount = float(params.loan_amount)
             method = f"User-Specified Loan Amount"
             logger.info(f"Using user-specified loan amount: ${loan_amount:,.0f}")
         
@@ -355,7 +367,12 @@ class FinancialService:
             # Check if this is a hard fail or just a warning? Usually hard fail for lending criteria.
             # We set status to FAIL but proceed with calcs.
             analysis.pass_fail_status = "FAIL"
-            analysis.gating_reasons.append(f"Loan Amount ${loan_amount:,.0f} < ${params.min_loan_amount:,.0f}")
+            
+            # Check if calculation failed (0) vs just too small
+            if loan_amount == 0:
+                 analysis.gating_reasons.append(f"Loan Amount not determined (Purchase Price missing?). Please manually enter a Loan Amount > ${params.min_loan_amount:,.0f}")
+            else:
+                 analysis.gating_reasons.append(f"Loan Amount ${loan_amount:,.0f} < ${params.min_loan_amount:,.0f}")
 
         # 2. Debt Service (Interest Only - "Bridge Debt")
         # Formula: SOFR + Spread

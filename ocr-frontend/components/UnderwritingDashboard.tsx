@@ -124,6 +124,18 @@ export default function UnderwritingDashboard({
     }
   );
 
+  // Sync state when analysis updates
+  React.useEffect(() => {
+    if (analysis.deal_parameters) {
+      // Ensure loan_amount is preserved or defaulted to 0 if missing/null to avoid controlled/uncontrolled issues
+      const syncedParams = {
+        ...analysis.deal_parameters,
+        loan_amount: analysis.deal_parameters.loan_amount ?? 0
+      };
+      setEditParams(syncedParams);
+    }
+  }, [analysis.deal_parameters]);
+
   const handleParamChange = (key: keyof DealParameters, value: string) => {
     // Handle percentage inputs (user types 3 for 3%, we store 0.03)
     // Handle loan amount (raw number)
@@ -143,7 +155,15 @@ export default function UnderwritingDashboard({
 
   const handleSave = () => {
     if (onReanalyze) {
-      onReanalyze(editParams);
+      // Ensure loan_amount is a number and included
+      // If user clears the input (0), we send 0 which allows backend to fallback to calculation
+      // If user types a value, we send that value
+      const cleanParams = {
+        ...editParams,
+        loan_amount: Number(editParams.loan_amount || 0)
+      };
+      console.log("Saving params:", cleanParams);
+      onReanalyze(cleanParams);
       setIsEditing(false);
     }
   };
@@ -396,11 +416,14 @@ export default function UnderwritingDashboard({
                  <div className="flex items-center">
                    <span className="mr-1 font-bold text-slate-500">$</span>
                    <input
-                      type="number"
-                      step="1000"
+                      type="text"
                       className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500"
                       value={editParams.loan_amount ?? 0}
-                      onChange={(e) => handleParamChange('loan_amount', e.target.value)}
+                      onChange={(e) => {
+                          // Remove all non-numeric chars except decimal point
+                          const val = e.target.value.replace(/[^0-9.]/g, '');
+                          handleParamChange('loan_amount', val);
+                      }}
                    />
                  </div>
               ) : (

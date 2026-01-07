@@ -667,7 +667,19 @@ async def analyze_deal_package(
     
     # Parse deal parameters
     try:
+        logger.info(f"Raw deal_parameters received: {deal_parameters}")
         params = DealParameters(**deal_parameters)
+        
+        # Explicitly force loan_amount from raw dict if present (safety net)
+        if "loan_amount" in deal_parameters and deal_parameters["loan_amount"] is not None:
+            try:
+                raw_loan = float(deal_parameters["loan_amount"])
+                if raw_loan > 0:
+                    params.loan_amount = raw_loan
+                    logger.info(f"Forced loan_amount from raw dict: {params.loan_amount}")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not parse loan_amount from raw dict: {e}")
+
         # Sanitize params immediately
         if math.isnan(params.growth_rate): params.growth_rate = 0.03
         if math.isnan(params.vacancy_rate): params.vacancy_rate = 0.05
