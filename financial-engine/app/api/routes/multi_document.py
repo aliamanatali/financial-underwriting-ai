@@ -613,6 +613,9 @@ async def analyze_deal_package(
     require documents to be in the OCR backend. It uses the normalized data
     from the package to perform analysis.
     
+    This endpoint ALWAYS performs a fresh analysis from scratch, ensuring all
+    calculations use the latest deal parameters provided.
+    
     Args:
         package_id: The deal package ID
         deal_parameters: Deal parameters (growth_rate, exit_cap_rate, etc.)
@@ -640,7 +643,7 @@ async def analyze_deal_package(
         except (ValueError, TypeError):
             return 0.0
     
-    logger.info(f"Starting multi-document analysis for package: {package_id}")
+    logger.info(f"Starting FRESH multi-document analysis for package: {package_id}")
     logger.info(f"Received deal parameters: {deal_parameters}")
     
     await progress_service.update_progress(package_id, 5, "Initializing analysis...")
@@ -765,13 +768,11 @@ async def analyze_deal_package(
     # Build property metadata, rent roll, and expenses from normalized items
     
     # Handle missing loan_amount gracefully by using LTV calculation or default
+    # Note: current_loan_balance represents EXISTING debt, not the NEW loan being analyzed
+    # The NEW loan amount will be calculated in financial_service based on deal_parameters
     current_loan_balance = 0.0
-    # If loan_amount is present (legacy), use it. Else calculate from purchase price * LTV
-    if hasattr(params, 'loan_amount'):
-        current_loan_balance = params.loan_amount
-    elif hasattr(params, 'ltv'):
-        # We don't have purchase price yet, so we'll update this after extraction
-        current_loan_balance = 0.0
+    # Only set if there's an existing loan on the property (from extraction)
+    # The new loan_amount from params will be used in financial calculations, not here
     
     property_meta = PropertyMeta(
         address=package.property_name,
@@ -779,7 +780,7 @@ async def analyze_deal_package(
         purchase_price=0.0,  # Default to 0, will be updated from extraction
         total_units=0,  # Default - should be calculated from rent roll
         is_renovated=False,
-        current_loan_balance=current_loan_balance
+        current_loan_balance=current_loan_balance  # Existing debt, not new loan
     )
     
     # Apply Manual Overrides for Property Meta

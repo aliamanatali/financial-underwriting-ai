@@ -338,31 +338,39 @@ class ExplainabilityService:
         purchase_price = self.analysis.property_meta.purchase_price or 0.0
         ltv = self.params.ltv
         
-        formula = "Purchase Price * LTV"
-        inputs = {"Purchase Price": purchase_price, "LTV": ltv}
-        adjustments = []
-        
-        if purchase_price == 0:
+        # Check if user explicitly provided loan amount
+        if hasattr(self.params, 'loan_amount') and self.params.loan_amount is not None and self.params.loan_amount > 0:
+            formula = "User-Specified Loan Amount"
+            inputs = {"Loan Amount": self.params.loan_amount}
+            adjustments = ["User manually set loan amount in deal parameters"]
+            data_type = "User Input"
+        elif purchase_price == 0:
             formula = "Implied Value (NOI / Exit Cap) * LTV"
             noi = self.analysis.pro_forma_noi or 0.0
             exit_cap = self.params.exit_cap_rate
             inputs = {"NOI": noi, "Exit Cap Rate": exit_cap, "LTV": ltv}
-            adjustments.append("Purchase Price missing, using Implied Value")
+            adjustments = ["Purchase Price missing, using Implied Value"]
+            data_type = "Derived with Assumptions"
+        else:
+            formula = "Purchase Price * LTV"
+            inputs = {"Purchase Price": purchase_price, "LTV": ltv}
+            adjustments = []
+            data_type = "Derived with Assumptions"
 
         self._add_explanation("Loan Amount", ExplainabilityMetadata(
             metric="Loan Amount",
             value=val,
             source=ExplanationSource(
-                document="Assumption Engine",
-                fields_used=["Purchase Price", "LTV"],
-                data_type="Derived with Assumptions"
+                document="Assumption Engine" if data_type != "User Input" else "User Parameters",
+                fields_used=["Purchase Price", "LTV"] if data_type != "User Input" else ["Loan Amount"],
+                data_type=data_type
             ),
             calculation=ExplanationCalculation(
                 formula=formula,
                 inputs=inputs
             ),
             adjustments=adjustments,
-            classification="Derived with Assumptions"
+            classification=data_type
         ))
 
     def _explain_debt_service(self):

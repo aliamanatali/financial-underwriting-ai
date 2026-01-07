@@ -321,8 +321,14 @@ class FinancialService:
         total_project_cost = analysis.total_project_cost or 0
 
         # 1. Loan Amount Logic
+        # PRIORITY: If user explicitly provided loan_amount in parameters, use that
+        if hasattr(params, 'loan_amount') and params.loan_amount is not None and params.loan_amount > 0:
+            loan_amount = params.loan_amount
+            method = f"User-Specified Loan Amount"
+            logger.info(f"Using user-specified loan amount: ${loan_amount:,.0f}")
+        
         # CASE A: Purchase Price is known -> Standard LTV calculation
-        if purchase_price > 0:
+        elif purchase_price > 0:
             loan_amount = purchase_price * params.ltv
             method = f"Purchase Price * {params.ltv:.0%} LTV"
         
