@@ -85,11 +85,12 @@ class ExplainabilityService:
         Context Data:
         {context}
 
-        Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Mention the specific risks found in the structural report and the upside in rent."
+        Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Discuss potential physical/structural considerations based on property age and highlight the upside in rent."
         
         Guidance for AI:
         - If the status is PASS, you generally approve. If FAIL, you reject.
-        - Since you don't have the actual structural report, infer potential structural risks based on the property vintage (Year Built: {self.analysis.property_meta.year_built}) or mention that "structural report flagged minor foundation settling" as a hypothetical example if needed to satisfy the prompt, OR strictly state "Review of structural report pending" if you prefer factual accuracy. However, the user prompt specifically asks to "Mention the specific risks found", so imply you found some (e.g., roof age, foundation, seismic retrofitting needed for older buildings).
+        - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
+        - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
         - "Upside in rent" refers to the Loss to Lease (Current vs Market).
         """
         

@@ -318,13 +318,13 @@ class FinancialService:
         # 1. Property Taxes (Prop 13 Reset)
         # Formula: (Purchase Price * Tax Rate) + Special Assessments
         pro_forma_tax = self._sanitize_value(purchase_price * params.tax_rate)
-        expense_breakdown.append(ProFormaExpenseItem(name="Property Taxes", amount=pro_forma_tax))
+        expense_breakdown.append(ProFormaExpenseItem(name=ExpenseCategory.REAL_ESTATE_TAXES.value, amount=pro_forma_tax))
         self.audit_log_service.add_log(analysis, "Expense: Taxes", f"${pro_forma_tax:,.0f}", "Valiance Rule", f"Purchase Price * {params.tax_rate:.2%}")
 
         # 2. Management Fee
         # Formula: EGI * 0.04
         mgmt_fee = self._sanitize_value(egi * params.management_fee_rate)
-        expense_breakdown.append(ProFormaExpenseItem(name="Management Fee", amount=mgmt_fee))
+        expense_breakdown.append(ProFormaExpenseItem(name=ExpenseCategory.MANAGEMENT_FEES.value, amount=mgmt_fee))
         self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}", "Valiance Rule", f"{params.management_fee_rate:.1%} of EGI")
 
         # 3. Other Operating Expenses (Sourced from T12)
@@ -356,18 +356,23 @@ class FinancialService:
             self.audit_log_service.add_log(analysis, "Other OpEx", f"${total_other_opex:,.0f}", "Aggregation", "Sum of T12 Expenses (Excl. Tax/Mgmt)")
 
         total_opex = sum(item.amount for item in expense_breakdown)
+        
+        # 4. Enforce 38% Rule for F12 Pro Forma (Floor)
+        target_ratio = params.expense_ratio_target # 0.38
+        target_opex = egi * target_ratio
+        
+        if total_opex < target_opex:
+            shortfall = target_opex - total_opex
+            # Add shortfall as "Capital Reserves" to hit the 38% target
+            expense_breakdown.append(ProFormaExpenseItem(name=ExpenseCategory.CAPITAL_RESERVES.value, amount=shortfall))
+            total_opex = target_opex
+            self.audit_log_service.add_log(analysis, "Expense Adjustment", f"${shortfall:,.0f}", "38% Rule", f"Added Reserves to hit {target_ratio:.0%} Expense Ratio")
+
         analysis.pro_forma_expenses = self._sanitize_value(total_opex)
         analysis.pro_forma_expenses_detailed = expense_breakdown
         
-        # 4. Expense Ratio Evaluation (Check, don't force)
         expense_ratio = total_opex / egi if egi > 0 else 0
-        
-        if expense_ratio < 0.20:
-             analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is suspiciously low (<20%). Check if T12 data was extracted.")
-        elif expense_ratio > 0.60:
-            analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is unusually high (>60%). Market standard is ~38%.")
-        
-        self.audit_log_service.add_log(analysis, "Total OpEx", f"${total_opex:,.0f}", "Summation", f"Calculated Ratio: {expense_ratio:.1%}")
+        self.audit_log_service.add_log(analysis, "Total OpEx", f"${total_opex:,.0f}", "Calculation", f"Final Ratio: {expense_ratio:.1%}")
 
     # --- Step 3: Profitability Metrics (NOI) ---
     def _calculate_profitability(self, analysis: UnderwritingAnalysis):

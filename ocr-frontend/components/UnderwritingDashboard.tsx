@@ -254,7 +254,7 @@ export default function UnderwritingDashboard({
 
   const occupancyRate = analysis.rent_roll_summary?.occupancy_rate || 0;
   const totalUnits = analysis.property_meta?.total_units || 0;
-  const occupiedUnits = analysis.rent_roll_summary?.occupied_units || 0;
+  const occupiedUnits = Math.round(totalUnits * occupancyRate);
   const purchasePrice = analysis.property_meta.purchase_price || 0;
   const pricePerUnit = totalUnits > 0 ? purchasePrice / totalUnits : 0;
 
