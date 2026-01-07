@@ -176,6 +176,8 @@ export interface DealParameters {
   max_build_year?: number;
   treasury_rate_5yr?: number;
   perm_spread?: number;
+  units_override?: number;
+  purchase_price_override?: number;
 }
 
 export interface UnitTypeSummary {

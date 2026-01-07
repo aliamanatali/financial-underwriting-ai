@@ -45,6 +45,20 @@ async def perform_analysis(
     try:
         await progress_service.update_progress(document_id, 20, "Extracting and normalizing data from document...")
         analysis = await ingestion_service.ingest_pdf_document(document_id)
+        
+        # Apply Overrides if present
+        if deal_parameters.units_override is not None:
+             analysis.property_meta.total_units = deal_parameters.units_override
+             logger.info(f"Applied Units Override: {deal_parameters.units_override}")
+             
+             # Also update rent_roll_summary total_units to ensure consistency before calc
+             if analysis.rent_roll_summary:
+                 analysis.rent_roll_summary.total_units = deal_parameters.units_override
+             
+        if deal_parameters.purchase_price_override is not None:
+             analysis.property_meta.purchase_price = deal_parameters.purchase_price_override
+             logger.info(f"Applied Purchase Price Override: {deal_parameters.purchase_price_override}")
+
         logger.info(f"Ingestion complete. Property: {analysis.property_meta.address}, Units: {analysis.property_meta.total_units}")
         await progress_service.update_progress(document_id, 40, "Data extraction complete.")
     except Exception as e:

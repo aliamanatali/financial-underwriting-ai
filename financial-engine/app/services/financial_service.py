@@ -162,6 +162,17 @@ class FinancialService:
     def _calculate_revenue(self, analysis: UnderwritingAnalysis):
         params = analysis.deal_parameters or DealParameters()
 
+        # Determine Scaling Factor (if Total Units overridden)
+        extracted_unit_count = len(analysis.rent_roll)
+        target_unit_count = analysis.property_meta.total_units or extracted_unit_count
+        
+        # If rent_roll is empty but summary exists, rely on summary (legacy path), else scale
+        scaling_factor = 1.0
+        if extracted_unit_count > 0 and target_unit_count > 0:
+            if extracted_unit_count != target_unit_count:
+                scaling_factor = target_unit_count / extracted_unit_count
+                logger.info(f"Scaling revenue by factor {scaling_factor:.4f} (Extracted: {extracted_unit_count} -> Target: {target_unit_count})")
+
         # 0. Generate Unit Mix Summary
         unit_groups: Dict[str, List[float]] = {}
         unit_market_rents: Dict[str, List[float]] = {}
@@ -175,24 +186,39 @@ class FinancialService:
             unit_market_rents[u_type].append(item.market_rent or 0)
             
         summary_list = []
+        total_scaled_count = 0
+        
         for u_type, rents in unit_groups.items():
-            count = len(rents)
-            avg_rent = sum(rents) / count if count > 0 else 0
+            raw_count = len(rents)
+            # Scale count
+            scaled_count = int(round(raw_count * scaling_factor))
+            total_scaled_count += scaled_count
+            
+            avg_rent = sum(rents) / raw_count if raw_count > 0 else 0
             mkt_rents = unit_market_rents.get(u_type, [])
-            avg_mkt = sum(mkt_rents) / count if count > 0 else 0
+            avg_mkt = sum(mkt_rents) / raw_count if raw_count > 0 else 0
             
             summary_list.append(UnitTypeSummary(
                 unit_type=u_type,
-                count=count,
+                count=scaled_count,
                 avg_rent=self._sanitize_value(avg_rent),
                 market_rent=self._sanitize_value(avg_mkt)
             ))
+        
+        # Adjust rounding errors in unit count to match exactly target_unit_count
+        if summary_list and total_scaled_count != target_unit_count:
+            diff = target_unit_count - total_scaled_count
+            # Add/subtract diff from the largest group
+            summary_list.sort(key=lambda x: x.count, reverse=True)
+            summary_list[0].count += diff
+            
         analysis.unit_mix_summary = summary_list
 
         # 1. Gross Potential Rent (GPR)
         # Formula: Total Units * Market Rent per Unit * 12
         # Note: We sum up individual units from Rent Roll for accuracy
-        gpr = sum((item.market_rent or 0) * 12 for item in analysis.rent_roll)
+        raw_gpr = sum((item.market_rent or 0) * 12 for item in analysis.rent_roll)
+        gpr = raw_gpr * scaling_factor
         
         # Fallback: If individual items missing but summary exists
         if gpr == 0 and analysis.rent_roll_summary and analysis.rent_roll_summary.total_annual_rent > 0:
@@ -206,11 +232,32 @@ class FinancialService:
 
         # 2. Loss to Lease
         # Formula: GPR - (Current Rent Roll Sum * 12)
-        current_rent_annual = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
+        current_rent_annual_raw = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
+        current_rent_annual = current_rent_annual_raw * scaling_factor
         
         # Fallback for current rent
         if current_rent_annual == 0 and analysis.rent_roll_summary:
+            # If we used the summary, check if we need to scale it too?
+            # Ideally the summary object might not be scaled yet if it came from extraction.
+            # But if rent_roll list was empty, scaling_factor is 1.0 anyway.
             current_rent_annual = analysis.rent_roll_summary.total_annual_rent
+
+        # Update Rent Roll Summary stats with scaling
+        if analysis.rent_roll_summary:
+             # Scale occupied units if we have a valid scaling factor
+             if scaling_factor != 1.0:
+                 raw_occupied = analysis.rent_roll_summary.occupied_units
+                 analysis.rent_roll_summary.occupied_units = int(round(raw_occupied * scaling_factor))
+                 
+                 # Re-calculate occupancy rate just in case, or preserve it?
+                 # If we scale both total and occupied by same factor, rate is same.
+                 
+                 analysis.rent_roll_summary.total_monthly_rent = analysis.rent_roll_summary.total_monthly_rent * scaling_factor
+                 analysis.rent_roll_summary.total_annual_rent = analysis.rent_roll_summary.total_annual_rent * scaling_factor
+                 
+                 # Re-calculate occupancy rate to ensure consistency with new counts
+                 if analysis.rent_roll_summary.total_units > 0:
+                     analysis.rent_roll_summary.occupancy_rate = analysis.rent_roll_summary.occupied_units / analysis.rent_roll_summary.total_units
 
         loss_to_lease = gpr - current_rent_annual
         analysis.loss_to_lease = self._sanitize_value(loss_to_lease)

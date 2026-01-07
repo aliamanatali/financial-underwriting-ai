@@ -125,6 +125,10 @@ class DealParameters(BaseModel):
     # Project Cost Assumptions
     closing_costs: float = 100_000.0
     renovation_budget: float = 0.0
+
+    # Overrides
+    units_override: Optional[int] = None
+    purchase_price_override: Optional[float] = None
     
     # Gating Thresholds
     min_loan_amount: float = 5_000_000

@@ -124,6 +124,13 @@ export default function UnderwritingDashboard({
     }
   );
 
+  // New state for Property Info editing
+  const [isEditingProperty, setIsEditingProperty] = useState(false);
+  const [propertyEditParams, setPropertyEditParams] = useState({
+    total_units: 0,
+    purchase_price: 0
+  });
+
   // Sync state when analysis updates
   React.useEffect(() => {
     if (analysis.deal_parameters) {
@@ -134,7 +141,15 @@ export default function UnderwritingDashboard({
       };
       setEditParams(syncedParams);
     }
-  }, [analysis.deal_parameters]);
+    
+    // Sync property params
+    if (analysis.property_meta) {
+      setPropertyEditParams({
+        total_units: analysis.property_meta.total_units || 0,
+        purchase_price: analysis.property_meta.purchase_price || 0
+      });
+    }
+  }, [analysis.deal_parameters, analysis.property_meta]);
 
   const handleParamChange = (key: keyof DealParameters, value: string) => {
     // Handle percentage inputs (user types 3 for 3%, we store 0.03)
@@ -168,9 +183,32 @@ export default function UnderwritingDashboard({
     }
   };
 
+  const handlePropertySave = () => {
+    if (onReanalyze) {
+      const updatedParams = {
+        ...editParams,
+        units_override: propertyEditParams.total_units,
+        purchase_price_override: propertyEditParams.purchase_price
+      };
+      console.log("Saving property params:", updatedParams);
+      onReanalyze(updatedParams);
+      setIsEditingProperty(false);
+    }
+  };
+
   const handleCancel = () => {
     setEditParams(analysis.deal_parameters || editParams);
     setIsEditing(false);
+  };
+
+  const handlePropertyCancel = () => {
+    if (analysis.property_meta) {
+      setPropertyEditParams({
+        total_units: analysis.property_meta.total_units || 0,
+        purchase_price: analysis.property_meta.purchase_price || 0
+      });
+    }
+    setIsEditingProperty(false);
   };
 
   const getStatusDisplay = (status: string) => {
@@ -219,35 +257,96 @@ export default function UnderwritingDashboard({
   return (
     <div className="space-y-8 font-sans">
       {/* Header with Property Info */}
-      <div className="bg-white rounded-xl shadow-sm p-8 border-l-4 border-blue-600 ring-1 ring-slate-200">
-        <h2 className="text-3xl font-bold text-slate-900 mb-6">
-          {analysis.property_meta.address}
-        </h2>
+      <div className="bg-white rounded-xl shadow-sm p-8 border-l-4 border-blue-600 ring-1 ring-slate-200 relative">
+        <div className="flex justify-between items-start mb-6">
+          <h2 className="text-3xl font-bold text-slate-900">
+            {analysis.property_meta.address}
+          </h2>
+          {!isEditingProperty ? (
+            <button
+              onClick={() => setIsEditingProperty(true)}
+              className="text-sm text-blue-600 hover:text-blue-800 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+              </svg>
+              Edit
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                onClick={handlePropertyCancel}
+                className="text-sm text-slate-600 hover:text-slate-800 font-medium px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePropertySave}
+                className="text-sm bg-blue-600 text-white hover:bg-blue-700 font-medium px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+              >
+                Save
+              </button>
+            </div>
+          )}
+        </div>
+        
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 text-sm">
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Year Built</p>
             <p className="font-bold text-lg text-slate-900">{analysis.property_meta.year_built}</p>
           </div>
+          
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Total Units</p>
-            <p className="font-bold text-lg text-slate-900">{totalUnits}</p>
+            {isEditingProperty ? (
+               <input
+                  type="number"
+                  className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  value={propertyEditParams.total_units}
+                  onChange={(e) => setPropertyEditParams({...propertyEditParams, total_units: Number(e.target.value)})}
+               />
+            ) : (
+              <p className="font-bold text-lg text-slate-900">{totalUnits}</p>
+            )}
           </div>
+          
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Occupancy</p>
             <p className="font-bold text-lg text-slate-900">{formatPercent(occupancyRate)}</p>
           </div>
+          
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Purchase Price</p>
-            <p className="font-bold text-lg text-slate-900">
-              {formatCurrency(purchasePrice)}
-            </p>
+            {isEditingProperty ? (
+               <div className="flex items-center">
+                  <span className="mr-1 font-bold text-slate-500">$</span>
+                  <input
+                    type="text"
+                    className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    value={propertyEditParams.purchase_price}
+                    onChange={(e) => {
+                        const val = e.target.value.replace(/[^0-9.]/g, '');
+                        setPropertyEditParams({...propertyEditParams, purchase_price: Number(val)})
+                    }}
+                  />
+               </div>
+            ) : (
+              <p className="font-bold text-lg text-slate-900">
+                {formatCurrency(purchasePrice)}
+              </p>
+            )}
           </div>
+          
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Price Per Unit</p>
             <p className="font-bold text-lg text-slate-900">
-              {formatCurrency(pricePerUnit)}
+              {isEditingProperty && propertyEditParams.total_units > 0
+                ? formatCurrency(propertyEditParams.purchase_price / propertyEditParams.total_units)
+                : formatCurrency(pricePerUnit)
+              }
             </p>
           </div>
+          
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Existing Loan</p>
             <p className="font-bold text-lg text-slate-900">

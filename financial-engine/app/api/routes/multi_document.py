@@ -961,6 +961,16 @@ async def analyze_deal_package(
     # Update property meta total units if 0
     if property_meta.total_units == 0 and total_units > 0:
         property_meta.total_units = total_units
+
+    # Apply Transient Overrides from DealParameters (Frontend "Edit" Mode)
+    # These override extraction and package-level manual overrides
+    if params.units_override is not None:
+        property_meta.total_units = params.units_override
+        logger.info(f"Applied transient override for Total Units: {property_meta.total_units}")
+
+    if params.purchase_price_override is not None:
+        property_meta.purchase_price = params.purchase_price_override
+        logger.info(f"Applied transient override for Purchase Price: {property_meta.purchase_price}")
     
     # Create analysis object
     analysis = UnderwritingAnalysis(
