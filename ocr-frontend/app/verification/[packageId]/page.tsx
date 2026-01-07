@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import DataVerificationTable, {
-  NormalizedDataItem,
-} from "@/components/DataVerificationTable";
+import DataVerificationTable from "@/components/DataVerificationTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { apiClient } from "@/lib/api";
-import { FinancialAnalysisProgress, DealPackage } from "@/lib/types";
+import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
-const EXPENSE_CATEGORIES = [
+const AVAILABLE_CATEGORIES = [
+  // Revenue
+  "Gross Potential Rent",
+  "Other Income",
+  "Reimbursements",
+  // Expenses
   "Real Estate Taxes",
   "Insurance",
   "Repairs & Maintenance",
@@ -22,6 +25,9 @@ const EXPENSE_CATEGORIES = [
   "Capital Reserves",
   "Advertising & Marketing",
   "Leasing Fees",
+  // Property Info
+  "Property Characteristic",
+  "Physical Condition",
   "Uncategorized",
 ];
 
@@ -445,7 +451,7 @@ export default function VerificationPage() {
             {/* Verification Table */}
             <DataVerificationTable
               items={normalizedItems}
-              availableCategories={EXPENSE_CATEGORIES}
+              availableCategories={AVAILABLE_CATEGORIES}
               onVerify={handleVerifyItem}
               onVerifyAll={handleVerifyAll}
             />

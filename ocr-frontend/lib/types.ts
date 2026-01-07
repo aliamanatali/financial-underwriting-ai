@@ -281,6 +281,31 @@ export interface DocumentMetadata {
   extraction_status: string;
 }
 
+export type DataClassification = "Sourced" | "Assumption" | "Recommendation";
+
+export type CategoryGroup =
+  | "Revenue"
+  | "Operating Expense"
+  | "Capital Expenditure"
+  | "Property Info"
+  | "Debt"
+  | "Tax & Insurance"
+  | "Other";
+
+export interface NormalizedDataItem {
+  id: string;
+  raw_text: string;
+  normalized_value: string;
+  field_type: string;
+  category_group: CategoryGroup;
+  data_classification: DataClassification;
+  confidence: number;
+  user_verified: boolean;
+  user_correction?: string | null;
+  source_document: string;
+  metadata?: Record<string, any>;
+}
+
 export interface DealPackage {
   package_id: string;
   property_name: string;
@@ -289,6 +314,7 @@ export interface DealPackage {
   documents: Record<string, DocumentMetadata[]>;
   normalization_status: string;
   verification_progress: number;
+  normalized_data?: NormalizedDataItem[];
   manual_overrides?: {
     total_units?: number;
     gross_potential_rent?: number;

@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 import google.generativeai as genai
-from app.models.schemas import NormalizedDataItem, DocumentType
+from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +19,7 @@ class MultiDocumentExtractionService:
     """Service for extracting and normalizing financial data from multiple document types."""
     
     # Standard expense categories for normalization
-    STANDARD_CATEGORIES = [
-        "Utilities",
-        "Real Estate Taxes",
-        "Repairs & Maintenance",
-        "Management Fees",
-        "Insurance",
-        "Landscaping",
-        "Payroll",
-        "Professional Fees",
-        "Marketing",
-        "Administrative",
-        "Other Operating Expenses"
-    ]
+    STANDARD_CATEGORIES = [e.value for e in ExpenseCategory]
     
     def __init__(self, gemini_service=None):
         """Initialize the extraction service with optional Gemini service."""
@@ -173,18 +161,16 @@ class MultiDocumentExtractionService:
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
                 
-                Include:
-                1. Operating Expenses (e.g., Taxes, Utilities, Insurance, Management)
-                2. Landlord Responsibilities from Leases (e.g., "LL pays Water/Trash")
-                3. Key Financial Metrics from OM (e.g., "Asking Price", "Purchase Price", "Pro Forma Cap Rate") - strictly financial values only.
-                4. Property Condition Items from Disclosures that imply cost (e.g., "Roof Age: 8 years", "HVAC: Needs service")
+                You must distinguish between:
+                1. Revenue / Income (e.g., Rent, Reimbursements, Other Income)
+                2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
+                3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
+                4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 
                 For each item, provide:
                 1. The exact text/description as it appears in the document
-                2. The amount (annual or monthly).
-                   - For unknown/implicit costs (like lease responsibilities), use amount: null.
-                   - For informational items (like "Roof Age"), use amount: null or 0.
-                3. The item type (optional): "expense", "property_metric", "condition_report", or "other".
+                2. The amount (annual or monthly) if applicable.
+                3. The item type: "revenue", "expense", "property_info", "capex".
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -192,14 +178,16 @@ class MultiDocumentExtractionService:
                         "raw_text": "Exact description",
                         "amount": 12345.67, // or null
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "expense" // or "property_metric"
+                        "type": "revenue" // or "expense", "property_info", "capex"
                     }
                 ]
                 
-                Skip general text, headers, and revenue/income rows (unless it's a key metric like "Avg Rent" or "Purchase Price" in an OM).
-                If no relevant items are found, return an empty array [].
+                IMPORTANT:
+                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses.
+                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses.
+                - If the document is a Rent Roll or Lease, capture the Rental Income.
                 
-                IMPORTANT: Return ONLY the JSON array, no additional text or explanation.
+                Return ONLY the JSON array, no additional text or explanation.
                 """
                 
                 response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
@@ -270,15 +258,16 @@ class MultiDocumentExtractionService:
                 "error": str(e)
             }]
     
-    async def normalize_expense_category(self, raw_text: str) -> Dict[str, Any]:
+    async def normalize_expense_category(self, raw_text: str, item_type: str = "expense") -> Dict[str, Any]:
         """
-        Use Gemini AI to map a raw expense description to a standard category.
+        Use Gemini AI to map a raw description to a standard category and group.
         
         Args:
-            raw_text: Raw expense description from the document
+            raw_text: Raw description from the document
+            item_type: The type extracted from the document (revenue, expense, property_info)
             
         Returns:
-            Dictionary with normalized_value and confidence score
+            Dictionary with normalized_value, category_group, and confidence score
         """
         if not self.gemini_service:
             # Fallback to simple keyword matching
@@ -286,24 +275,28 @@ class MultiDocumentExtractionService:
         
         try:
             prompt = f"""
-            You are a commercial real estate financial analyst. Map this expense description to the most appropriate standard category.
+            You are a commercial real estate financial analyst. Map this line item to the most appropriate standard category and group.
             
-            Expense Description: "{raw_text}"
+            Line Item: "{raw_text}"
+            Context Type: {item_type}
             
             Standard Categories:
             {chr(10).join(f"- {cat}" for cat in self.STANDARD_CATEGORIES)}
             
             Respond with ONLY a JSON object in this exact format:
             {{
-                "category": "Exact category name from the list above",
+                "category": "Exact category name from the list above, or 'Uncategorized' if none fit",
+                "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
                 "confidence": 0.95,
                 "reasoning": "Brief explanation"
             }}
             
             Rules:
-            - Choose the MOST specific and appropriate category
-            - Confidence should be 0.0 to 1.0 (0.95+ for obvious matches, 0.7-0.94 for reasonable matches, below 0.7 for uncertain)
-            - If uncertain, choose the closest match but lower the confidence
+            - If it looks like income/rent, map to Group: "Revenue".
+            - If it looks like a property stat (Year Built, Roof Age), map to Group: "Property Info" and Category: "Property Characteristic".
+            - If it is a Tax or Insurance item, map to Group: "Tax & Insurance".
+            - For repairs/maintenance, map to Group: "Operating Expense".
+            - Confidence should be 0.0 to 1.0.
             """
             
             response = await self.gemini_service.generate_content_async(prompt)
@@ -321,6 +314,7 @@ class MultiDocumentExtractionService:
             
             return {
                 "normalized_value": result.get("category", "Other Operating Expenses"),
+                "category_group": result.get("group", "Other"),
                 "confidence": float(result.get("confidence", 0.5)),
                 "reasoning": result.get("reasoning", "")
             }
@@ -337,29 +331,33 @@ class MultiDocumentExtractionService:
         
         # Keyword mapping
         category_keywords = {
-            "Utilities": ["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"],
-            "Real Estate Taxes": ["tax", "property tax", "real estate tax"],
-            "Repairs & Maintenance": ["repair", "maintenance", "r&m", "plumbing", "hvac", "painting"],
-            "Management Fees": ["management", "property management", "mgmt"],
-            "Insurance": ["insurance", "liability", "property insurance"],
-            "Landscaping": ["landscape", "landscaping", "gardening", "lawn"],
-            "Payroll": ["payroll", "salary", "wages", "employee"],
-            "Professional Fees": ["legal", "accounting", "professional", "consultant"],
-            "Marketing": ["marketing", "advertising", "leasing"],
-            "Administrative": ["administrative", "office", "supplies", "postage"],
+            "Utilities": (["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"], "Operating Expense"),
+            "Real Estate Taxes": (["tax", "property tax", "real estate tax"], "Tax & Insurance"),
+            "Repairs & Maintenance": (["repair", "maintenance", "r&m", "plumbing", "hvac", "painting"], "Operating Expense"),
+            "Management Fees": (["management", "property management", "mgmt"], "Operating Expense"),
+            "Insurance": (["insurance", "liability", "property insurance"], "Tax & Insurance"),
+            "Landscaping": (["landscape", "landscaping", "gardening", "lawn"], "Operating Expense"),
+            "Payroll": (["payroll", "salary", "wages", "employee"], "Operating Expense"),
+            "Professional Fees": (["legal", "accounting", "professional", "consultant"], "Operating Expense"),
+            "Marketing": (["marketing", "advertising", "leasing"], "Operating Expense"),
+            "Administrative": (["administrative", "office", "supplies", "postage"], "Operating Expense"),
+            "Gross Potential Rent": (["rent", "income", "revenue", "lease payment"], "Revenue"),
+            "Property Characteristic": (["year built", "roof age", "units", "sq ft"], "Property Info"),
         }
         
-        for category, keywords in category_keywords.items():
+        for category, (keywords, group) in category_keywords.items():
             if any(keyword in text_lower for keyword in keywords):
                 confidence = 0.85 if len([k for k in keywords if k in text_lower]) > 1 else 0.75
                 return {
                     "normalized_value": category,
+                    "category_group": group,
                     "confidence": confidence,
                     "reasoning": "Keyword-based matching"
                 }
         
         return {
             "normalized_value": "Other Operating Expenses",
+            "category_group": "Operating Expense",
             "confidence": 0.5,
             "reasoning": "No clear category match found"
         }
@@ -486,61 +484,50 @@ class MultiDocumentExtractionService:
                 amount = expense.get("amount")
                 item_type = expense.get("type", "expense") # Default to expense if not provided by LLM
 
-                # Special handling for Property Metrics (Purchase Price, etc.)
-                is_property_metric = False
-                if item_type == "property_metric":
-                    is_property_metric = True
-                else:
-                    # Fallback check for keywords if LLM didn't tag it explicitly
-                    lower_text = raw_text.lower()
-                    if "purchase price" in lower_text or "asking price" in lower_text or "offering price" in lower_text:
-                         is_property_metric = True
-                    elif "year built" in lower_text or "total units" in lower_text:
-                         is_property_metric = True
-
-                if is_property_metric:
-                    # Create a Property Meta item instead of an expense
-                    item = NormalizedDataItem(
-                        id=f"meta_{len(normalized_items)}",
-                        raw_text=raw_text,
-                        normalized_value=raw_text, # Keep original text as value for now
-                        field_type="property_meta",
-                        confidence=0.95,
-                        user_verified=False,
-                        source_document=expense["source_document"],
-                        metadata={
-                            "amount": amount,
-                            "reasoning": "Extracted as Key Property Metric"
-                        }
-                    )
-                    normalized_items.append(item)
-                else:
-                    # Standard Expense Normalization
-                    normalization = self._fallback_categorization(raw_text)
+                # Normalize the category and group
+                # We pass the item_type to help the normalizer
+                normalization = await self.normalize_expense_category(raw_text, item_type)
+                
+                # Determine field type based on the group returned
+                category_group = normalization.get("category_group", "Other")
+                field_type = "expense_category"
+                if category_group == "Property Info":
+                    field_type = "property_meta"
+                elif category_group == "Revenue":
+                    field_type = "revenue_item"
+                
+                # Map string group to Enum if possible, otherwise default to OTHER
+                try:
+                    group_enum = CategoryGroup(category_group)
+                except ValueError:
+                    group_enum = CategoryGroup.OTHER
                     
-                    item = NormalizedDataItem(
-                        id=f"exp_{len(normalized_items)}",
-                        raw_text=raw_text,
-                        normalized_value=normalization["normalized_value"],
-                        field_type="expense_category",
-                        confidence=normalization["confidence"],
-                        user_verified=False,
-                        source_document=expense["source_document"],
-                        metadata={
-                            "amount": amount,
-                            "reasoning": normalization.get("reasoning", ""),
-                            "row_count": expense.get("row_count"),
-                            "categories_found": expense.get("categories_found")
-                        }
-                    )
-                    normalized_items.append(item)
+                item = NormalizedDataItem(
+                    id=f"item_{len(normalized_items)}",
+                    raw_text=raw_text,
+                    normalized_value=normalization["normalized_value"],
+                    field_type=field_type,
+                    category_group=group_enum,
+                    data_classification=DataClassification.SOURCED, # All extracted items are Sourced by default
+                    confidence=normalization["confidence"],
+                    user_verified=False,
+                    source_document=expense["source_document"],
+                    metadata={
+                        "amount": amount,
+                        "reasoning": normalization.get("reasoning", ""),
+                        "row_count": expense.get("row_count"),
+                        "categories_found": expense.get("categories_found"),
+                        "original_type": item_type
+                    }
+                )
+                normalized_items.append(item)
                 
                 # Log progress every 20 items
                 if (idx + 1) % 20 == 0:
-                    logger.info(f"Normalized {idx + 1}/{len(all_expenses)} expenses...")
+                    logger.info(f"Normalized {idx + 1}/{len(all_expenses)} items...")
                     
             except Exception as e:
-                logger.error(f"Error normalizing expense '{expense.get('raw_text')}': {str(e)}")
+                logger.error(f"Error normalizing item '{expense.get('raw_text')}': {str(e)}")
                 # Continue with other items
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")

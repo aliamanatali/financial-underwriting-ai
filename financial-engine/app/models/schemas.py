@@ -19,7 +19,27 @@ class DocumentType(str, Enum):
     UTILITIES = "Utilities"
 
 
+class DataClassification(str, Enum):
+    SOURCED = "Sourced" # Directly from document text
+    ASSUMPTION = "Assumption" # Derived/Assumed by AI (e.g. missing management fee)
+    RECOMMENDATION = "Recommendation" # Strategic recommendation
+
+class CategoryGroup(str, Enum):
+    REVENUE = "Revenue"
+    OPERATING_EXPENSE = "Operating Expense"
+    CAPITAL_EXPENDITURE = "Capital Expenditure"
+    PROPERTY_INFO = "Property Info" # Characteristics, Year Built, etc.
+    DEBT = "Debt"
+    TAX_INSURANCE = "Tax & Insurance"
+    OTHER = "Other"
+
 class ExpenseCategory(str, Enum):
+    # Revenue Categories
+    GROSS_POTENTIAL_RENT = "Gross Potential Rent"
+    OTHER_INCOME = "Other Income"
+    REIMBURSEMENTS = "Reimbursements"
+    
+    # Expense Categories
     REAL_ESTATE_TAXES = "Real Estate Taxes"
     INSURANCE = "Insurance"
     REPAIRS_MAINTENANCE = "Repairs & Maintenance"
@@ -32,6 +52,11 @@ class ExpenseCategory(str, Enum):
     CAPITAL_RESERVES = "Capital Reserves"
     ADVERTISING_MARKETING = "Advertising & Marketing"
     LEASING_FEES = "Leasing Fees"
+    
+    # Property Characteristics
+    PROPERTY_INFO = "Property Characteristic"
+    PHYSICAL_CONDITION = "Physical Condition"
+    
     UNCATEGORIZED = "Uncategorized"
 
 # --- 2. Sub-Models ---
@@ -183,6 +208,8 @@ class NormalizedDataItem(BaseModel):
     raw_text: str  # What was extracted from the PDF
     normalized_value: str  # What it was mapped to
     field_type: str  # e.g., "expense_category", "unit_type", "lease_date"
+    category_group: CategoryGroup = CategoryGroup.OPERATING_EXPENSE # Grouping for UI
+    data_classification: DataClassification = DataClassification.SOURCED # Traceability
     confidence: float  # 0.0 to 1.0
     user_verified: bool = False
     user_correction: Optional[str] = None

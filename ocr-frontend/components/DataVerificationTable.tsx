@@ -1,17 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-export interface NormalizedDataItem {
-  id: string;
-  raw_text: string;
-  normalized_value: string;
-  field_type: string;
-  confidence: number;
-  user_verified: boolean;
-  user_correction?: string | null;
-  source_document: string;
-}
+import { NormalizedDataItem, CategoryGroup, DataClassification } from "@/lib/types";
 
 interface DataVerificationTableProps {
   items: NormalizedDataItem[];
@@ -32,6 +22,36 @@ export default function DataVerificationTable({
   const handleEdit = (item: NormalizedDataItem) => {
     setEditingId(item.id);
     setEditValue(item.user_correction || item.normalized_value);
+  };
+
+  // Group items by category_group
+  const groupedItems = items.reduce((acc, item) => {
+    const group = item.category_group || "Other";
+    if (!acc[group]) {
+      acc[group] = [];
+    }
+    acc[group].push(item);
+    return acc;
+  }, {} as Record<string, NormalizedDataItem[]>);
+
+  // Define group order
+  const groupOrder: CategoryGroup[] = [
+    "Revenue",
+    "Operating Expense",
+    "Capital Expenditure",
+    "Tax & Insurance",
+    "Debt",
+    "Property Info",
+    "Other"
+  ];
+
+  const getClassificationColor = (classification: DataClassification) => {
+    switch (classification) {
+        case "Sourced": return "bg-blue-100 text-blue-800 border-blue-200";
+        case "Assumption": return "bg-amber-100 text-amber-800 border-amber-200";
+        case "Recommendation": return "bg-purple-100 text-purple-800 border-purple-200";
+        default: return "bg-gray-100 text-gray-800 border-gray-200";
+    }
   };
 
   const handleSave = (itemId: string) => {
@@ -103,180 +123,175 @@ export default function DataVerificationTable({
         </div>
       </div>
 
-      {/* Split-Screen Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Source Document
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Raw Text (PDF)
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Mapped Category
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Confidence
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-slate-200">
-              {items.map((item) => (
-                <tr
-                  key={item.id}
-                  className={`transition-colors duration-150 ${
-                    item.user_verified ? "bg-emerald-50/30" : "hover:bg-slate-50"
-                  }`}
-                >
-                  {/* Source Document */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                    <div className="flex items-center">
-                        <svg className="w-4 h-4 mr-2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        {item.source_document}
-                    </div>
-                  </td>
+      {/* Grouped Tables */}
+      <div className="space-y-8">
+        {groupOrder.map((group) => {
+            const groupItems = groupedItems[group];
+            if (!groupItems || groupItems.length === 0) return null;
 
-                  {/* Raw Text */}
-                  <td className="px-6 py-4 text-sm text-slate-900">
-                    <div className="max-w-xs">
-                      <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200">
-                        {item.raw_text}
-                      </span>
+            return (
+                <div key={group} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+                        <h3 className="text-lg font-semibold text-slate-900">{group}</h3>
+                        <span className="text-sm text-slate-500">{groupItems.length} items</span>
                     </div>
-                  </td>
+                    <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200">
+                        <thead className="bg-white">
+                        <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Source Document
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Raw Text
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Mapped Category
+                            </th>
+                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Classification
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Confidence
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Actions
+                            </th>
+                        </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-200">
+                        {groupItems.map((item) => (
+                            <tr
+                            key={item.id}
+                            className={`transition-colors duration-150 ${
+                                item.user_verified ? "bg-emerald-50/30" : "hover:bg-slate-50"
+                            }`}
+                            >
+                            {/* Source Document */}
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                <div className="flex items-center" title={item.source_document}>
+                                    <svg className="w-4 h-4 mr-2 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    <span className="truncate max-w-[150px]">{item.source_document}</span>
+                                </div>
+                            </td>
 
-                  {/* Mapped Category */}
-                  <td className="px-6 py-4 text-sm">
-                    {editingId === item.id ? (
-                      <select
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
-                        autoFocus
-                      >
-                        {availableCategories.map((category) => (
-                          <option key={category} value={category}>
-                            {category}
-                          </option>
+                            {/* Raw Text */}
+                            <td className="px-6 py-4 text-sm text-slate-900">
+                                <div className="max-w-xs" title={item.raw_text}>
+                                <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
+                                    {item.raw_text}
+                                </span>
+                                </div>
+                            </td>
+
+                            {/* Mapped Category */}
+                            <td className="px-6 py-4 text-sm">
+                                {editingId === item.id ? (
+                                <select
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                    autoFocus
+                                >
+                                    {availableCategories.map((category) => (
+                                    <option key={category} value={category}>
+                                        {category}
+                                    </option>
+                                    ))}
+                                </select>
+                                ) : (
+                                <div className="flex flex-col">
+                                    <span
+                                    className={`font-medium ${
+                                        item.user_correction
+                                        ? "text-blue-700"
+                                        : "text-slate-900"
+                                    }`}
+                                    >
+                                    {item.user_correction || item.normalized_value}
+                                    </span>
+                                    {item.user_correction && (
+                                    <span className="text-[10px] uppercase font-bold text-blue-600 mt-1">
+                                        Edited
+                                    </span>
+                                    )}
+                                </div>
+                                )}
+                            </td>
+
+                            {/* Classification */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getClassificationColor(item.data_classification || 'Sourced')}`}>
+                                    {item.data_classification || 'Sourced'}
+                                </span>
+                            </td>
+
+                            {/* Confidence */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getConfidenceColor(
+                                    item.confidence
+                                )}`}
+                                >
+                                {(item.confidence * 100).toFixed(0)}%
+                                </span>
+                            </td>
+
+                            {/* Actions */}
+                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                {editingId === item.id ? (
+                                <div className="flex space-x-3">
+                                    <button
+                                    onClick={() => handleSave(item.id)}
+                                    className="text-emerald-600 hover:text-emerald-800 font-semibold"
+                                    >
+                                    Save
+                                    </button>
+                                    <button
+                                    onClick={handleCancel}
+                                    className="text-slate-500 hover:text-slate-700 font-medium"
+                                    >
+                                    Cancel
+                                    </button>
+                                </div>
+                                ) : (
+                                <div className="flex items-center space-x-4">
+                                    {!item.user_verified ? (
+                                    <>
+                                        <button
+                                        onClick={() => handleEdit(item)}
+                                        className="text-slate-500 hover:text-blue-600 font-medium transition-colors"
+                                        >
+                                        Edit
+                                        </button>
+                                        <button
+                                        onClick={() => onVerify(item.id)}
+                                        className="text-blue-600 hover:text-blue-800 font-semibold transition-colors flex items-center"
+                                        >
+                                        Verify
+                                        </button>
+                                    </>
+                                    ) : (
+                                       <span className="inline-flex items-center text-emerald-700 font-medium text-sm">
+                                            <svg className="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                            </svg>
+                                            Verified
+                                        </span>
+                                    )}
+                                </div>
+                                )}
+                            </td>
+                            </tr>
                         ))}
-                      </select>
-                    ) : (
-                      <div className="flex items-center space-x-2">
-                        <span
-                          className={`font-medium ${
-                            item.user_correction
-                              ? "text-blue-700"
-                              : "text-slate-900"
-                          }`}
-                        >
-                          {item.user_correction || item.normalized_value}
-                        </span>
-                        {item.user_correction && (
-                          <span className="text-[10px] uppercase font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full border border-blue-100">
-                            Edited
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Confidence */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getConfidenceColor(
-                        item.confidence
-                      )}`}
-                    >
-                      {(item.confidence * 100).toFixed(0)}%
-                    </span>
-                  </td>
-
-                  {/* Status */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    {item.user_verified ? (
-                      <span className="inline-flex items-center text-emerald-700 font-medium text-sm">
-                        <svg
-                          className="w-4 h-4 mr-1.5"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                        Verified
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
-                        Pending
-                      </span>
-                    )}
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {editingId === item.id ? (
-                      <div className="flex space-x-3">
-                        <button
-                          onClick={() => handleSave(item.id)}
-                          className="text-emerald-600 hover:text-emerald-800 font-semibold"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={handleCancel}
-                          className="text-slate-500 hover:text-slate-700 font-medium"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center space-x-4">
-                        {!item.user_verified && (
-                          <>
-                            <button
-                              onClick={() => handleEdit(item)}
-                              className="text-slate-500 hover:text-blue-600 font-medium transition-colors"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => onVerify(item.id)}
-                              className="text-blue-600 hover:text-blue-800 font-semibold transition-colors flex items-center"
-                            >
-                              Verify
-                            </button>
-                          </>
-                        )}
-                         {item.user_verified && (
-                             <button
-                              onClick={() => handleEdit(item)}
-                              className="text-slate-400 hover:text-blue-600 text-xs transition-colors"
-                            >
-                              Re-Edit
-                            </button>
-                         )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        </tbody>
+                    </table>
+                    </div>
+                </div>
+            );
+        })}
       </div>
 
       {/* Legend */}

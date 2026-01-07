@@ -796,8 +796,8 @@ async def analyze_deal_package(
     
     # Parse normalized items
     for item in normalized_items:
-        # Check if this is a Property Meta item
-        if item.field_type == "property_meta":
+        # Check if this is a Property Meta item or Property Info group
+        if item.field_type == "property_meta" or (hasattr(item, 'category_group') and item.category_group == "Property Info"):
             try:
                 # Update Property Meta based on content
                 lower_text = item.raw_text.lower()
@@ -809,7 +809,10 @@ async def analyze_deal_package(
                     if metadata_amount:
                         amount = sanitize_float(metadata_amount)
                 
-                if "purchase price" in lower_text or "asking price" in lower_text or "offering price" in lower_text:
+                # Check normalized value first, then raw text
+                mapped_val = item.normalized_value.lower()
+                
+                if "purchase price" in mapped_val or "purchase price" in lower_text or "asking price" in lower_text:
                     if amount and amount > 0:
                         property_meta.purchase_price = amount
                         # Also update loan amount if using LTV
@@ -817,16 +820,16 @@ async def analyze_deal_package(
                              property_meta.current_loan_balance = sanitize_float(amount * params.ltv)
                         logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
                 
-                elif "year built" in lower_text:
+                elif "year built" in mapped_val or "year built" in lower_text:
                     # Try to extract year (might need regex if amount is not clean)
                     if amount and amount > 1800 and amount < 2030:
                         property_meta.year_built = int(amount)
                 
-                elif "total units" in lower_text or "number of units" in lower_text:
+                elif "total units" in mapped_val or "total units" in lower_text or "number of units" in lower_text:
                     if amount and amount > 0:
                         property_meta.total_units = int(amount)
                 
-                elif "existing loan" in lower_text or "current loan" in lower_text or "loan balance" in lower_text:
+                elif "loan" in mapped_val or "existing loan" in lower_text:
                      if amount and amount > 0:
                         property_meta.current_loan_balance = amount
                         logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")
@@ -834,8 +837,14 @@ async def analyze_deal_package(
             except Exception as e:
                 logger.warning(f"Could not parse property meta item: {item.raw_text}, error: {str(e)}")
 
+        # Check if this is a Revenue item
+        elif item.field_type == "revenue_item" or (hasattr(item, 'category_group') and item.category_group == "Revenue"):
+             # We can potentially use this to refine GPR if Rent Roll is missing
+             # For now, we'll log it but rely on Rent Roll logic for main GPR
+             pass
+             
         # Check if this is an expense item
-        elif item.field_type == "expense_category":
+        elif item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group == "Operating Expense"):
             # Check for unit count from Rent Roll metadata (fallback)
             if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
                 row_count = item.metadata.get("row_count")
@@ -848,7 +857,11 @@ async def analyze_deal_package(
 
             try:
                 # Parse the category
-                category = ExpenseCategory(item.normalized_value)
+                # Fallback to Other OpEx if unknown
+                try:
+                    category = ExpenseCategory(item.normalized_value)
+                except ValueError:
+                    category = ExpenseCategory.OTHER_OPERATING_EXPENSES
                 
                 # Use amount from metadata if available, otherwise parse from text
                 amount = 0.0
