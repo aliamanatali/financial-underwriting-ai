@@ -44,15 +44,6 @@ export default function VerificationPage() {
   const [error, setError] = useState<string | null>(null);
   const [normalizing, setNormalizing] = useState(false);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
-  
-  // Manual Overrides State
-  const [manualData, setManualData] = useState({
-    total_units: "",
-    gross_potential_rent: "",
-    purchase_price: "",
-    year_built: ""
-  });
-  const [savingOverrides, setSavingOverrides] = useState(false);
 
   const baseUrl =
     process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -71,16 +62,6 @@ export default function VerificationPage() {
 
         const data = await response.json();
         setDealPackage(data);
-        
-        // Populate manual data if available
-        if (data.manual_overrides) {
-            setManualData({
-                total_units: data.manual_overrides.total_units?.toString() || "",
-                gross_potential_rent: data.manual_overrides.gross_potential_rent?.toString() || "",
-                purchase_price: data.manual_overrides.purchase_price?.toString() || "",
-                year_built: data.manual_overrides.year_built?.toString() || ""
-            });
-        }
         
         // If normalized data is persisted in package (new flow), load it
         if (data.normalized_data && data.normalized_data.length > 0) {
@@ -138,34 +119,6 @@ export default function VerificationPage() {
       setNormalizing(false);
       eventSource.close();
     }
-  };
-
-  // Save Manual Overrides
-  const handleSaveOverrides = async () => {
-      setSavingOverrides(true);
-      try {
-          const overrides: Record<string, any> = {};
-          if (manualData.total_units) overrides.total_units = parseInt(manualData.total_units);
-          if (manualData.gross_potential_rent) overrides.gross_potential_rent = parseFloat(manualData.gross_potential_rent);
-          if (manualData.purchase_price) overrides.purchase_price = parseFloat(manualData.purchase_price);
-          if (manualData.year_built) overrides.year_built = parseInt(manualData.year_built);
-          
-          await apiClient.updateManualOverrides(packageId, overrides);
-          
-          // Refresh package
-          const response = await fetch(`${baseUrl}/api/v1/multi-document/packages/${packageId}`);
-          if (response.ok) {
-              const data = await response.json();
-              setDealPackage(data);
-          }
-          
-          alert("Manual overrides saved successfully!");
-      } catch (err) {
-          console.error("Failed to save overrides:", err);
-          alert("Failed to save overrides.");
-      } finally {
-          setSavingOverrides(false);
-      }
   };
 
   // Verify a single item
@@ -242,8 +195,7 @@ export default function VerificationPage() {
 
   const allVerified =
     (normalizedItems.length > 0 && normalizedItems.every((item) => item.user_verified)) ||
-    (normalizedItems.length === 0 && dealPackage?.normalization_status === "completed") ||
-    (Object.keys(dealPackage?.manual_overrides || {}).length > 0);
+    (normalizedItems.length === 0 && dealPackage?.normalization_status === "completed");
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -300,69 +252,6 @@ export default function VerificationPage() {
           </div>
         )}
 
-        {/* Manual Data Entry / Overrides */}
-        <div className="bg-white rounded-lg shadow p-6 mb-8 border-l-4 border-blue-500">
-             <div className="flex justify-between items-center mb-4">
-                <div>
-                    <h2 className="text-lg font-bold text-gray-900">
-                        Missing Data? Manual Entry
-                    </h2>
-                    <p className="text-sm text-gray-500">
-                        If documents are missing or unreadable, enter key figures here manually. These values will override any extracted data.
-                    </p>
-                </div>
-                 <button
-                    onClick={handleSaveOverrides}
-                    disabled={savingOverrides}
-                    className="px-4 py-2 bg-slate-800 text-white rounded-md hover:bg-slate-900 text-sm font-medium disabled:opacity-50"
-                  >
-                    {savingOverrides ? "Saving..." : "Save Overrides"}
-                  </button>
-             </div>
-             
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Total Units</label>
-                    <input
-                        type="number"
-                        value={manualData.total_units}
-                        onChange={(e) => setManualData({...manualData, total_units: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="e.g. 24"
-                    />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Gross Annual Rent ($)</label>
-                    <input
-                        type="number"
-                        value={manualData.gross_potential_rent}
-                        onChange={(e) => setManualData({...manualData, gross_potential_rent: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="e.g. 450000"
-                    />
-                </div>
-                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Price ($)</label>
-                    <input
-                        type="number"
-                        value={manualData.purchase_price}
-                        onChange={(e) => setManualData({...manualData, purchase_price: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="e.g. 5000000"
-                    />
-                </div>
-                 <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Year Built</label>
-                    <input
-                        type="number"
-                        value={manualData.year_built}
-                        onChange={(e) => setManualData({...manualData, year_built: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="e.g. 1985"
-                    />
-                </div>
-             </div>
-        </div>
 
         {/* Normalization Section */}
         {normalizedItems.length === 0 && !allVerified ? (
