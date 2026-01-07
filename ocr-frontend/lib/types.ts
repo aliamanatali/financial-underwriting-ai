@@ -178,6 +178,7 @@ export interface DealParameters {
   perm_spread?: number;
   units_override?: number;
   purchase_price_override?: number;
+  occupancy_override?: number;
 }
 
 export interface UnitTypeSummary {

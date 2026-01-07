@@ -129,6 +129,7 @@ class DealParameters(BaseModel):
     # Overrides
     units_override: Optional[int] = None
     purchase_price_override: Optional[float] = None
+    occupancy_override: Optional[float] = None
     
     # Gating Thresholds
     min_loan_amount: float = 5_000_000

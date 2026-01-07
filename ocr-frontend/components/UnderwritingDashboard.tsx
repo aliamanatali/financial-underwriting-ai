@@ -128,7 +128,8 @@ export default function UnderwritingDashboard({
   const [isEditingProperty, setIsEditingProperty] = useState(false);
   const [propertyEditParams, setPropertyEditParams] = useState({
     total_units: 0,
-    purchase_price: 0
+    purchase_price: 0,
+    occupancy_rate: 0
   });
 
   // Sync state when analysis updates
@@ -146,7 +147,8 @@ export default function UnderwritingDashboard({
     if (analysis.property_meta) {
       setPropertyEditParams({
         total_units: analysis.property_meta.total_units || 0,
-        purchase_price: analysis.property_meta.purchase_price || 0
+        purchase_price: analysis.property_meta.purchase_price || 0,
+        occupancy_rate: analysis.rent_roll_summary?.occupancy_rate || 0
       });
     }
   }, [analysis.deal_parameters, analysis.property_meta]);
@@ -188,7 +190,8 @@ export default function UnderwritingDashboard({
       const updatedParams = {
         ...editParams,
         units_override: propertyEditParams.total_units,
-        purchase_price_override: propertyEditParams.purchase_price
+        purchase_price_override: propertyEditParams.purchase_price,
+        occupancy_override: propertyEditParams.occupancy_rate
       };
       console.log("Saving property params:", updatedParams);
       onReanalyze(updatedParams);
@@ -205,7 +208,8 @@ export default function UnderwritingDashboard({
     if (analysis.property_meta) {
       setPropertyEditParams({
         total_units: analysis.property_meta.total_units || 0,
-        purchase_price: analysis.property_meta.purchase_price || 0
+        purchase_price: analysis.property_meta.purchase_price || 0,
+        occupancy_rate: analysis.rent_roll_summary?.occupancy_rate || 0
       });
     }
     setIsEditingProperty(false);
@@ -312,7 +316,20 @@ export default function UnderwritingDashboard({
           
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Occupancy</p>
-            <p className="font-bold text-lg text-slate-900">{formatPercent(occupancyRate)}</p>
+             {isEditingProperty ? (
+               <div className="flex items-center">
+                   <input
+                      type="number"
+                      step="0.1"
+                      className="w-full bg-slate-50 border border-slate-300 rounded px-2 py-1 text-lg font-bold text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                      value={(propertyEditParams.occupancy_rate * 100).toFixed(1)}
+                      onChange={(e) => setPropertyEditParams({...propertyEditParams, occupancy_rate: Number(e.target.value) / 100})}
+                   />
+                   <span className="ml-1 font-bold text-slate-500">%</span>
+               </div>
+            ) : (
+                <p className="font-bold text-lg text-slate-900">{formatPercent(occupancyRate)}</p>
+            )}
           </div>
           
           <div className="space-y-1">

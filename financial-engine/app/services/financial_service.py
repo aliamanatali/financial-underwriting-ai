@@ -259,6 +259,35 @@ class FinancialService:
                  if analysis.rent_roll_summary.total_units > 0:
                      analysis.rent_roll_summary.occupancy_rate = analysis.rent_roll_summary.occupied_units / analysis.rent_roll_summary.total_units
 
+        # Apply Occupancy Override if present
+        if params.occupancy_override is not None and analysis.rent_roll_summary:
+             logger.info(f"Applying Occupancy Override: {params.occupancy_override:.2%}")
+             target_occupancy = params.occupancy_override
+             
+             # Capture old values for scaling rent
+             old_occupied = analysis.rent_roll_summary.occupied_units
+             
+             # Update rate
+             analysis.rent_roll_summary.occupancy_rate = target_occupancy
+             
+             # Update count
+             if analysis.rent_roll_summary.total_units > 0:
+                  new_occupied = int(round(analysis.rent_roll_summary.total_units * target_occupancy))
+                  analysis.rent_roll_summary.occupied_units = new_occupied
+                  
+                  # Adjust current_rent_annual to reflect the manual occupancy change
+                  # If we gained units, we assume they pay average rent of existing units
+                  if old_occupied > 0 and new_occupied != old_occupied:
+                      rent_adjustment_factor = new_occupied / old_occupied
+                      current_rent_annual = current_rent_annual * rent_adjustment_factor
+                      
+                      # Also update the summary totals for consistency
+                      analysis.rent_roll_summary.total_monthly_rent *= rent_adjustment_factor
+                      analysis.rent_roll_summary.total_annual_rent *= rent_adjustment_factor
+                      
+                      logger.info(f"Adjusted Current Rent Annual by {rent_adjustment_factor:.4f} due to occupancy override")
+             
+
         loss_to_lease = gpr - current_rent_annual
         analysis.loss_to_lease = self._sanitize_value(loss_to_lease)
         self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent Annualized")
