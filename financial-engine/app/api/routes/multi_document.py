@@ -628,6 +628,7 @@ async def analyze_deal_package(
     from app.services.financial_service import FinancialService
     from app.services.audit_log_service import AuditLogService
     from app.services.excel_service import ExcelService
+    from app.services.memo_service import MemoService
     import math
 
     def sanitize_float(val):
@@ -683,6 +684,7 @@ async def analyze_deal_package(
     audit_log_service = AuditLogService()
     financial_service = FinancialService(audit_log_service=audit_log_service)
     excel_service = ExcelService()
+    memo_service = MemoService(gemini_service=gemini_service)
     
     # ===== STEP 1: BUILD ANALYSIS OBJECT FROM PACKAGE DATA =====
     # We use the normalized data that was stored in the package (and verified by user)
@@ -1028,14 +1030,23 @@ async def analyze_deal_package(
         # Don't fail the pipeline for this, but log it
         analysis.gating_reasons.append(f"Explainability generation failed: {str(e)}")
 
-    # ===== STEP 5: GENERATE EXCEL (OPTIONAL) =====
+    # ===== STEP 5: GENERATE OUTPUTS (Excel & Memo) =====
     try:
-        await progress_service.update_progress(package_id, 90, "Generating Excel model...")
+        await progress_service.update_progress(package_id, 90, "Generating output models...")
+        
+        # Excel
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
         await excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for package: {package_id}")
+        
+        # Memo
+        logger.info("Generating investment memo...")
+        memo_content = memo_service.generate_investment_memo(analysis)
+        analysis.investment_memo = memo_content
+        logger.info("Investment memo generated successfully.")
+        
     except Exception as e:
-        logger.warning(f"Excel generation had issues (non-critical): {str(e)}")
+        logger.warning(f"Output generation had issues (non-critical): {str(e)}")
     
     # ===== STEP 6: UPDATE PACKAGE STATUS AND SAVE ANALYSIS =====
     if analysis.pass_fail_status != "FAIL":

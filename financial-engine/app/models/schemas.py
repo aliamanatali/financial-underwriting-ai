@@ -303,4 +303,5 @@ class UnderwritingAnalysis(BaseModel):
     # AI Conclusion & Impact
     # AI Narrative
     analyst_commentary: Optional[str] = None
+    investment_memo: Optional[str] = None
     conclusion: Optional[Conclusion] = None

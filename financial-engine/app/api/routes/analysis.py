@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.services.ingestion_service import IngestionService
 from app.services.financial_service import FinancialService
 from app.services.excel_service import ExcelService
+from app.services.memo_service import MemoService
 from app.services.explainability_service import ExplainabilityService
 from app.services.storage_service import storage_service
 from app.services.progress_service import ProgressService
 from app.models.schemas import UnderwritingAnalysis, DealParameters, DealPackage
 from typing import Dict, Any
-from app.dependencies import get_ingestion_service, get_financial_service, get_excel_service, get_explainability_service, get_progress_service
+from app.dependencies import get_ingestion_service, get_financial_service, get_excel_service, get_memo_service, get_explainability_service, get_progress_service
 import logging
 from datetime import datetime
 
@@ -21,6 +22,7 @@ async def perform_analysis(
     ingestion_service: IngestionService = Depends(get_ingestion_service),
     financial_service: FinancialService = Depends(get_financial_service),
     excel_service: ExcelService = Depends(get_excel_service),
+    memo_service: MemoService = Depends(get_memo_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
     progress_service: ProgressService = Depends(get_progress_service),
 ):
@@ -105,14 +107,22 @@ async def perform_analysis(
 
     # ===== STEP 4: GENERATE OUTPUTS =====
     try:
-        await progress_service.update_progress(document_id, 90, "Generating Excel model...")
+        await progress_service.update_progress(document_id, 90, "Generating output models...")
+        
         # Generate Excel model
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
-        excel_service.create_side_by_side_excel(pro_forma_entries)
+        await excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for document: {document_id}")
+        
+        # Generate Investment Memo
+        logger.info(f"Generating investment memo for document: {document_id}")
+        memo_content = memo_service.generate_investment_memo(analysis)
+        analysis.investment_memo = memo_content
+        logger.info("Investment memo generated successfully")
+        
     except Exception as e:
-        logger.warning(f"Excel generation had issues (non-critical): {str(e)}")
-        # Don't fail the whole analysis if Excel fails - it's a nice-to-have
+        logger.warning(f"Output generation had issues (non-critical): {str(e)}")
+        # Don't fail the whole analysis if Excel/Memo fails - it's a nice-to-have
     
     # ===== STEP 5: RETURN COMPLETE ANALYSIS =====
     await progress_service.update_progress(document_id, 100, "Analysis complete!")

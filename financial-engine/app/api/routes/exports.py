@@ -29,7 +29,7 @@ async def export_excel(
     - Professional formatting and styling
     """
     pro_forma_entries = excel_service.generate_side_by_side_view(analysis_data)
-    excel_data = excel_service.create_side_by_side_excel(pro_forma_entries)
+    excel_data = await excel_service.create_side_by_side_excel(pro_forma_entries)
 
     return StreamingResponse(
         iter([excel_data]),
@@ -54,7 +54,11 @@ async def export_memo(
     
     Uses LLM to generate sophisticated narrative or falls back to template.
     """
-    memo_content = memo_service.generate_investment_memo(analysis_data)
+    # Use pre-generated memo if available to save time
+    if analysis_data.investment_memo:
+        memo_content = analysis_data.investment_memo
+    else:
+        memo_content = memo_service.generate_investment_memo(analysis_data)
     
     # Return as markdown text with proper encoding
     return Response(

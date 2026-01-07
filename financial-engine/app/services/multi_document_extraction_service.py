@@ -258,70 +258,113 @@ class MultiDocumentExtractionService:
                 "error": str(e)
             }]
     
-    async def normalize_expense_category(self, raw_text: str, item_type: str = "expense") -> Dict[str, Any]:
+    async def normalize_expenses_batch(self, expenses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Use Gemini AI to map a raw description to a standard category and group.
-        
-        Args:
-            raw_text: Raw description from the document
-            item_type: The type extracted from the document (revenue, expense, property_info)
+        Batch normalize expenses using Gemini to reduce API calls and latency.
+        """
+        if not expenses:
+            return []
             
-        Returns:
-            Dictionary with normalized_value, category_group, and confidence score
-        """
         if not self.gemini_service:
-            # Fallback to simple keyword matching
-            return self._fallback_categorization(raw_text)
-        
+            return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
+
         try:
-            prompt = f"""
-            You are a commercial real estate financial analyst. Map this line item to the most appropriate standard category and group.
+            # Prepare items for prompt
+            items_payload = []
+            for idx, exp in enumerate(expenses):
+                items_payload.append({
+                    "id": idx,
+                    "text": exp.get("raw_text", ""),
+                    "type": exp.get("type", "expense")
+                })
             
-            Line Item: "{raw_text}"
-            Context Type: {item_type}
+            prompt = f"""
+            You are a commercial real estate financial analyst. Map these {len(items_payload)} line items to the most appropriate standard category and group.
             
             Standard Categories:
             {chr(10).join(f"- {cat}" for cat in self.STANDARD_CATEGORIES)}
             
-            Respond with ONLY a JSON object in this exact format:
-            {{
-                "category": "Exact category name from the list above, or 'Uncategorized' if none fit",
-                "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
-                "confidence": 0.95,
-                "reasoning": "Brief explanation"
-            }}
+            Items to Process:
+            {json.dumps(items_payload, indent=2)}
+            
+            Respond with ONLY a JSON array of objects in this exact format:
+            [
+                {{
+                    "id": 0,  // Must match input ID
+                    "category": "Exact category name from the list above, or 'Uncategorized'",
+                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
+                    "confidence": 0.95,
+                    "reasoning": "Brief explanation"
+                }}
+            ]
             
             Rules:
-            - If it looks like income/rent, map to Group: "Revenue".
-            - If it looks like a property stat (Year Built, Roof Age), map to Group: "Property Info" and Category: "Property Characteristic".
-            - If it is a Tax or Insurance item, map to Group: "Tax & Insurance".
-            - For repairs/maintenance, map to Group: "Operating Expense".
-            - Confidence should be 0.0 to 1.0.
+            - Map income/rent to Group: "Revenue".
+            - Map property stats (Year Built, Roof Age) to Group: "Property Info" and Category: "Property Characteristic".
+            - Map Tax/Insurance to Group: "Tax & Insurance".
+            - Map repairs/maintenance to Group: "Operating Expense".
+            
+            Use these exact group names:
+            - Revenue
+            - Operating Expense
+            - Capital Expenditure
+            - Property Info
+            - Debt
+            - Tax & Insurance
+            - Other
             """
             
-            response = await self.gemini_service.generate_content_async(prompt)
-            response_text = response.strip()
+            response_text = await self.gemini_service.generate_content_async(prompt)
             
-            # Remove markdown code blocks if present
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
+            # Clean and parse JSON
+            cleaned_text = response_text.strip()
+            if cleaned_text.startswith("```json"):
+                cleaned_text = cleaned_text[7:]
+            if cleaned_text.startswith("```"):
+                cleaned_text = cleaned_text[3:]
+            if cleaned_text.endswith("```"):
+                cleaned_text = cleaned_text[:-3]
+            cleaned_text = cleaned_text.strip()
             
-            result = json.loads(response_text.strip())
+            try:
+                results = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse batch normalization response: {cleaned_text[:100]}...")
+                return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
             
-            return {
-                "normalized_value": result.get("category", "Other Operating Expenses"),
-                "category_group": result.get("group", "Other"),
-                "confidence": float(result.get("confidence", 0.5)),
-                "reasoning": result.get("reasoning", "")
-            }
+            # Create a map of id -> result for O(1) lookup
+            result_map = {item.get("id"): item for item in results if isinstance(item, dict)}
             
+            # Compile final list in order
+            normalized_list = []
+            for idx in range(len(expenses)):
+                res = result_map.get(idx)
+                if res:
+                    normalized_list.append({
+                        "normalized_value": res.get("category", "Other Operating Expenses"),
+                        "category_group": res.get("group", "Other"),
+                        "confidence": float(res.get("confidence", 0.5)),
+                        "reasoning": res.get("reasoning", "")
+                    })
+                else:
+                    # Fallback if item missing in response
+                    normalized_list.append(self._fallback_categorization(expenses[idx].get("raw_text", "")))
+                    
+            return normalized_list
+
         except Exception as e:
-            logger.error(f"Error normalizing category for '{raw_text}': {str(e)}")
-            return self._fallback_categorization(raw_text)
+            logger.error(f"Batch normalization failed: {str(e)}")
+            # Fallback for all
+            return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
+
+    async def normalize_expense_category(self, raw_text: str, item_type: str = "expense") -> Dict[str, Any]:
+        """
+        Use Gemini AI to map a raw description to a standard category and group.
+        Kept for backward compatibility or single-item usage.
+        """
+        # Create a single item list and use batch processing
+        batch_result = await self.normalize_expenses_batch([{"raw_text": raw_text, "type": item_type}])
+        return batch_result[0] if batch_result else self._fallback_categorization(raw_text)
     
     def _fallback_categorization(self, raw_text: str) -> Dict[str, Any]:
         """
@@ -472,63 +515,77 @@ class MultiDocumentExtractionService:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
             return []
         
-        # Normalize each expense using batch processing for better performance
+        # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
-        logger.info(f"Starting normalization of {len(all_expenses)} expenses...")
+        logger.info(f"Starting batch normalization of {len(all_expenses)} expenses...")
         
-        # Use fallback categorization for better performance with large datasets
-        # For production, consider implementing batch Gemini API calls
-        for idx, expense in enumerate(all_expenses):
+        # Process in chunks of 50 to avoid hitting token limits
+        batch_size = 50
+        
+        for i in range(0, len(all_expenses), batch_size):
+            chunk = all_expenses[i:i + batch_size]
+            logger.info(f"Normalizing batch {i//batch_size + 1}/{(len(all_expenses) + batch_size - 1)//batch_size + 1} ({len(chunk)} items)")
+            
             try:
-                raw_text = expense["raw_text"]
-                amount = expense.get("amount")
-                item_type = expense.get("type", "expense") # Default to expense if not provided by LLM
-
-                # Normalize the category and group
-                # We pass the item_type to help the normalizer
-                normalization = await self.normalize_expense_category(raw_text, item_type)
+                # Get normalized data for the entire chunk
+                batch_normalizations = await self.normalize_expenses_batch(chunk)
                 
-                # Determine field type based on the group returned
-                category_group = normalization.get("category_group", "Other")
-                field_type = "expense_category"
-                if category_group == "Property Info":
-                    field_type = "property_meta"
-                elif category_group == "Revenue":
-                    field_type = "revenue_item"
-                
-                # Map string group to Enum if possible, otherwise default to OTHER
-                try:
-                    group_enum = CategoryGroup(category_group)
-                except ValueError:
-                    group_enum = CategoryGroup.OTHER
-                    
-                item = NormalizedDataItem(
-                    id=f"item_{len(normalized_items)}",
-                    raw_text=raw_text,
-                    normalized_value=normalization["normalized_value"],
-                    field_type=field_type,
-                    category_group=group_enum,
-                    data_classification=DataClassification.SOURCED, # All extracted items are Sourced by default
-                    confidence=normalization["confidence"],
-                    user_verified=False,
-                    source_document=expense["source_document"],
-                    metadata={
-                        "amount": amount,
-                        "reasoning": normalization.get("reasoning", ""),
-                        "row_count": expense.get("row_count"),
-                        "categories_found": expense.get("categories_found"),
-                        "original_type": item_type
-                    }
-                )
-                normalized_items.append(item)
-                
-                # Log progress every 20 items
-                if (idx + 1) % 20 == 0:
-                    logger.info(f"Normalized {idx + 1}/{len(all_expenses)} items...")
-                    
-            except Exception as e:
-                logger.error(f"Error normalizing item '{expense.get('raw_text')}': {str(e)}")
-                # Continue with other items
+                for idx, (expense, normalization) in enumerate(zip(chunk, batch_normalizations)):
+                    try:
+                        raw_text = expense.get("raw_text", "")
+                        amount = expense.get("amount")
+                        item_type = expense.get("type", "expense")
+                        
+                        # Determine field type based on the group returned
+                        category_group = normalization.get("category_group", "Other")
+                        field_type = "expense_category"
+                        if category_group == "Property Info":
+                            field_type = "property_meta"
+                        elif category_group == "Revenue":
+                            field_type = "revenue_item"
+                        
+                        # Map string group to Enum if possible, otherwise default to OTHER
+                        try:
+                            group_enum = CategoryGroup(category_group)
+                        except ValueError:
+                            # Try to handle common variations
+                            try:
+                                if "Expense" in category_group:
+                                    group_enum = CategoryGroup.OPERATING_EXPENSE
+                                elif "Revenue" in category_group or "Income" in category_group:
+                                    group_enum = CategoryGroup.REVENUE
+                                else:
+                                    group_enum = CategoryGroup.OTHER
+                            except:
+                                group_enum = CategoryGroup.OTHER
+                            
+                        item = NormalizedDataItem(
+                            id=f"item_{len(normalized_items)}",
+                            raw_text=raw_text,
+                            normalized_value=normalization.get("normalized_value", "Other Operating Expenses"),
+                            field_type=field_type,
+                            category_group=group_enum,
+                            data_classification=DataClassification.SOURCED,
+                            confidence=normalization.get("confidence", 0.5),
+                            user_verified=False,
+                            source_document=expense.get("source_document", "Unknown"),
+                            metadata={
+                                "amount": amount,
+                                "reasoning": normalization.get("reasoning", ""),
+                                "row_count": expense.get("row_count"),
+                                "categories_found": expense.get("categories_found"),
+                                "original_type": item_type
+                            }
+                        )
+                        normalized_items.append(item)
+                        
+                    except Exception as item_error:
+                        logger.error(f"Error creating normalized item: {str(item_error)}")
+                        continue
+                        
+            except Exception as batch_error:
+                logger.error(f"Error processing batch starting at {i}: {str(batch_error)}")
+                # Continue to next batch
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
         logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items")

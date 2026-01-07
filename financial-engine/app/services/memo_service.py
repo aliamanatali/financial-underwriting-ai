@@ -53,6 +53,8 @@ class MemoService:
         - Below Market Rents? {analysis_data.conclusion.investment_checklist.rents_below_market if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
         - Mismanaged? {analysis_data.conclusion.investment_checklist.is_mismanaged if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
         - Diligence Issues: {analysis_data.conclusion.investment_checklist.diligence_issues if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Primary Risks: {analysis_data.conclusion.investment_checklist.primary_risks if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Price Per Unit: {analysis_data.conclusion.investment_checklist.price_per_unit_analysis if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
         
         Include the following sections:
         1. Executive Summary (2-3 sentences)
@@ -66,6 +68,8 @@ class MemoService:
         5. Risk Mitigation
         
         Write in professional, concise language suitable for an investment committee.
+        
+        IMPORTANT: Return ONLY the memo content in valid Markdown. Do not include any introductory text like "Here is the memo" or "Based on the details provided". Start directly with the # INVESTMENT MEMO title.
         """
         
         try:
@@ -104,6 +108,7 @@ This {analysis_data.property_meta.total_units}-unit multifamily asset presents a
 | **Are existing rents below market?** | {analysis_data.conclusion.investment_checklist.rents_below_market if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
 | **Is it poorly run/mismanaged?** | {analysis_data.conclusion.investment_checklist.is_mismanaged if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
 | **What diligence items remain unresolved?** | {analysis_data.conclusion.investment_checklist.diligence_issues if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **What are the primary risks?** | {analysis_data.conclusion.investment_checklist.primary_risks if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
 | **Price Per Unit Analysis** | {analysis_data.conclusion.investment_checklist.price_per_unit_analysis if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
 
 ## KEY QUESTIONS
