@@ -174,6 +174,15 @@ export interface DealParameters {
   min_unit_count?: number;
   max_unit_count?: number;
   max_build_year?: number;
+  treasury_rate_5yr?: number;
+  perm_spread?: number;
+}
+
+export interface UnitTypeSummary {
+  unit_type: string;
+  count: number;
+  avg_rent: number;
+  market_rent: number;
 }
 
 export interface AuditEntry {
@@ -213,9 +222,21 @@ export interface DecisionImpact {
   impact: string;
 }
 
+export interface InvestmentChecklist {
+    is_multifamily: string;
+    near_campus: string;
+    business_plan: string;
+    rents_below_market: string;
+    is_mismanaged: string;
+    diligence_issues: string;
+    primary_risks: string;
+    price_per_unit_analysis: string;
+}
+
 export interface Conclusion {
   summary: string;
   key_decisions: DecisionImpact[];
+  investment_checklist?: InvestmentChecklist;
 }
 
 export interface UnderwritingAnalysis {
@@ -225,6 +246,7 @@ export interface UnderwritingAnalysis {
   property_meta: PropertyMeta;
   rent_roll: RentRollItem[];
   rent_roll_summary: RentRollSummary;
+  unit_mix_summary?: UnitTypeSummary[];
   historical_expenses: StandardizedExpense[];
   deal_parameters?: DealParameters;
   audit_trail?: AuditEntry[];

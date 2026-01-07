@@ -45,14 +45,23 @@ class MemoService:
         Upside Potential: {upside:.2f}%
         
         Deal Status: {'PASS' if analysis_data.pass_fail_status == 'PASS' else 'FAIL'}
+
+        Investment Checklist:
+        - Multifamily? {analysis_data.conclusion.investment_checklist.is_multifamily if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Near Campus? {analysis_data.conclusion.investment_checklist.near_campus if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Business Plan: {analysis_data.conclusion.investment_checklist.business_plan if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Below Market Rents? {analysis_data.conclusion.investment_checklist.rents_below_market if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Mismanaged? {analysis_data.conclusion.investment_checklist.is_mismanaged if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
+        - Diligence Issues: {analysis_data.conclusion.investment_checklist.diligence_issues if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
         
         Include the following sections:
         1. Executive Summary (2-3 sentences)
-        2. Key Questions:
+        2. Investment Checklist & Questions (Address the items above)
+        3. Key Questions:
            - Is there upside potential? (Answer: Yes, upside of {upside:.2f}%)
            - What are the primary risks?
            - What is the value-add strategy?
-        3. SWOT Analysis (Strengths, Weaknesses, Opportunities, Threats)
+        4. SWOT Analysis (Strengths, Weaknesses, Opportunities, Threats)
         4. Investment Highlights
         5. Risk Mitigation
         
@@ -84,6 +93,18 @@ class MemoService:
 This {analysis_data.property_meta.total_units}-unit multifamily asset presents a compelling value-add opportunity with strong fundamentals and clear path to value creation. Current occupancy is {occupancy_rate:.1f}% with Pro Forma cap rate of {cap_rate:.2f}%.
 
 ---
+
+## INVESTMENT CHECKLIST
+
+| Question | Status |
+|----------|--------|
+| **Is the property a multifamily investment?** | {analysis_data.conclusion.investment_checklist.is_multifamily if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **Is it within 6 blocks of campus?** | {analysis_data.conclusion.investment_checklist.near_campus if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **What is the business plan to capture value?** | {analysis_data.conclusion.investment_checklist.business_plan if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **Are existing rents below market?** | {analysis_data.conclusion.investment_checklist.rents_below_market if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **Is it poorly run/mismanaged?** | {analysis_data.conclusion.investment_checklist.is_mismanaged if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **What diligence items remain unresolved?** | {analysis_data.conclusion.investment_checklist.diligence_issues if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
+| **Price Per Unit Analysis** | {analysis_data.conclusion.investment_checklist.price_per_unit_analysis if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'} |
 
 ## KEY QUESTIONS
 

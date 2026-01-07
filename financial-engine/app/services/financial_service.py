@@ -1,6 +1,6 @@
 import numpy_financial as npf # type: ignore
 import math
-from app.models.schemas import UnderwritingAnalysis, DealParameters, ProFormaExpenseItem, ExpenseCategory
+from app.models.schemas import UnderwritingAnalysis, DealParameters, ProFormaExpenseItem, ExpenseCategory, UnitTypeSummary
 from typing import Dict, Any, List, Optional
 import logging
 
@@ -57,7 +57,7 @@ class FinancialService:
         year_built = analysis.property_meta.year_built or 0
         if year_built > 0 and year_built < params.max_build_year and not analysis.property_meta.is_renovated:
             status = "FAIL"
-            reasons.append(f"Property vintage FAIL: Built in {year_built} (before {params.max_build_year}) and not renovated.")
+            reasons.append(f"Property vintage FAIL: Built in {year_built}. Criteria requires 1970-2005 or renovated.")
         
         return {"status": status, "reasons": reasons}
 
@@ -139,6 +139,8 @@ class FinancialService:
         if math.isnan(params.ltv): params.ltv = 0.65
         if math.isnan(params.sofr_rate): params.sofr_rate = 0.05
         if math.isnan(params.bridge_spread): params.bridge_spread = 0.02
+        if math.isnan(params.treasury_rate_5yr): params.treasury_rate_5yr = 0.042
+        if math.isnan(params.perm_spread): params.perm_spread = 0.0185
         if math.isnan(params.closing_costs): params.closing_costs = 0.0
         if math.isnan(params.renovation_budget): params.renovation_budget = 0.0
 
@@ -146,16 +148,56 @@ class FinancialService:
     def _calculate_revenue(self, analysis: UnderwritingAnalysis):
         params = analysis.deal_parameters or DealParameters()
 
+        # 0. Generate Unit Mix Summary
+        unit_groups: Dict[str, List[float]] = {}
+        unit_market_rents: Dict[str, List[float]] = {}
+        
+        for item in analysis.rent_roll:
+            u_type = item.unit_type or "Unknown"
+            if u_type not in unit_groups:
+                unit_groups[u_type] = []
+                unit_market_rents[u_type] = []
+            unit_groups[u_type].append(item.current_rent or 0)
+            unit_market_rents[u_type].append(item.market_rent or 0)
+            
+        summary_list = []
+        for u_type, rents in unit_groups.items():
+            count = len(rents)
+            avg_rent = sum(rents) / count if count > 0 else 0
+            mkt_rents = unit_market_rents.get(u_type, [])
+            avg_mkt = sum(mkt_rents) / count if count > 0 else 0
+            
+            summary_list.append(UnitTypeSummary(
+                unit_type=u_type,
+                count=count,
+                avg_rent=self._sanitize_value(avg_rent),
+                market_rent=self._sanitize_value(avg_mkt)
+            ))
+        analysis.unit_mix_summary = summary_list
+
         # 1. Gross Potential Rent (GPR)
         # Formula: Total Units * Market Rent per Unit * 12
         # Note: We sum up individual units from Rent Roll for accuracy
         gpr = sum((item.market_rent or 0) * 12 for item in analysis.rent_roll)
+        
+        # Fallback: If individual items missing but summary exists
+        if gpr == 0 and analysis.rent_roll_summary and analysis.rent_roll_summary.total_annual_rent > 0:
+             # Assume summary total annual rent is effectively GPR (or close to it) if we lack details
+             # Or better: if we have total monthly rent * 12
+             gpr = analysis.rent_roll_summary.total_monthly_rent * 12
+             logger.warning("Using Rent Roll Summary for GPR as detailed list sum was 0")
+             
         analysis.gross_potential_rent = self._sanitize_value(gpr)
         self.audit_log_service.add_log(analysis, "GPR", f"${gpr:,.0f}", "Rent Roll", "Sum of (Market Rent * 12)")
 
         # 2. Loss to Lease
         # Formula: GPR - (Current Rent Roll Sum * 12)
         current_rent_annual = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
+        
+        # Fallback for current rent
+        if current_rent_annual == 0 and analysis.rent_roll_summary:
+            current_rent_annual = analysis.rent_roll_summary.total_annual_rent
+
         loss_to_lease = gpr - current_rent_annual
         analysis.loss_to_lease = self._sanitize_value(loss_to_lease)
         self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent Annualized")
@@ -233,7 +275,7 @@ class FinancialService:
         if expense_ratio < 0.20:
              analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is suspiciously low (<20%). Check if T12 data was extracted.")
         elif expense_ratio > 0.60:
-            analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is unusually high (>60%)")
+            analysis.gating_reasons.append(f"WARNING: Expense Ratio {expense_ratio:.1%} is unusually high (>60%). Market standard is ~38%.")
         
         self.audit_log_service.add_log(analysis, "Total OpEx", f"${total_opex:,.0f}", "Summation", f"Calculated Ratio: {expense_ratio:.1%}")
 
@@ -307,6 +349,10 @@ class FinancialService:
         # 2. Debt Service (Interest Only - "Bridge Debt")
         # Formula: SOFR + Spread
         interest_rate = params.sofr_rate + params.bridge_spread
+        
+        # Calculate Perm Debt Option (for comparison/memo)
+        perm_rate = params.treasury_rate_5yr + params.perm_spread
+        
         annual_debt_service = loan_amount * interest_rate
         analysis.annual_debt_service = self._sanitize_value(annual_debt_service)
         self.audit_log_service.add_log(analysis, "Debt Service", f"${annual_debt_service:,.0f}", "Calculation", f"Loan * {interest_rate:.2%} (IO)")

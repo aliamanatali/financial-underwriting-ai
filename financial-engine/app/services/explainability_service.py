@@ -6,7 +6,8 @@ from app.models.schemas import (
     DealParameters,
     ExpenseCategory,
     Conclusion,
-    DecisionImpact
+    DecisionImpact,
+    InvestmentChecklist
 )
 from typing import List, Dict, Any, Optional
 from app.services.gemini_client import GeminiClient
@@ -587,7 +588,43 @@ class ExplainabilityService:
             impact=f"Reflects the market pricing and initial yield. Compare with market benchmark of {self.params.exit_cap_rate:.2%}."
         ))
 
+        # 5. Investment Checklist
+        # Derive answers where possible, otherwise use placeholders
+        total_units = self.analysis.property_meta.total_units or 1
+        purchase_price = self.analysis.property_meta.purchase_price or 0
+        price_per_unit = purchase_price / total_units if total_units > 0 else 0
+        
+        # Simple logic for "Mismanaged" based on Expense Ratio
+        egi = self.analysis.effective_gross_income or 1
+        opex = self.analysis.pro_forma_expenses or 0
+        exp_ratio = opex / egi if egi > 0 else 0
+        mismanaged_status = "Likely (High Expenses)" if exp_ratio > 0.50 else "Stable Operations"
+        
+        # Logic for "Rents Below Market"
+        ltl = self.analysis.loss_to_lease or 0
+        gpr = self.analysis.gross_potential_rent or 1
+        ltl_pct = ltl / gpr if gpr > 0 else 0
+        rents_status = f"Yes ({ltl_pct:.1%} below market)" if ltl_pct > 0.05 else "No (At Market)"
+        
+        # Vintage check
+        year_built = self.analysis.property_meta.year_built or 0
+        diligence_note = "None"
+        if year_built < 1980:
+            diligence_note = f"Structural Inspection Required (Year Built {year_built})"
+            
+        checklist = InvestmentChecklist(
+            is_multifamily="Yes" if total_units >= 5 else "No (1-4 Units)",
+            near_campus="Unknown (Requires Map Analysis)",
+            business_plan=f"Capture ${ltl:,.0f} Loss-to-Lease",
+            rents_below_market=rents_status,
+            is_mismanaged=mismanaged_status,
+            diligence_issues=diligence_note,
+            primary_risks="Interest Rate Volatility, Execution Risk",
+            price_per_unit_analysis=f"${price_per_unit:,.0f}/unit"
+        )
+
         self.analysis.conclusion = Conclusion(
             summary=summary,
-            key_decisions=decisions
+            key_decisions=decisions,
+            investment_checklist=checklist
         )

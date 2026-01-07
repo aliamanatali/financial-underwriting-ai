@@ -193,6 +193,8 @@ export default function UnderwritingDashboard({
   const occupancyRate = analysis.rent_roll_summary?.occupancy_rate || 0;
   const totalUnits = analysis.property_meta?.total_units || 0;
   const occupiedUnits = analysis.rent_roll_summary?.occupied_units || 0;
+  const purchasePrice = analysis.property_meta.purchase_price || 0;
+  const pricePerUnit = totalUnits > 0 ? purchasePrice / totalUnits : 0;
 
   return (
     <div className="space-y-8 font-sans">
@@ -201,7 +203,7 @@ export default function UnderwritingDashboard({
         <h2 className="text-3xl font-bold text-slate-900 mb-6">
           {analysis.property_meta.address}
         </h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-sm">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 text-sm">
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Year Built</p>
             <p className="font-bold text-lg text-slate-900">{analysis.property_meta.year_built}</p>
@@ -217,7 +219,13 @@ export default function UnderwritingDashboard({
           <div className="space-y-1">
             <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Purchase Price</p>
             <p className="font-bold text-lg text-slate-900">
-              {formatCurrency(analysis.property_meta.purchase_price)}
+              {formatCurrency(purchasePrice)}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-slate-500 uppercase tracking-wide text-xs font-semibold">Price Per Unit</p>
+            <p className="font-bold text-lg text-slate-900">
+              {formatCurrency(pricePerUnit)}
             </p>
           </div>
           <div className="space-y-1">
@@ -252,6 +260,35 @@ export default function UnderwritingDashboard({
 
       {/* Conclusion & Decision Impact */}
       <ConclusionWidget analysis={analysis} />
+      
+      {/* Investment Checklist */}
+      {analysis.conclusion?.investment_checklist && (
+        <div className="bg-white rounded-xl shadow-sm p-8 ring-1 ring-slate-200">
+             <h3 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Investment Criteria Checklist
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 {[
+                    { q: "Is the property a multifamily investment?", a: analysis.conclusion.investment_checklist.is_multifamily },
+                    { q: "Is it within 6 blocks of campus?", a: analysis.conclusion.investment_checklist.near_campus },
+                    { q: "What is the business plan?", a: analysis.conclusion.investment_checklist.business_plan },
+                    { q: "Are existing rents below market?", a: analysis.conclusion.investment_checklist.rents_below_market },
+                    { q: "Is it poorly run/mismanaged?", a: analysis.conclusion.investment_checklist.is_mismanaged },
+                    { q: "Diligence items remaining?", a: analysis.conclusion.investment_checklist.diligence_issues },
+                    { q: "Primary Risks", a: analysis.conclusion.investment_checklist.primary_risks },
+                    { q: "Price Per Unit Analysis", a: analysis.conclusion.investment_checklist.price_per_unit_analysis },
+                 ].map((item, idx) => (
+                    <div key={idx} className="bg-slate-50 p-4 rounded-lg border border-slate-100 flex justify-between items-center">
+                        <span className="text-sm font-medium text-slate-700">{item.q}</span>
+                        <span className="text-sm font-bold text-slate-900 ml-4 text-right">{item.a}</span>
+                    </div>
+                 ))}
+            </div>
+        </div>
+      )}
 
       {/* Deal Parameters */}
       {analysis.deal_parameters && (
@@ -587,6 +624,33 @@ export default function UnderwritingDashboard({
             </p>
           </div>
         </div>
+        
+        {/* Unit Mix Table */}
+        {analysis.unit_mix_summary && analysis.unit_mix_summary.length > 0 && (
+            <div className="mt-8 overflow-x-auto">
+                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wide mb-4">Unit Mix Detail</h4>
+                <table className="w-full text-sm text-left">
+                    <thead className="text-xs text-slate-500 uppercase bg-slate-50">
+                        <tr>
+                            <th className="px-4 py-3 rounded-l-lg">Unit Type</th>
+                            <th className="px-4 py-3">Count</th>
+                            <th className="px-4 py-3">Avg Current Rent</th>
+                            <th className="px-4 py-3 rounded-r-lg">Market Rent</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {analysis.unit_mix_summary.map((unit, idx) => (
+                            <tr key={idx} className="border-b border-slate-50 hover:bg-slate-50/50">
+                                <td className="px-4 py-3 font-medium text-slate-900">{unit.unit_type}</td>
+                                <td className="px-4 py-3 text-slate-600">{unit.count}</td>
+                                <td className="px-4 py-3 text-slate-600">{formatCurrency(unit.avg_rent)}</td>
+                                <td className="px-4 py-3 text-slate-600">{formatCurrency(unit.market_rent)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        )}
       </div>
     </div>
   );

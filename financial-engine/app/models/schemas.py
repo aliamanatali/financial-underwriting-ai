@@ -94,6 +94,8 @@ class DealParameters(BaseModel):
     loan_amount: Optional[float] = None # Manual override for loan amount
     sofr_rate: float = 0.053 # Base rate
     bridge_spread: float = 0.02 # Spread over SOFR
+    treasury_rate_5yr: float = 0.042 # 5-Year US Treasury Rate
+    perm_spread: float = 0.0185 # 185 bps over Treasuries
     
     # Project Cost Assumptions
     closing_costs: float = 100_000.0
@@ -139,9 +141,26 @@ class DecisionImpact(BaseModel):
     reasoning: str # How it came with the decision
     impact: str    # Impact for the client
 
+class InvestmentChecklist(BaseModel):
+    is_multifamily: str = "Unknown"
+    near_campus: str = "Unknown"
+    business_plan: str = "Unknown"
+    rents_below_market: str = "Unknown"
+    is_mismanaged: str = "Unknown"
+    diligence_issues: str = "Unknown"
+    primary_risks: str = "Unknown"
+    price_per_unit_analysis: str = "Unknown"
+
+class UnitTypeSummary(BaseModel):
+    unit_type: str
+    count: int
+    avg_rent: float
+    market_rent: float
+
 class Conclusion(BaseModel):
     summary: str # High level summary
     key_decisions: List[DecisionImpact]
+    investment_checklist: Optional[InvestmentChecklist] = None
 
 # --- 2.5 Multi-Document Support Models ---
 
@@ -206,6 +225,7 @@ class UnderwritingAnalysis(BaseModel):
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
     rent_roll_summary: RentRollSummary
+    unit_mix_summary: List[UnitTypeSummary] = []
     historical_expenses: List[StandardizedExpense]
 
     deal_parameters: Optional[DealParameters] = None
