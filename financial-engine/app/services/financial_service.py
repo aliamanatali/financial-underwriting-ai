@@ -48,7 +48,12 @@ class FinancialService:
         
         # Only check if Purchase Price is known. If 0/Missing, we defer to Step 4 (Implied Valuation).
         if purchase_price > 0:
-            estimated_loan = purchase_price * params.ltv
+            # Check if loan amount is explicitly provided in parameters
+            if hasattr(params, 'loan_amount') and params.loan_amount > 0:
+                estimated_loan = params.loan_amount
+            else:
+                estimated_loan = purchase_price * params.ltv
+                
             if estimated_loan < params.min_loan_amount:
                 status = "FAIL"
                 reasons.append(f"Loan amount FAIL: Estimated loan ${estimated_loan:,.0f} is below minimum of ${params.min_loan_amount:,.0f}.")

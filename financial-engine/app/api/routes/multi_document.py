@@ -798,6 +798,16 @@ async def analyze_deal_package(
     
     # Parse normalized items
     for item in normalized_items:
+        # GLOBAL CHECK: Unit Count from Metadata (e.g. from Excel Rent Roll)
+        # We check this on ALL items regardless of category, as Rent Rolls might be miscategorized
+        if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
+            row_count = item.metadata.get("row_count")
+            if row_count and row_count > 0:
+                # Only update if we don't have a value or if this one seems more reliable (e.g. from actual file rows)
+                if property_meta.total_units == 0:
+                    property_meta.total_units = int(row_count)
+                    logger.info(f"Updated Total Units from Rent Roll row count: {row_count}")
+        
         # Check if this is a Property Meta item or Property Info group
         if item.field_type == "property_meta" or (hasattr(item, 'category_group') and item.category_group == "Property Info"):
             try:
@@ -847,16 +857,6 @@ async def analyze_deal_package(
              
         # Check if this is an expense item
         elif item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group == "Operating Expense"):
-            # Check for unit count from Rent Roll metadata (fallback)
-            if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
-                row_count = item.metadata.get("row_count")
-                if row_count and row_count > 0 and property_meta.total_units == 0:
-                    property_meta.total_units = int(row_count)
-                    logger.info(f"Updated Total Units from Rent Roll row count: {row_count}")
-                
-                # Don't add Rent Roll summary to expenses
-                continue
-
             try:
                 # Parse the category
                 # Fallback to Other OpEx if unknown

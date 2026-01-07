@@ -114,6 +114,7 @@ class MultiDocumentExtractionService:
                 "amount": total_amount,
                 "source_document": filename,
                 "row_count": row_count,
+                "type": "excel_aggregation",
                 "categories_found": list(categories)[:5]  # Keep first 5 categories as sample
             }
             
