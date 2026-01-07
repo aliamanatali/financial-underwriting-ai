@@ -192,6 +192,18 @@ class ApiClient {
     }
   }
 
+  async updateManualOverrides(packageId: string, overrides: Record<string, any>): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/manual-overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
     // Create default deal parameters
     const params: DealParameters = {

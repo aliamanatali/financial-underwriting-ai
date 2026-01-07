@@ -267,4 +267,11 @@ export interface DealPackage {
   documents: Record<string, DocumentMetadata[]>;
   normalization_status: string;
   verification_progress: number;
+  manual_overrides?: {
+    total_units?: number;
+    gross_potential_rent?: number;
+    purchase_price?: number;
+    year_built?: number;
+    [key: string]: any;
+  };
 }

@@ -481,6 +481,7 @@ async def normalize_package_documents(
     )
     
     package.normalization_status = "in_progress"
+    package.normalized_data = normalized_items  # Save extracted items to package
     
     # Update cache and persist to GCP
     deal_packages_cache[package_id] = package
@@ -496,6 +497,7 @@ async def verify_normalized_item(
     package_id: str,
     item_id: str,
     user_correction: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
 ):
     """
     Mark a normalized item as verified by the user.
@@ -512,15 +514,72 @@ async def verify_normalized_item(
         package = DealPackage(**package_data)
         deal_packages_cache[package_id] = package
     
-    # Update verification progress
-    # In production, this would update the specific item in the database
-    # and recalculate the overall verification progress
+    # Find and update the item in normalized_data
+    item_found = False
+    for item in package.normalized_data:
+        if item.id == item_id:
+            item.user_verified = True
+            if user_correction is not None:
+                item.user_correction = user_correction
+            item_found = True
+            break
+            
+    if not item_found:
+        raise HTTPException(status_code=404, detail=f"Item {item_id} not found in package")
+        
+    # Recalculate progress
+    total_items = len(package.normalized_data)
+    verified_items = sum(1 for item in package.normalized_data if item.user_verified)
+    package.verification_progress = (verified_items / total_items) * 100 if total_items > 0 else 0
+    
+    # Save changes
+    deal_packages_cache[package_id] = package
+    await storage_service.save_deal_package(package.model_dump())
     
     return {
         "item_id": item_id,
         "verified": True,
         "user_correction": user_correction,
+        "verification_progress": package.verification_progress,
         "message": "Item verified successfully"
+    }
+
+
+@router.post("/packages/{package_id}/manual-overrides")
+async def update_manual_overrides(
+    package_id: str,
+    overrides: Dict[str, Any],
+):
+    """
+    Update manual overrides for a deal package.
+    Useful when documents are missing or extraction fails.
+    
+    Expected keys in overrides:
+    - total_units: int
+    - gross_potential_rent: float
+    - etc.
+    """
+    # Check cache first
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        # Try to load from GCP storage
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+        deal_packages_cache[package_id] = package
+        
+    # Update overrides
+    package.manual_overrides.update(overrides)
+    
+    # Save changes
+    deal_packages_cache[package_id] = package
+    await storage_service.save_deal_package(package.model_dump())
+    
+    return {
+        "message": "Manual overrides updated successfully",
+        "overrides": package.manual_overrides
     }
 
 
@@ -626,83 +685,79 @@ async def analyze_deal_package(
     excel_service = ExcelService()
     
     # ===== STEP 1: BUILD ANALYSIS OBJECT FROM PACKAGE DATA =====
-    # We need to reconstruct the normalized data that was stored during normalization
-    # For now, we'll need to re-run normalization to get the data
-    # In production, this would be stored in the database
+    # We use the normalized data that was stored in the package (and verified by user)
+    # If not present (legacy packages), we might need to re-extract, but we'll assume
+    # the new flow enforces normalization first.
     
-    try:
-        await progress_service.update_progress(package_id, 20, "Aggregating package data...")
-        # Re-extract normalized data from documents
-        extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
-        
-        # Collect documents to process
-        documents_to_process = []
-        for doc_type, doc_list in package.documents.items():
-            for doc_metadata in doc_list:
-                doc_id = doc_metadata.document_id
-                
-                # Retrieve file content
-                if doc_id in file_storage_cache:
-                    file_data = file_storage_cache[doc_id]
-                else:
-                    filename = doc_metadata.filename
-                    extension = Path(filename).suffix
-                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+    await progress_service.update_progress(package_id, 20, "Aggregating package data...")
+    
+    normalized_items = package.normalized_data
+    
+    # If no items found but we have documents, try to extract (fallback/legacy support)
+    if not normalized_items and any(package.documents.values()):
+        logger.info("No normalized data found in package. Attempting on-the-fly extraction (legacy mode)...")
+        try:
+             # Re-extract normalized data from documents
+            extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
+            
+            # Collect documents to process
+            documents_to_process = []
+            for doc_type, doc_list in package.documents.items():
+                for doc_metadata in doc_list:
+                    doc_id = doc_metadata.document_id
                     
-                    try:
-                        file_content = await storage_service.get_document_file(storage_path)
-                        if file_content:
-                            file_data = {
-                                "content": file_content,
-                                "filename": filename,
-                                "document_type": doc_metadata.document_type,
-                                "package_id": package_id
-                            }
-                            file_storage_cache[doc_id] = file_data
-                        else:
+                    # Retrieve file content
+                    if doc_id in file_storage_cache:
+                        file_data = file_storage_cache[doc_id]
+                    else:
+                        filename = doc_metadata.filename
+                        extension = Path(filename).suffix
+                        storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+                        
+                        try:
+                            file_content = await storage_service.get_document_file(storage_path)
+                            if file_content:
+                                file_data = {
+                                    "content": file_content,
+                                    "filename": filename,
+                                    "document_type": doc_metadata.document_type,
+                                    "package_id": package_id
+                                }
+                                file_storage_cache[doc_id] = file_data
+                            else:
+                                continue
+                        except Exception as e:
+                            logger.error(f"Error retrieving document {doc_id}: {str(e)}")
                             continue
-                    except Exception as e:
-                        logger.error(f"Error retrieving document {doc_id}: {str(e)}")
+                    
+                    # Determine file type
+                    filename = file_data["filename"]
+                    if filename.endswith((".xlsx", ".xls")):
+                        file_type = "excel"
+                    elif filename.endswith(".pdf"):
+                        file_type = "pdf"
+                    else:
                         continue
-                
-                # Determine file type
-                filename = file_data["filename"]
-                if filename.endswith((".xlsx", ".xls")):
-                    file_type = "excel"
-                elif filename.endswith(".pdf"):
-                    file_type = "pdf"
-                else:
-                    continue
-                
-                documents_to_process.append({
-                    "content": file_data["content"],
-                    "filename": filename,
-                    "type": file_type
-                })
-        
-        if not documents_to_process:
-            logger.warning("No processable documents found in package. Proceeding with defaults.")
-        
-        logger.info(f"Processing {len(documents_to_process)} documents for analysis")
-        
-        # Extract normalized data
-        normalized_items = await extraction_service.process_financial_documents(
-            documents_to_process,
-            progress_service=progress_service,
-            task_id=package_id,
-            progress_start=20,
-            progress_end=50
-        )
-        
-        if not normalized_items:
-            logger.warning("No data could be extracted from documents. Proceeding with defaults.")
+                    
+                    documents_to_process.append({
+                        "content": file_data["content"],
+                        "filename": filename,
+                        "type": file_type
+                    })
+            
+            normalized_items = await extraction_service.process_financial_documents(
+                documents_to_process,
+                progress_service=progress_service,
+                task_id=package_id,
+                progress_start=25,
+                progress_end=45
+            )
+            # Don't save back to package in this fallback mode to avoid overwriting future proper usage
+        except Exception as e:
+            logger.warning(f"Fallback extraction failed: {str(e)}")
             normalized_items = []
-        
-        logger.info(f"Extracted {len(normalized_items)} normalized items")
-        
-    except Exception as e:
-        logger.error(f"Error extracting data from package: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error extracting data: {str(e)}")
+
+    logger.info(f"Using {len(normalized_items)} normalized items for analysis")
     
     # ===== STEP 2: CONVERT NORMALIZED DATA TO ANALYSIS STRUCTURE =====
     # Build property metadata, rent roll, and expenses from normalized items
@@ -724,6 +779,17 @@ async def analyze_deal_package(
         is_renovated=False,
         current_loan_balance=current_loan_balance
     )
+    
+    # Apply Manual Overrides for Property Meta
+    if package.manual_overrides:
+        if "total_units" in package.manual_overrides:
+            property_meta.total_units = int(package.manual_overrides["total_units"])
+            logger.info(f"Applied manual override for total_units: {property_meta.total_units}")
+        if "purchase_price" in package.manual_overrides:
+            property_meta.purchase_price = float(package.manual_overrides["purchase_price"])
+            logger.info(f"Applied manual override for purchase_price: {property_meta.purchase_price}")
+        if "year_built" in package.manual_overrides:
+            property_meta.year_built = int(package.manual_overrides["year_built"])
     
     rent_roll: List[RentRollItem] = []
     historical_expenses: List[StandardizedExpense] = []
@@ -838,6 +904,24 @@ async def analyze_deal_package(
     total_monthly_rent = sum(unit.current_rent for unit in rent_roll)
     total_annual_rent = total_monthly_rent * 12
     
+    # Apply Manual Overrides for GPR/Rent
+    if package.manual_overrides:
+        if "total_units" in package.manual_overrides:
+             # If manual override exists, it takes precedence if extraction failed
+             manual_units = int(package.manual_overrides["total_units"])
+             if total_units == 0 or total_units != manual_units:
+                 total_units = manual_units
+                 # Adjust occupancy if needed (assume 95% if no data?)
+                 if occupied_units == 0:
+                     occupied_units = int(total_units * 0.95)
+                     occupancy_rate = 0.95
+        
+        if "gross_potential_rent" in package.manual_overrides:
+            manual_gpr = float(package.manual_overrides["gross_potential_rent"])
+            if total_annual_rent == 0:
+                total_annual_rent = manual_gpr
+                total_monthly_rent = manual_gpr / 12
+    
     rent_roll_summary = RentRollSummary(
         total_units=total_units,
         occupied_units=occupied_units,
@@ -845,6 +929,10 @@ async def analyze_deal_package(
         total_monthly_rent=total_monthly_rent,
         total_annual_rent=total_annual_rent
     )
+    
+    # Update property meta total units if 0
+    if property_meta.total_units == 0 and total_units > 0:
+        property_meta.total_units = total_units
     
     # Create analysis object
     analysis = UnderwritingAnalysis(
