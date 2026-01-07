@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import LoadingSpinner from "./LoadingSpinner";
+import WarningModal from "./WarningModal";
 
 interface ZipUploadProps {
   onUploadSuccess?: (packageId: string) => void;
@@ -42,6 +43,17 @@ export default function ZipUpload({
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [documentTypes, setDocumentTypes] = useState<DocumentTypeInfo[]>([]);
   const [isLoadingTypes, setIsLoadingTypes] = useState(true);
+  
+  // Warning Modal State
+  const [isWarningOpen, setIsWarningOpen] = useState(false);
+  const [warningTitle, setWarningTitle] = useState("");
+  const [warningMessage, setWarningMessage] = useState("");
+
+  const showWarning = (title: string, message: string) => {
+    setWarningTitle(title);
+    setWarningMessage(message);
+    setIsWarningOpen(true);
+  };
 
   // Fetch document types from backend on component mount
   useEffect(() => {
@@ -90,7 +102,8 @@ export default function ZipUpload({
     // Validate file
     const validationError = validateFile(file);
     if (validationError) {
-      setError(validationError);
+      // setError(validationError); // Don't show inline error if showing modal
+      showWarning("Invalid File", validationError);
       if (onUploadError) {
         onUploadError(validationError);
       }
@@ -147,7 +160,8 @@ export default function ZipUpload({
       }, 2000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Upload failed";
-      setError(errorMessage);
+      // setError(errorMessage); // Don't show inline error if showing modal
+      showWarning("Upload Failed", errorMessage);
 
       if (onUploadError) {
         onUploadError(errorMessage);
@@ -389,6 +403,13 @@ export default function ZipUpload({
           </div>
         </div>
       )}
+
+      <WarningModal
+        isOpen={isWarningOpen}
+        onClose={() => setIsWarningOpen(false)}
+        title={warningTitle}
+        message={warningMessage}
+      />
     </div>
   );
 }

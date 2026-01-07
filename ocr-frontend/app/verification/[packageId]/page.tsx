@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import DataVerificationTable from "@/components/DataVerificationTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import WarningModal from "@/components/WarningModal";
 import { apiClient } from "@/lib/api";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
@@ -44,6 +45,11 @@ export default function VerificationPage() {
   const [error, setError] = useState<string | null>(null);
   const [normalizing, setNormalizing] = useState(false);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
+  
+  // Warning Modal State
+  const [isWarningOpen, setIsWarningOpen] = useState(false);
+  const [warningTitle, setWarningTitle] = useState("");
+  const [warningMessage, setWarningMessage] = useState("");
 
   const baseUrl =
     process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -104,6 +110,13 @@ export default function VerificationPage() {
       }
 
       const data = await response.json();
+
+      if (!data.normalized_items || data.normalized_items.length === 0) {
+        setWarningTitle("Normalization Failed");
+        setWarningMessage("No financial data could be extracted from the documents. Please ensure the files are valid and contain readable financial information.");
+        setIsWarningOpen(true);
+      }
+
       setNormalizedItems(data.normalized_items);
       
       // Also refresh deal package to get updated status
@@ -372,6 +385,13 @@ export default function VerificationPage() {
           </div>
         )}
       </div>
+
+      <WarningModal
+        isOpen={isWarningOpen}
+        onClose={() => setIsWarningOpen(false)}
+        title={warningTitle}
+        message={warningMessage}
+      />
     </div>
   );
 }
