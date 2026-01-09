@@ -5,9 +5,11 @@ import { FireIcon } from "@/assets/icons";
 interface LoadingSpinnerProps {
   size?: "sm" | "lg";
   className?: string;
+  message?: string;
+  subMessage?: string;
 }
 
-export default function LoadingSpinner({ size, className = "" }: LoadingSpinnerProps = {}) {
+export default function LoadingSpinner({ size, className = "", message, subMessage }: LoadingSpinnerProps = {}) {
   // Small spinner for inline use
   if (size === "sm") {
     return (
@@ -47,11 +49,17 @@ export default function LoadingSpinner({ size, className = "" }: LoadingSpinnerP
         <div className="flex flex-col items-center gap-2">
           <div className="flex items-center gap-2">
             <span className="text-lg font-medium text-neutral-900">
-              Loading
+              {message || "Loading"}
             </span>
           </div>
 
-          <div className="flex gap-1">
+          {subMessage && (
+            <p className="text-sm text-neutral-500 text-center max-w-md">
+              {subMessage}
+            </p>
+          )}
+
+          <div className="flex gap-1 mt-1">
             <div className="w-1.5 h-1.5 rounded-full bg-[#FF5E00] animate-[bounce_1s_ease-in-out_infinite]"></div>
             <div
               className="w-1.5 h-1.5 rounded-full bg-[#FF5E00] animate-[bounce_1s_ease-in-out_infinite_0.1s]"

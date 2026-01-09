@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import {
   FireIcon,
@@ -33,6 +34,11 @@ export default function Sidebar({
   onNewChat,
 }: SidebarProps) {
   const { user, logout } = useAuth();
+  const pathname = usePathname();
+
+  // Determine which nav item should be active based on current path
+  const isChatActive = pathname === "/" || isChatMode;
+  const isFinancialActive = pathname === "/dashboard";
 
   // Get user initials
   const getUserInitials = () => {
@@ -104,9 +110,11 @@ export default function Sidebar({
           {/* Chat */}
           <Link
             href="/"
-            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg text-[#FF5E00] bg-[#FF5E00]/10 transition-all ${
-              sidebarExpanded ? "justify-start px-4" : "justify-center"
-            }`}
+            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg transition-all ${
+              isChatActive
+                ? "text-[#FF5E00] bg-[#FF5E00]/10"
+                : "text-neutral-400 hover:text-[#FF5E00] hover:bg-[#FF5E00]/10"
+            } ${sidebarExpanded ? "justify-start px-4" : "justify-center"}`}
           >
             <MessageCircleIcon className="w-5 h-5 stroke-[1.5]" />
             {sidebarExpanded ? (
@@ -123,9 +131,11 @@ export default function Sidebar({
           {/* Financial Underwriting Dashboard */}
           <Link
             href="/dashboard"
-            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg text-neutral-400 hover:text-[#FF5E00] hover:bg-[#FF5E00]/10 transition-all ${
-              sidebarExpanded ? "justify-start px-4" : "justify-center"
-            }`}
+            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg transition-all ${
+              isFinancialActive
+                ? "text-[#FF5E00] bg-[#FF5E00]/10"
+                : "text-neutral-400 hover:text-[#FF5E00] hover:bg-[#FF5E00]/10"
+            } ${sidebarExpanded ? "justify-start px-4" : "justify-center"}`}
           >
             <ChartBarIcon className="w-5 h-5 stroke-[1.5]" />
             {sidebarExpanded ? (
@@ -139,12 +149,12 @@ export default function Sidebar({
             )}
           </Link>
 
-          {/* Create App */}
-          <Link
-            href="/upload-package"
-            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg text-neutral-400 hover:text-[#FF5E00] hover:bg-[#FF5E00]/10 transition-all ${
+          {/* Create App - Dummy Button */}
+          <button
+            className={`sidebar-item group relative flex items-center p-2.5 rounded-lg text-neutral-400 hover:text-[#FF5E00] hover:bg-[#FF5E00]/10 transition-all cursor-not-allowed opacity-60 ${
               sidebarExpanded ? "justify-start px-4" : "justify-center"
             }`}
+            disabled
           >
             <SquarePlusIcon className="w-5 h-5 stroke-[1.5]" />
             {sidebarExpanded ? (
@@ -156,7 +166,7 @@ export default function Sidebar({
                 Create App
               </span>
             )}
-          </Link>
+          </button>
         </div>
 
         {/* Chat History (Visible on Expand in Chat Mode) */}

@@ -82,11 +82,30 @@ function ProcessingContent() {
           const fileIndex = progressUpdate.details.file_index || 0;
           const totalFiles = progressUpdate.details.total_files;
           
-          setCategories(prev => prev.map((cat, idx) => {
-            if (idx < fileIndex - 1) return { ...cat, status: 'completed' };
-            if (idx === fileIndex - 1) return { ...cat, status: 'processing' };
-            return { ...cat, status: 'queued' };
-          }));
+          setCategories(prev => {
+            // Calculate how many categories should be completed based on file progress
+            // Distribute files evenly across categories
+            const filesPerCategory = totalFiles / prev.length;
+            
+            return prev.map((cat, idx) => {
+              // Calculate which file range this category corresponds to
+              const categoryStartFile = Math.floor(idx * filesPerCategory) + 1;
+              const categoryEndFile = Math.floor((idx + 1) * filesPerCategory);
+              
+              // If current file is past this category's range, mark as completed
+              if (fileIndex > categoryEndFile) {
+                return { ...cat, status: 'completed' };
+              }
+              
+              // If current file is within this category's range, mark as processing
+              if (fileIndex >= categoryStartFile && fileIndex <= categoryEndFile) {
+                return { ...cat, status: 'processing' };
+              }
+              
+              // Otherwise, it's still queued
+              return { ...cat, status: 'queued' };
+            });
+          });
         }
         
         // Check if processing is complete (100%)

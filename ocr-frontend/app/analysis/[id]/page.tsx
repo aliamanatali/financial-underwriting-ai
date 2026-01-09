@@ -7,6 +7,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
+import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 
 export default function AnalysisResultPage() {
@@ -319,79 +320,18 @@ export default function AnalysisResultPage() {
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-white"></div>
       </div>
 
-      {/* Left Sidebar */}
-      <nav 
-        className={`fixed z-50 flex flex-col bg-white/80 border-neutral-100/80 border-r pt-6 pb-6 top-0 bottom-0 left-0 backdrop-blur-xl justify-between transition-all duration-400 ${
-          sidebarExpanded ? 'w-64' : 'w-[72px]'
-        }`}
-      >
-        <div className="flex flex-col items-center gap-6 w-full">
-          <div className={`flex items-center w-full px-2 min-h-[40px] relative ${sidebarExpanded ? 'justify-between px-4' : 'justify-center'}`}>
-            <div 
-              className="relative flex items-center justify-center w-10 h-10 shrink-0 rounded-xl cursor-pointer"
-              onClick={() => !sidebarExpanded && setSidebarExpanded(true)}
-            >
-              <div className="text-neutral-900">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"></path>
-                  <path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>
-                  <path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"></path>
-                  <path d="M10 6h4"></path>
-                  <path d="M10 10h4"></path>
-                  <path d="M10 14h4"></path>
-                  <path d="M10 18h4"></path>
-                </svg>
-              </div>
-            </div>
-            {sidebarExpanded && (
-              <button 
-                onClick={() => setSidebarExpanded(false)}
-                className="text-neutral-400 hover:text-neutral-600 transition-colors p-1"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
-                  <path d="M9 3v18"></path>
-                </svg>
-              </button>
-            )}
-          </div>
-
-          <div className="w-8 h-[1px] bg-neutral-100"></div>
-
-          <div className="flex flex-col gap-2 w-full px-2">
-            <a 
-              href="/dashboard" 
-              className={`group relative flex items-center p-2.5 rounded-lg text-neutral-900 bg-neutral-100 transition-all ${
-                sidebarExpanded ? 'justify-start px-4' : 'justify-center'
-              }`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 stroke-[1.5]">
-                <rect width="7" height="7" x="3" y="3" rx="1"></rect>
-                <rect width="7" height="7" x="14" y="3" rx="1"></rect>
-                <rect width="7" height="7" x="14" y="14" rx="1"></rect>
-                <rect width="7" height="7" x="3" y="14" rx="1"></rect>
-              </svg>
-              {sidebarExpanded && <span className="ml-3 font-normal text-sm">Deals</span>}
-            </a>
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center gap-4 w-full px-2">
-          <button className={`group relative flex items-center p-2.5 rounded-lg text-neutral-400 hover:text-neutral-900 hover:bg-neutral-50 transition-all ${
-            sidebarExpanded ? 'justify-start px-4 w-full' : 'justify-center'
-          }`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 stroke-[1.5]">
-              <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.72l-.15.1a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
-              <circle cx="12" cy="12" r="3"></circle>
-            </svg>
-            {sidebarExpanded && <span className="ml-3 font-normal text-sm">Settings</span>}
-          </button>
-        </div>
-      </nav>
+      {/* Sidebar */}
+      <Sidebar
+        sidebarExpanded={sidebarExpanded}
+        toggleSidebar={() => setSidebarExpanded(!sidebarExpanded)}
+        isChatMode={false}
+        messages={[]}
+        onNewChat={() => {}}
+      />
 
       {/* Content Wrapper */}
       <div className={`flex flex-col flex-1 transition-all duration-300 h-screen relative z-10 bg-neutral-50/50 ${
-        sidebarExpanded ? 'pl-64' : 'pl-[72px]'
+        sidebarExpanded ? 'ml-64' : 'ml-[72px]'
       }`}>
         {/* Top Bar */}
         <header className="h-16 border-b border-neutral-100 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 lg:px-8 shrink-0 sticky top-0 z-40">
