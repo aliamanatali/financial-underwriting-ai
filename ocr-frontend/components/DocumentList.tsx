@@ -239,7 +239,7 @@ export default function DocumentList({
         return "bg-green-100 text-green-800";
       case "processing":
       case "processing_chunks":
-        return "bg-blue-100 text-blue-800 animate-pulse";
+        return "bg-#FFE5D9 text-blue-800 animate-pulse";
       case "pending":
       case "extracting":
         return "bg-yellow-100 text-yellow-800";
@@ -359,7 +359,7 @@ export default function DocumentList({
         </h2>
         <button
           onClick={fetchDocuments}
-          className="text-sm text-blue-600 hover:text-blue-800"
+          className="text-sm text-[#FF5E00] hover:text-blue-800"
           aria-label="Refresh document list"
         >
           <svg
@@ -404,7 +404,7 @@ export default function DocumentList({
                             clipRule="evenodd"
                           />
                         </svg>
-                        <p className="text-sm font-medium text-blue-600 truncate hover:text-blue-800">
+                        <p className="text-sm font-medium text-[#FF5E00] truncate hover:text-blue-800">
                           {doc.filename}
                         </p>
                       </div>

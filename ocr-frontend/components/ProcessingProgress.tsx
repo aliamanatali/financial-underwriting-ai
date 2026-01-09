@@ -66,7 +66,7 @@ export default function ProcessingProgressComponent({
       case "completed":
         return "bg-green-50 border-green-200";
       case "processing":
-        return "bg-blue-50 border-blue-200";
+        return "bg-#FFF5F0 border-#FFCBB3";
       case "failed":
         return "bg-red-50 border-red-200";
       case "pending":
@@ -132,7 +132,7 @@ export default function ProcessingProgressComponent({
           <h3 className="text-lg font-semibold text-gray-900">
             Processing Progress
           </h3>
-          <span className="text-2xl font-bold text-blue-600">
+          <span className="text-2xl font-bold text-[#FF5E00]">
             {Math.round(progressPercentage)}%
           </span>
         </div>
@@ -140,7 +140,7 @@ export default function ProcessingProgressComponent({
         {/* Progress Bar */}
         <div className="w-full bg-gray-200 rounded-full h-4 mb-4">
           <div
-            className="bg-blue-600 h-4 rounded-full transition-all duration-500 ease-out"
+            className="bg-[#FF5E00] h-4 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${progressPercentage}%` }}
           />
         </div>
@@ -253,7 +253,7 @@ export default function ProcessingProgressComponent({
                             chunk.status === "completed"
                               ? "bg-green-100 text-green-800"
                               : chunk.status === "processing"
-                              ? "bg-blue-100 text-blue-800"
+                              ? "bg-#FFE5D9 text-blue-800"
                               : chunk.status === "failed"
                               ? "bg-red-100 text-red-800"
                               : "bg-gray-100 text-gray-800"

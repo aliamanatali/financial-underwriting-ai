@@ -256,7 +256,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
                 document.status === "completed"
                   ? "bg-green-100 text-green-800"
                   : document.status === "processing"
-                  ? "bg-blue-100 text-blue-800"
+                  ? "bg-#FFE5D9 text-blue-800"
                   : document.status === "failed"
                   ? "bg-red-100 text-red-800"
                   : "bg-yellow-100 text-yellow-800"
@@ -302,10 +302,10 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
         <>
           {progress && <ProcessingProgressComponent progress={progress} />}
           {isConnected && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center text-sm text-blue-700">
+            <div className="bg-#FFF5F0 border border-#FFCBB3 rounded-lg p-3">
+              <div className="flex items-center text-sm text-#E65400">
                 <div className="animate-pulse mr-2">
-                  <div className="h-2 w-2 bg-blue-500 rounded-full"></div>
+                  <div className="h-2 w-2 bg-#FFF5F00 rounded-full"></div>
                 </div>
                 <span>Real-time updates active</span>
               </div>
@@ -349,7 +349,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
           <div className="flex flex-wrap gap-3 items-center">
             <button
               onClick={handleCopyText}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00"
             >
               {copied ? (
                 <>
@@ -388,7 +388,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
 
             <button
               onClick={handleDownloadText}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00"
             >
               <svg
                 className="h-5 w-5 mr-2"
@@ -409,7 +409,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
             <button
               onClick={handleStartAnalysis}
               disabled={isStartingAnalysis}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#FF5E00] hover:bg-[#E65400] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isStartingAnalysis ? (
                 <>
@@ -644,7 +644,7 @@ export default function DocumentViewer({ documentId }: DocumentViewerProps) {
                     ),
                     a: ({ node, ...props }) => (
                       <a
-                        className="text-blue-600 hover:text-blue-800 underline"
+                        className="text-[#FF5E00] hover:text-blue-800 underline"
                         {...props}
                       />
                     ),

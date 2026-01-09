@@ -109,12 +109,19 @@ class MultiDocumentExtractionService:
                 doc_type = "P&L Statement"
             
             # Create a single aggregated entry
+            # Determine type based on document type
+            entry_type = "expense"  # default
+            if "rent" in filename.lower() and "roll" in filename.lower():
+                entry_type = "property_info"
+            elif "t12" in filename.lower() or "statement" in filename.lower():
+                entry_type = "expense"
+            
             aggregated_entry = {
                 "raw_text": f"{doc_type} - {filename}",
                 "amount": total_amount,
                 "source_document": filename,
                 "row_count": row_count,
-                "type": "excel_aggregation",
+                "type": entry_type,
                 "categories_found": list(categories)[:5]  # Keep first 5 categories as sample
             }
             
@@ -304,6 +311,7 @@ class MultiDocumentExtractionService:
             - Map property stats (Year Built, Roof Age) to Group: "Property Info" and Category: "Property Characteristic".
             - Map Tax/Insurance to Group: "Tax & Insurance".
             - Map repairs/maintenance to Group: "Operating Expense".
+            - For aggregated Excel documents (like "Rent Roll - rent_roll.xlsx" or "T12 Statement - T12_Statement.xlsx"), map to Category: "Property Characteristic" and Group: "Other".
             
             Use these exact group names:
             - Revenue
@@ -373,6 +381,23 @@ class MultiDocumentExtractionService:
         """
         text_lower = raw_text.lower()
         
+        # Special handling for Excel aggregated entries
+        if "rent roll" in text_lower:
+            return {
+                "normalized_value": "Property Characteristic",
+                "category_group": "Other",
+                "confidence": 1.0,
+                "reasoning": "Rent Roll document aggregation"
+            }
+        
+        if "t12 statement" in text_lower or "financial statement" in text_lower or "p&l statement" in text_lower:
+            return {
+                "normalized_value": "Property Characteristic",
+                "category_group": "Other",
+                "confidence": 1.0,
+                "reasoning": "Financial statement document aggregation"
+            }
+        
         # Keyword mapping
         category_keywords = {
             "Utilities": (["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"], "Operating Expense"),
@@ -439,21 +464,27 @@ class MultiDocumentExtractionService:
             file_type = doc.get("type", "").lower()
             
             if progress_service and task_id:
-                # Calculate progress based on provided range
-                start_pct = progress_start
-                end_pct = progress_end
-                # If we have documents, calculate step. If 0 documents, logic won't run loop anyway.
-                pct_per_doc = (end_pct - start_pct) / max(len(documents), 1)
-                current_pct = int(start_pct + (idx * pct_per_doc))
+                # Calculate progress based on files processed
+                # Progress should be proportional to files completed
+                files_completed = idx
+                total_files = len(documents)
+                
+                # Calculate percentage: (files_completed / total_files) * 100
+                # Map to the progress range (progress_start to progress_end)
+                if total_files > 0:
+                    file_progress = (files_completed / total_files)
+                    current_pct = int(progress_start + (file_progress * (progress_end - progress_start)))
+                else:
+                    current_pct = progress_start
                 
                 await progress_service.update_progress(
                     task_id,
                     current_pct,
-                    f"Processing file: {filename}",
+                    f"Processing file {idx + 1} of {total_files}: {filename}",
                     details={
                         "current_file": filename,
                         "file_index": idx + 1,
-                        "total_files": len(documents),
+                        "total_files": total_files,
                         "file_type": file_type
                     }
                 )
@@ -503,6 +534,20 @@ class MultiDocumentExtractionService:
                 all_expenses.append(placeholder_expense)
                 logger.info(f"Added placeholder entry for failed document: {filename}")
                 # Continue processing other documents
+        
+        # Update progress after all files are processed
+        if progress_service and task_id:
+            await progress_service.update_progress(
+                task_id,
+                progress_end,
+                f"Completed processing {len(documents)} files",
+                details={
+                    "current_file": "All files processed",
+                    "file_index": len(documents),
+                    "total_files": len(documents),
+                    "file_type": "complete"
+                }
+            )
         
         logger.info(f"Total expenses extracted from all documents: {len(all_expenses)}")
         

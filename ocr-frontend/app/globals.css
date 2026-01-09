@@ -3,24 +3,205 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --font-inter: 'Inter', sans-serif;
+  --font-playfair: 'Playfair Display', serif;
+  --font-newsreader: 'Newsreader', serif;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), Arial, Helvetica, sans-serif;
+}
+
+/* Sidebar Expansion Logic */
+#sidebar {
+  transition: width 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+#main-content {
+  transition: margin-left 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+#sidebar-header {
+  transition: padding 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Expanded State */
+body.has-expanded-sidebar #sidebar {
+  width: 16rem;
+}
+
+body.has-expanded-sidebar #main-content {
+  margin-left: 16rem;
+}
+
+/* Navigation Items Alignment when Expanded */
+body.has-expanded-sidebar #sidebar .sidebar-item {
+  justify-content: flex-start !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+/* Label Visibility */
+body.has-expanded-sidebar #sidebar .nav-label {
+  position: static !important;
+  opacity: 1 !important;
+  background-color: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+  padding: 0 0 0 12px !important;
+  pointer-events: auto !important;
+  display: inline-block !important;
+  white-space: nowrap;
+}
+
+/* Sidebar Header Logic */
+#collapse-trigger {
+  display: none;
+}
+
+#expand-trigger {
+  display: flex;
+  opacity: 0;
+  pointer-events: auto;
+}
+
+#logo-wrapper:hover #expand-trigger {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.95);
+}
+
+body.has-expanded-sidebar #sidebar-header {
+  padding-left: 1rem;
+  padding-right: 1rem;
+  justify-content: space-between;
+}
+
+body.has-expanded-sidebar #collapse-trigger {
+  display: block;
+}
+
+body.has-expanded-sidebar #expand-trigger {
+  display: none !important;
+  pointer-events: none;
+}
+
+body.has-expanded-sidebar #logo-wrapper {
+  pointer-events: none;
+}
+
+/* Fix for sidebar expansion artifacts & tooltip flashing */
+#sidebar .nav-label {
+  transition: opacity 0s;
+}
+
+#sidebar .sidebar-item:hover .nav-label {
+  transition: opacity 0.3s;
+}
+
+body.has-expanded-sidebar #sidebar .nav-label {
+  transition: opacity 0.3s ease 0.15s !important;
+}
+
+/* Fix bottom actions alignment when expanded */
+body.has-expanded-sidebar #sidebar-bottom-actions {
+  align-items: stretch !important;
+}
+
+body.has-expanded-sidebar #sidebar-user-profile {
+  margin-left: 1rem;
+}
+
+/* Shiny Input Border Animation */
+.shiny-input-wrapper {
+  position: relative;
+  border-radius: 15px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 94, 0, 0.1),
+    rgba(255, 140, 60, 0.1),
+    rgba(255, 94, 0, 0.1)
+  );
+  background-size: 200% 100%;
+  animation: shimmer 3s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 0px;
+  height: 0px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+/* Custom Range Slider Styling */
+input[type="range"].slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+
+input[type="range"].slider-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #171717;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease;
+}
+
+input[type="range"].slider-thumb::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].slider-thumb::-webkit-slider-thumb:active {
+  transform: scale(1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+input[type="range"].slider-thumb::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #171717;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease;
+}
+
+input[type="range"].slider-thumb::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+input[type="range"].slider-thumb::-moz-range-thumb:active {
+  transform: scale(1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }

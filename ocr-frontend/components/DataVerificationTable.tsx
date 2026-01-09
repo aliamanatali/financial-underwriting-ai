@@ -47,7 +47,7 @@ export default function DataVerificationTable({
 
   const getClassificationColor = (classification: DataClassification) => {
     switch (classification) {
-        case "Sourced": return "bg-blue-100 text-blue-800 border-blue-200";
+        case "Sourced": return "bg-#FFE5D9 text-blue-800 border-#FFCBB3";
         case "Assumption": return "bg-amber-100 text-amber-800 border-amber-200";
         case "Recommendation": return "bg-purple-100 text-purple-800 border-purple-200";
         default: return "bg-gray-100 text-gray-800 border-gray-200";
@@ -99,7 +99,7 @@ export default function DataVerificationTable({
             className={`px-6 py-2.5 rounded-lg font-medium transition-colors ${
               verifiedCount === totalCount
                 ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg"
+                : "bg-[#FF5E00] text-white hover:bg-[#E65400] shadow-md hover:shadow-lg"
             }`}
           >
             Verify All
@@ -116,7 +116,7 @@ export default function DataVerificationTable({
           </div>
           <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
             <div
-              className="bg-blue-600 h-3 rounded-full transition-all duration-500 ease-out"
+              className="bg-[#FF5E00] h-3 rounded-full transition-all duration-500 ease-out"
               style={{ width: `${progressPercentage}%` }}
             />
           </div>
@@ -192,7 +192,7 @@ export default function DataVerificationTable({
                                 <select
                                     value={editValue}
                                     onChange={(e) => setEditValue(e.target.value)}
-                                    className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                                    className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-#FFF5F00 focus:border-#FFF5F00"
                                     autoFocus
                                 >
                                     {availableCategories.map((category) => (
@@ -206,14 +206,14 @@ export default function DataVerificationTable({
                                     <span
                                     className={`font-medium ${
                                         item.user_correction
-                                        ? "text-blue-700"
+                                        ? "text-#E65400"
                                         : "text-slate-900"
                                     }`}
                                     >
                                     {item.user_correction || item.normalized_value}
                                     </span>
                                     {item.user_correction && (
-                                    <span className="text-[10px] uppercase font-bold text-blue-600 mt-1">
+                                    <span className="text-[10px] uppercase font-bold text-[#FF5E00] mt-1">
                                         Edited
                                     </span>
                                     )}
@@ -262,13 +262,13 @@ export default function DataVerificationTable({
                                     <>
                                         <button
                                         onClick={() => handleEdit(item)}
-                                        className="text-slate-500 hover:text-blue-600 font-medium transition-colors"
+                                        className="text-slate-500 hover:text-[#FF5E00] font-medium transition-colors"
                                         >
                                         Edit
                                         </button>
                                         <button
                                         onClick={() => onVerify(item.id)}
-                                        className="text-blue-600 hover:text-blue-800 font-semibold transition-colors flex items-center"
+                                        className="text-[#FF5E00] hover:text-blue-800 font-semibold transition-colors flex items-center"
                                         >
                                         Verify
                                         </button>

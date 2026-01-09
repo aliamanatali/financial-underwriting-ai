@@ -304,28 +304,28 @@ async def list_deal_packages(
     Returns:
         Paginated response with packages and metadata
     """
-    # Get packages from GCP storage
-    packages_data = await storage_service.list_deal_packages()
-    packages = [DealPackage(**pkg) for pkg in packages_data]
+    # Get paginated packages from GCP storage (optimized - only downloads what we need)
+    packages_data, total = await storage_service.list_deal_packages(limit=limit, offset=offset)
     
-    # Sort by created_at (newest first)
-    packages.sort(key=lambda p: p.created_at, reverse=True)
+    # Convert to DealPackage objects
+    packages = []
+    for pkg_data in packages_data:
+        try:
+            package = DealPackage(**pkg_data)
+            packages.append(package)
+            # Update cache
+            deal_packages_cache[package.package_id] = package
+        except Exception as e:
+            logger.error(f"Error parsing package data: {str(e)}")
+            continue
     
     # Calculate pagination metadata
-    total = len(packages)
     has_more = (offset + limit) < total
     
-    # Apply pagination
-    paginated_packages = packages[offset:offset + limit]
-    
-    # Update cache
-    for package in paginated_packages:
-        deal_packages_cache[package.package_id] = package
-    
-    logger.info(f"Returning {len(paginated_packages)} packages (offset={offset}, limit={limit}, total={total})")
+    logger.info(f"Returning {len(packages)} packages (offset={offset}, limit={limit}, total={total})")
     
     return {
-        "packages": [pkg.model_dump() for pkg in paginated_packages],
+        "packages": [pkg.model_dump() for pkg in packages],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -333,20 +333,22 @@ async def list_deal_packages(
     }
 
 
-@router.post("/packages/{package_id}/normalize", response_model=DocumentNormalizationResult)
+@router.post("/packages/{package_id}/normalize")
 async def normalize_package_documents(
     package_id: str,
     document_type: Optional[DocumentType] = None,
     gemini_service: GeminiService = Depends(get_gemini_service),
-    progress_service: ProgressService = Depends(get_progress_service)
+    progress_service: ProgressService = Depends(get_progress_service),
+    explainability_service: ExplainabilityService = Depends(get_explainability_service)
 ):
     """
-    Normalize documents in a package.
+    Normalize documents in a package and automatically generate financial report.
     If document_type is provided, normalize only documents of that type.
     Otherwise, normalize all documents in the package.
     
-    This endpoint extracts data and maps it to standardized categories,
-    returning items that need user verification.
+    This endpoint extracts data, maps it to standardized categories,
+    and automatically generates the financial analysis report.
+    The user can then verify/modify categories and regenerate if needed.
     """
     await progress_service.update_progress(package_id, 5, "Initializing normalization...")
     
@@ -471,15 +473,7 @@ async def normalize_package_documents(
     for idx, item in enumerate(normalized_items):
         item.id = str(uuid.uuid4())
     
-    result = DocumentNormalizationResult(
-        document_id="multiple",
-        document_type=document_type or DocumentType.FINANCIALS,
-        normalized_items=normalized_items,
-        total_items=len(normalized_items),
-        verified_items=0,
-        confidence_average=sum(item.confidence for item in normalized_items) / len(normalized_items) if normalized_items else 0
-    )
-    
+    # Save normalized data to package
     package.normalization_status = "in_progress"
     package.normalized_data = normalized_items  # Save extracted items to package
     
@@ -488,8 +482,58 @@ async def normalize_package_documents(
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
     
-    await progress_service.update_progress(package_id, 100, "Normalization complete.")
-    return result
+    await progress_service.update_progress(package_id, 60, "Normalization complete. Generating financial report...")
+    
+    # ===== AUTOMATICALLY GENERATE FINANCIAL REPORT =====
+    # Use default deal parameters for initial analysis
+    from app.models.schemas import DealParameters
+    
+    default_params = DealParameters(
+        growth_rate=0.03,
+        exit_cap_rate=0.06,
+        vacancy_rate=0.03,
+        loan_amount=5000000,
+        min_unit_count=15,
+        max_unit_count=80,
+        max_build_year=1970,
+        management_fee_rate=0.04,
+        tax_rate=0.012,
+        ltv=0.65,
+        sofr_rate=0.05,
+        bridge_spread=0.02,
+        closing_costs=0.0,
+        renovation_budget=0.0
+    )
+    
+    try:
+        # Call the analyze endpoint internally
+        analysis_result = await analyze_deal_package(
+            package_id=package_id,
+            deal_parameters=default_params.model_dump(),
+            gemini_service=gemini_service,
+            progress_service=progress_service,
+            explainability_service=explainability_service
+        )
+        
+        logger.info(f"Financial report generated successfully for package {package_id}")
+        
+        # Return the analysis result instead of normalization result
+        return analysis_result
+        
+    except Exception as e:
+        logger.error(f"Error generating financial report: {str(e)}", exc_info=True)
+        # If analysis fails, still return normalization result
+        await progress_service.update_progress(package_id, 100, "Normalization complete. Analysis generation failed.")
+        
+        result = DocumentNormalizationResult(
+            document_id="multiple",
+            document_type=document_type or DocumentType.FINANCIALS,
+            normalized_items=normalized_items,
+            total_items=len(normalized_items),
+            verified_items=0,
+            confidence_average=sum(item.confidence for item in normalized_items) / len(normalized_items) if normalized_items else 0
+        )
+        return result
 
 
 @router.put("/packages/{package_id}/verify-item/{item_id}")
@@ -542,6 +586,82 @@ async def verify_normalized_item(
         "user_correction": user_correction,
         "verification_progress": package.verification_progress,
         "message": "Item verified successfully"
+    }
+
+
+@router.post("/packages/{package_id}/verify-items-batch")
+async def verify_items_batch(
+    package_id: str,
+    items: List[Dict[str, Any]]
+):
+    """
+    Batch verify multiple normalized items at once.
+    
+    Args:
+        package_id: The deal package ID
+        items: List of items to verify, each with:
+            - item_id: str (required)
+            - user_correction: str (optional)
+    
+    Returns:
+        Summary of verification results
+    
+    Example payload:
+    [
+        {"item_id": "abc-123"},
+        {"item_id": "def-456", "user_correction": "Real Estate Taxes"}
+    ]
+    """
+    # Check cache first
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        # Try to load from GCP storage
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+        deal_packages_cache[package_id] = package
+    
+    # Track results
+    verified_count = 0
+    not_found_ids = []
+    
+    # Create a map of item_id to verification data for quick lookup
+    verification_map = {item.get("item_id"): item.get("user_correction") for item in items if item.get("item_id")}
+    
+    # Update all items in a single pass
+    for item in package.normalized_data:
+        if item.id in verification_map:
+            item.user_verified = True
+            user_correction = verification_map[item.id]
+            if user_correction is not None:
+                item.user_correction = user_correction
+            verified_count += 1
+    
+    # Check for items that weren't found
+    found_ids = {item.id for item in package.normalized_data if item.user_verified}
+    requested_ids = set(verification_map.keys())
+    not_found_ids = list(requested_ids - found_ids)
+    
+    # Recalculate progress
+    total_items = len(package.normalized_data)
+    total_verified = sum(1 for item in package.normalized_data if item.user_verified)
+    package.verification_progress = (total_verified / total_items) * 100 if total_items > 0 else 0
+    
+    # Save changes once
+    deal_packages_cache[package_id] = package
+    await storage_service.save_deal_package(package.model_dump())
+    
+    logger.info(f"Batch verified {verified_count} items for package {package_id}")
+    
+    return {
+        "verified_count": verified_count,
+        "total_verified": total_verified,
+        "total_items": total_items,
+        "verification_progress": package.verification_progress,
+        "not_found_ids": not_found_ids,
+        "message": f"Successfully verified {verified_count} items"
     }
 
 
@@ -805,6 +925,10 @@ async def analyze_deal_package(
             logger.info(f"Applied manual override for purchase_price: {property_meta.purchase_price}")
         if "year_built" in package.manual_overrides:
             property_meta.year_built = int(package.manual_overrides["year_built"])
+            logger.info(f"Applied manual override for year_built: {property_meta.year_built}")
+        if "current_loan_balance" in package.manual_overrides:
+            property_meta.current_loan_balance = float(package.manual_overrides["current_loan_balance"])
+            logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
     
     rent_roll: List[RentRollItem] = []
     historical_expenses: List[StandardizedExpense] = []
@@ -1123,6 +1247,45 @@ async def get_deal_analysis(package_id: str):
         )
     
     return analysis_data
+
+
+@router.patch("/packages/{package_id}/rename")
+async def rename_deal_package(package_id: str, new_name: str):
+    """
+    Rename a deal package.
+    
+    Args:
+        package_id: Package identifier
+        new_name: New property name
+    
+    Returns:
+        Updated package information
+    """
+    # Get the package
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+    
+    # Update the property name
+    package.property_name = new_name
+    package.updated_at = datetime.utcnow().isoformat()
+    
+    # Save changes
+    deal_packages_cache[package_id] = package
+    package_dict = package.model_dump()
+    await storage_service.save_deal_package(package_dict)
+    
+    logger.info(f"Renamed package {package_id} to '{new_name}'")
+    
+    return {
+        "message": "Package renamed successfully",
+        "package_id": package_id,
+        "property_name": new_name
+    }
 
 
 @router.delete("/packages/{package_id}")

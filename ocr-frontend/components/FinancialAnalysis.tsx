@@ -46,7 +46,7 @@ export default function FinancialAnalysis({ documentId }: FinancialAnalysisProps
         <button
           onClick={handleStartAnalysis}
           disabled={isLoading}
-          className="inline-flex items-center px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+          className="inline-flex items-center px-6 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[#FF5E00] hover:bg-[#E65400] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00 disabled:opacity-50"
         >
           {isLoading ? <LoadingSpinner size="sm" /> : 'Run Analysis'}
         </button>

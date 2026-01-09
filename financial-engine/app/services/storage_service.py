@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 # In-memory storage for when GCP is not configured
 _memory_storage: Dict[str, dict] = {}
-import logging
+
+# Cache for package list to avoid repeated GCP calls
+_package_list_cache: Optional[tuple[List[dict], datetime]] = None
+_CACHE_TTL_SECONDS = 60  # Cache for 60 seconds
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,8 @@ class StorageService:
         Returns:
             True if saved successfully
         """
+        global _package_list_cache
+        
         package_id = package_data.get("package_id")
         if not package_id:
             logger.error("package_id is required")
@@ -149,6 +154,9 @@ class StorageService:
             blob_path = self._get_package_metadata_path(package_id)
             blob = self.bucket.blob(blob_path)
             blob.upload_from_string(json_data, content_type="application/json")
+            
+            # Invalidate cache since we modified the package list
+            _package_list_cache = None
             
             logger.info(f"Saved deal package metadata: {package_id}")
             return True
@@ -253,42 +261,99 @@ class StorageService:
             logger.error(f"Failed to retrieve deal package: {str(e)}")
             return None
     
-    async def list_deal_packages(self) -> List[dict]:
+    async def list_deal_packages(self, limit: Optional[int] = None, offset: int = 0, force_refresh: bool = False) -> tuple[List[dict], int]:
         """
-        List all deal packages from GCP Cloud Storage.
+        List deal packages from GCP Cloud Storage with pagination support and caching.
         
+        Args:
+            limit: Maximum number of packages to return (None = all)
+            offset: Number of packages to skip
+            force_refresh: Force refresh of cache
+            
         Returns:
-            List of package metadata dictionaries
+            Tuple of (packages list, total count)
         """
+        global _package_list_cache
+        
         if not self.use_gcp:
             # Filter out analysis results (keys ending with _analysis)
             packages = [
                 pkg for key, pkg in _memory_storage.items()
                 if not key.endswith('_analysis') and isinstance(pkg, dict) and 'package_id' in pkg
             ]
-            return packages
+            # Sort by created_at (newest first)
+            packages.sort(key=lambda p: p.get('created_at', ''), reverse=True)
+            total = len(packages)
+            
+            # Apply pagination
+            if limit is not None:
+                packages = packages[offset:offset + limit]
+            
+            return packages, total
         
         try:
-            # List all metadata files
-            blobs = self.bucket.list_blobs(prefix="deal-packages/")
+            # Check if cache is valid
+            cache_valid = False
+            if _package_list_cache is not None and not force_refresh:
+                cached_list, cache_time = _package_list_cache
+                age = (datetime.utcnow() - cache_time).total_seconds()
+                if age < _CACHE_TTL_SECONDS:
+                    cache_valid = True
+                    package_list = cached_list
+                    logger.debug(f"Using cached package list (age: {age:.1f}s)")
+            
+            if not cache_valid:
+                # List all metadata files - only collect blob references (lightweight)
+                logger.debug("Refreshing package list cache from GCP...")
+                blobs = self.bucket.list_blobs(prefix="deal-packages/")
+                
+                # Collect package metadata with timestamps (lightweight - no downloads yet)
+                package_list = []
+                
+                for blob in blobs:
+                    if blob.name.endswith("/metadata.json"):
+                        try:
+                            # Only store blob reference and timestamp (no download)
+                            package_list.append({
+                                'blob': blob,
+                                'updated': blob.updated  # GCP blob metadata timestamp
+                            })
+                        except Exception as e:
+                            logger.error(f"Error processing blob {blob.name}: {str(e)}")
+                            continue
+                
+                # Sort by update time (newest first) using GCP metadata
+                package_list.sort(key=lambda x: x['updated'], reverse=True)
+                
+                # Update cache
+                _package_list_cache = (package_list, datetime.utcnow())
+                logger.debug(f"Cached {len(package_list)} package references")
+            
+            total = len(package_list)
+            
+            # Apply pagination at the blob level BEFORE downloading
+            if limit is not None:
+                paginated_list = package_list[offset:offset + limit]
+            else:
+                paginated_list = package_list[offset:]
+            
+            # Now download ONLY the packages we need for this page
             packages = []
+            for item in paginated_list:
+                try:
+                    json_data = item['blob'].download_as_text()
+                    package_data = json.loads(json_data)
+                    packages.append(package_data)
+                except Exception as e:
+                    logger.error(f"Error loading package from {item['blob'].name}: {str(e)}")
+                    continue
             
-            for blob in blobs:
-                if blob.name.endswith("/metadata.json"):
-                    try:
-                        json_data = blob.download_as_text()
-                        package_data = json.loads(json_data)
-                        packages.append(package_data)
-                    except Exception as e:
-                        logger.error(f"Error loading package from {blob.name}: {str(e)}")
-                        continue
-            
-            logger.info(f"Listed {len(packages)} deal packages")
-            return packages
+            logger.info(f"Returned {len(packages)} of {total} deal packages (limit={limit}, offset={offset})")
+            return packages, total
             
         except Exception as e:
             logger.error(f"Failed to list deal packages: {str(e)}", exc_info=True)
-            return []
+            return [], 0
     
     async def delete_deal_package(self, package_id: str) -> bool:
         """

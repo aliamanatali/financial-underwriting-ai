@@ -1,147 +1,435 @@
 "use client";
 
-import Link from "next/link";
+import { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import LoadingSpinner from "@/components/LoadingSpinner";
+import LoginPage from "@/components/LoginPage";
+import Sidebar from "@/components/Sidebar";
+import MarkdownRenderer from "@/components/MarkdownRenderer";
+import {
+  FireIcon,
+  PaperclipIcon,
+  ArrowUpIcon,
+  PlusIcon,
+  MoreHorizontalIcon,
+  MicrophoneIcon,
+  ChevronDownIcon,
+} from "@/assets/icons";
 
-export default function Home() {
+// Chat Message Interface
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+// Dashboard Component
+function DashboardPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+
+  // Chat state
+  const [isChatMode, setIsChatMode] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputValue, setInputValue] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop =
+        chatContainerRef.current.scrollHeight;
+    }
+  }, [messages, isTyping]);
+
+  const toggleSidebar = () => {
+    setSidebarExpanded(!sidebarExpanded);
+  };
+
+  // Get first name
+  const getFirstName = () => {
+    if (!user?.name) return "Analyst";
+    return user.name.split(" ")[0];
+  };
+
+  // Handle sending a message
+  const handleSendMessage = async () => {
+    if (!inputValue.trim()) return;
+
+    const userMessage = inputValue.trim();
+    setInputValue("");
+
+    const newUserMessage: ChatMessage = { role: "user", content: userMessage };
+    setMessages((prev) => [...prev, newUserMessage]);
+
+    setIsChatMode(true);
+    setIsTyping(true);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: messages,
+          prompt: userMessage,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to get response");
+      }
+
+      const data = await response.json();
+
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: data.response,
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      const errorMessage: ChatMessage = {
+        role: "assistant",
+        content:
+          "I apologize, but I encountered an error processing your request. Please try again.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // Handle key press in input
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // Start new chat
+  const handleNewChat = () => {
+    setMessages([]);
+    setIsChatMode(false);
+    setInputValue("");
+  };
+
+  // Chat View
+  if (isChatMode) {
+    return (
+      <div
+        className={`min-h-screen overflow-hidden selection:bg-[#FF5E00] selection:text-white relative bg-white text-neutral-900 flex ${
+          sidebarExpanded ? "has-expanded-sidebar" : ""
+        }`}
+      >
+        {/* Sidebar */}
+        <Sidebar
+          sidebarExpanded={sidebarExpanded}
+          toggleSidebar={toggleSidebar}
+          isChatMode={isChatMode}
+          messages={messages}
+          onNewChat={handleNewChat}
+        />
+
+        {/* Main Chat Interface */}
+        <main
+          className={`flex-1 flex flex-col h-screen relative bg-white transition-all duration-400 ${
+            sidebarExpanded ? "ml-64" : "ml-[72px]"
+          }`}
+          id="main-content"
+        >
+          {/* Chat Header */}
+          <header className="h-14 flex items-center justify-between px-3 sticky top-0 bg-white/95 backdrop-blur-sm z-30 border-b border-neutral-100">
+            <div className="flex items-center">
+              <button className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-neutral-100 transition-colors text-lg text-neutral-500 font-medium group">
+                <span className="text-neutral-900 font-medium tracking-tight">
+                  Financial AI
+                </span>
+                <span className="text-neutral-400 font-normal text-sm">
+                  Gemini 2.0 Flash
+                </span>
+                <ChevronDownIcon className="w-4 h-4 text-neutral-400 group-hover:text-neutral-600 transition-colors mt-0.5" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                onClick={handleNewChat}
+                className="p-2 rounded-lg hover:bg-neutral-100 text-neutral-500 transition-colors"
+                title="New Chat"
+              >
+                <PlusIcon className="w-5 h-5" />
+              </button>
+              <button className="p-2 rounded-lg hover:bg-neutral-100 text-neutral-500 transition-colors">
+                <MoreHorizontalIcon className="w-5 h-5" />
+              </button>
+            </div>
+          </header>
+
+          {/* Chat Stream */}
+          <div
+            ref={chatContainerRef}
+            className="flex-1 overflow-y-auto w-full relative z-0 pb-36"
+            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          >
+            <div className="max-w-[768px] mx-auto px-4 md:px-6 py-10 flex flex-col gap-10">
+              {messages.map((message, index) => (
+                <div
+                  key={index}
+                  className={`flex ${
+                    message.role === "user" ? "justify-end" : "gap-4"
+                  } w-full`}
+                >
+                  {message.role === "user" ? (
+                    <div className="bg-[#f4f4f4] text-neutral-900 px-5 py-2.5 rounded-[24px] max-w-[70%] text-base leading-relaxed">
+                      {message.content}
+                    </div>
+                  ) : (
+                    <div className="flex-1 text-base text-neutral-900 leading-7 font-normal">
+                      <MarkdownRenderer content={message.content} />
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Typing indicator */}
+              {isTyping && (
+                <div className="flex gap-4 w-full">
+                  <div className="flex items-center gap-1 text-neutral-400">
+                    <div
+                      className="w-2 h-2 rounded-full bg-neutral-400 animate-bounce"
+                      style={{ animationDelay: "0ms" }}
+                    ></div>
+                    <div
+                      className="w-2 h-2 rounded-full bg-neutral-400 animate-bounce"
+                      style={{ animationDelay: "150ms" }}
+                    ></div>
+                    <div
+                      className="w-2 h-2 rounded-full bg-neutral-400 animate-bounce"
+                      style={{ animationDelay: "300ms" }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Input Area (Fixed Bottom) */}
+          <div className="absolute bottom-0 left-0 w-full bg-gradient-to-t from-white via-white to-transparent pt-10 pb-5 z-20">
+            <div className="max-w-[768px] mx-auto px-4 md:px-4">
+              <div className="relative flex items-center bg-[#f4f4f4] rounded-[26px] p-2 pr-2 shadow-sm border border-transparent focus-within:border-neutral-300 transition-all">
+                <button className="p-2 rounded-full text-neutral-500 hover:bg-neutral-200 transition-colors">
+                  <PlusIcon className="w-6 h-6" />
+                </button>
+                <input
+                  type="text"
+                  placeholder="Ask about financial underwriting..."
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-1 bg-transparent border-none outline-none text-base text-neutral-900 placeholder:text-neutral-500 h-10 px-2 font-normal"
+                />
+                <div className="flex items-center gap-1">
+                  <button className="p-2 text-neutral-500 hover:text-neutral-900 transition-colors">
+                    <MicrophoneIcon className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!inputValue.trim() || isTyping}
+                    className="flex hover:bg-neutral-800 transition-colors text-white bg-black w-8 h-8 rounded-full items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowUpIcon className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-center mt-2 mb-1">
+                <p className="text-xs text-neutral-500 font-normal">
+                  Financial AI can make mistakes. Verify important information.
+                </p>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Dashboard View (Initial State)
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
-        {/* Navigation - Professional & Minimal */}
-        <nav className="bg-white border-b border-slate-200 sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between h-16">
-                    <div className="flex items-center">
-                        <div className="flex-shrink-0 flex items-center">
-                             <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center mr-2">
-                                <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                                </svg>
-                             </div>
-                             <span className="font-bold text-xl tracking-tight text-slate-900">Financial Underwriting <span className="text-blue-600">AI</span></span>
-                        </div>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                        <a href="#how-it-works" className="text-sm font-medium text-slate-500 hover:text-slate-900">How it Works</a>
-                        <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-900">Workspace</Link>
-                        <button className="bg-slate-900 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-slate-800 transition-colors">
-                            Contact Sales
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </nav>
+    <div
+      className={`min-h-screen overflow-x-hidden selection:bg-[#FF5E00] selection:text-white relative bg-white text-neutral-900 flex ${
+        sidebarExpanded ? "has-expanded-sidebar" : ""
+      }`}
+    >
+      {/* Background Animation */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-white"></div>
+        <div className="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[1000px] h-[600px] rounded-[100%] bg-[radial-gradient(circle,rgba(255,94,0,0.05)_0%,rgba(255,255,255,0)_60%)] blur-[80px]"></div>
+      </div>
 
-        {/* Hero Section */}
-        <div className="relative bg-white overflow-hidden">
-            <div className="max-w-7xl mx-auto">
-                <div className="relative z-10 pb-8 bg-white sm:pb-16 md:pb-20 lg:max-w-2xl lg:w-full lg:pb-28 xl:pb-32">
-                    <svg
-                        className="hidden lg:block absolute right-0 inset-y-0 h-full w-48 text-white transform translate-x-1/2"
-                        fill="currentColor"
-                        viewBox="0 0 100 100"
-                        preserveAspectRatio="none"
-                        aria-hidden="true"
+      {/* Sidebar */}
+      <Sidebar
+        sidebarExpanded={sidebarExpanded}
+        toggleSidebar={toggleSidebar}
+        isChatMode={isChatMode}
+        messages={messages}
+        onNewChat={handleNewChat}
+      />
+
+      {/* Main Content */}
+      <main
+        className={`flex-1 flex flex-col min-h-screen lg:px-12 pt-8 pr-6 pb-6 pl-6 relative items-center justify-center transition-all duration-400 ${
+          sidebarExpanded ? "ml-64" : "ml-[72px]"
+        }`}
+        id="main-content"
+      >
+        <div className="flex flex-col w-full max-w-4xl mr-auto ml-auto items-center">
+          {/* Badge */}
+          <div
+            className="inline-flex gap-2.5 transition-colors cursor-default border rounded-full mb-6 pt-1.5 pr-3 pb-1.5 pl-3 backdrop-blur-md items-center cursor-pointer hover:bg-black/[0.05] border-black/10 group"
+            role="button"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF5E00] opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#FF5E00]"></span>
+            </span>
+            <span className="text-[11px] uppercase group-hover:text-neutral-800 transition-colors text-neutral-500 tracking-widest font-mono">
+              Valiance Capital AI Hub
+            </span>
+          </div>
+
+          <h1 className="md:text-4xl lg:text-5xl text-3xl font-medium text-neutral-900 tracking-tight text-center mb-3">
+            Good Afternoon,
+            <span className="italic text-[#FF5E00] font-serif pr-1">
+              {" "}
+              {getFirstName()}
+            </span>
+          </h1>
+          <p className="md:text-2xl leading-relaxed text-xl font-light text-neutral-500 tracking-tight text-center max-w-2xl mb-8">
+            How can I help with your underwriting today?
+          </p>
+
+          {/* Large Input Box with Shiny Animation */}
+          <div className="w-full relative perspective-[1000px] mb-8">
+            <div className="absolute -inset-4 bg-[#FF5E00] blur-3xl opacity-5 rounded-full pointer-events-none"></div>
+
+            <div className="shiny-input-wrapper w-full p-[1px] shadow-2xl shadow-black/[0.03]">
+              <div className="md:p-6 flex flex-col min-h-[140px] transition-all duration-300 bg-white/95 w-full h-full rounded-[15px] pt-4 pr-4 pb-4 pl-4 relative backdrop-blur-2xl">
+                <textarea
+                  className="border-none outline-none resize-none flex-grow font-light bg-transparent w-full h-full mb-4 focus:ring-0 placeholder:text-neutral-300 text-neutral-900 leading-relaxed text-sm"
+                  placeholder="Ask about cap rates, NOI calculations, deal analysis, or any financial underwriting question..."
+                  spellCheck="false"
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                ></textarea>
+
+                <div className="mt-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button className="h-8 px-3 gap-2 flex items-center justify-center rounded-lg border transition-all border-neutral-200 bg-neutral-50 hover:bg-neutral-100 text-neutral-500 hover:text-neutral-900 text-xs font-medium">
+                      <PaperclipIcon className="w-3.5 h-3.5 stroke-[2]" />
+                      Attach
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputValue.trim()}
+                      className="w-8 h-8 flex items-center justify-center bg-neutral-900 text-white rounded-lg hover:bg-neutral-800 transition-colors shadow-lg shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        <polygon points="50,0 100,0 50,100 0,100" />
-                    </svg>
-
-                    <main className="mt-10 mx-auto max-w-7xl px-4 sm:mt-12 sm:px-6 md:mt-16 lg:mt-20 lg:px-8 xl:mt-28">
-                        <div className="sm:text-center lg:text-left">
-                            <h1 className="text-4xl tracking-tight font-extrabold text-slate-900 sm:text-5xl md:text-6xl">
-                                <span className="block xl:inline">Automated Financial</span>{' '}
-                                <span className="block text-blue-600 xl:inline">Underwriting</span>
-                            </h1>
-                            <p className="mt-3 text-base text-slate-500 sm:mt-5 sm:text-lg sm:max-w-xl sm:mx-auto md:mt-5 md:text-xl lg:mx-0">
-                                Accelerate your deal flow. Upload messy OMs, Rent Rolls, and T12s. We extract, normalize, and analyze the data instantly.
-                            </p>
-                            <div className="mt-5 sm:mt-8 sm:flex sm:justify-center lg:justify-start">
-                                <div className="rounded-md shadow">
-                                    <Link
-                                        href="/dashboard"
-                                        className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 md:py-4 md:text-lg"
-                                    >
-                                        Start Analysis
-                                    </Link>
-                                </div>
-                                <div className="mt-3 sm:mt-0 sm:ml-3">
-                                    <a
-                                        href="/template.zip"
-                                        download="Correct_Inputs_Template.zip"
-                                        className="w-full flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 md:py-4 md:text-lg"
-                                    >
-                                        Download Template
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    </main>
+                      <ArrowUpIcon className="w-4 h-4 stroke-[2]" />
+                    </button>
+                  </div>
                 </div>
+              </div>
             </div>
-            <div className="lg:absolute lg:inset-y-0 lg:right-0 lg:w-1/2 bg-slate-50 flex items-center justify-center">
-                 {/* Abstract visual or placeholder for hero image */}
-                 <div className="w-full h-full object-cover flex items-center justify-center text-slate-200 bg-slate-100">
-                    <svg className="w-64 h-64 opacity-20" fill="currentColor" viewBox="0 0 20 20">
-                         <path fillRule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm2 10a1 1 0 10-2 0v3a1 1 0 102 0v-3zm2-3a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zm4-1a1 1 0 10-2 0v7a1 1 0 102 0V8z" clipRule="evenodd" />
-                    </svg>
-                 </div>
+          </div>
+
+          {/* Recent Projects / Quick Actions */}
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 delay-200 w-full">
+            <h3 className="text-[10px] font-mono uppercase tracking-widest text-neutral-400 mb-4 ml-1">
+              Recent Projects
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Card 1: Financial Underwriting */}
+              <button
+                onClick={() => router.push("/dashboard")}
+                className="group flex flex-col justify-between text-left p-5 h-36 bg-neutral-50/50 hover:bg-white border border-neutral-100 hover:border-neutral-200 rounded-2xl hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] transition-all duration-300"
+              >
+                <div className="flex flex-col gap-0.5">
+                  <span className="group-hover:text-neutral-900 leading-tight text-sm font-medium text-neutral-600">
+                    Financial Underwriting
+                  </span>
+                  <span className="text-xs text-neutral-400">
+                    Accelerate your deal flow.
+                  </span>
+                </div>
+                <div className="self-start p-2 rounded-lg bg-white border border-neutral-100 text-neutral-400 group-hover:text-[#FF5E00] group-hover:border-[#FF5E00]/10 transition-colors">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="w-5 h-5 stroke-[1.5]"
+                  >
+                    <line x1="3" x2="21" y1="22" y2="22"></line>
+                    <line x1="6" x2="6" y1="18" y2="11"></line>
+                    <line x1="10" x2="10" y1="18" y2="11"></line>
+                    <line x1="14" x2="14" y1="18" y2="11"></line>
+                    <line x1="18" x2="18" y1="18" y2="11"></line>
+                    <polygon points="12 2 20 7 4 7"></polygon>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Card 2: Create a new app (Dummy) */}
+              <button className="group flex flex-col justify-between text-left p-5 h-36 bg-transparent hover:bg-neutral-50 border border-dashed border-neutral-300 hover:border-neutral-400 rounded-2xl transition-all duration-300">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-neutral-500 group-hover:text-neutral-900 leading-tight">
+                    Create a new app
+                  </span>
+                  <span className="text-xs text-neutral-400">
+                    Start a project from scratch
+                  </span>
+                </div>
+                <div className="self-start p-2 rounded-lg bg-neutral-50 border border-neutral-200 text-neutral-400 group-hover:text-[#FF5E00] group-hover:bg-[#FF5E00]/5 group-hover:border-[#FF5E00]/20 transition-colors">
+                  <PlusIcon className="w-5 h-5 stroke-[1.5]" />
+                </div>
+              </button>
             </div>
+          </div>
         </div>
-
-        {/* User Journey Section */}
-        <section id="how-it-works" className="py-16 bg-white border-t border-slate-100">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="text-center mb-12">
-                    <h2 className="text-3xl font-extrabold text-slate-900">How It Works</h2>
-                    <p className="mt-4 text-lg text-slate-500">From raw documents to actionable insights in three simple steps.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    {/* Step 1 */}
-                    <div className="relative p-6 bg-slate-50 rounded-xl border border-slate-100 hover:shadow-lg transition-shadow group">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center text-xl font-bold shadow-md group-hover:bg-blue-700 transition-colors">1</div>
-                        <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 text-blue-600">
-                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                        </div>
-                        <h3 className="text-xl font-bold text-slate-900 mb-2">Upload Package</h3>
-                        <p className="text-slate-600">Simply drag and drop your deal folder containing the OM, Rent Roll, and Financial statements (T12). We support PDF and Excel formats.</p>
-                    </div>
-
-                    {/* Step 2 */}
-                    <div className="relative p-6 bg-slate-50 rounded-xl border border-slate-100 hover:shadow-lg transition-shadow group">
-                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center text-xl font-bold shadow-md group-hover:bg-blue-700 transition-colors">2</div>
-                        <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 text-blue-600">
-                            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
-                        </div>
-                        <h3 className="text-xl font-bold text-slate-900 mb-2">AI Extraction</h3>
-                        <p className="text-slate-600">Our advanced OCR and Financial Engine identify, extract, and normalize data, handling messy scans and complex tables with ease.</p>
-                    </div>
-
-                    {/* Step 3 */}
-                    <div className="relative p-6 bg-slate-50 rounded-xl border border-slate-100 hover:shadow-lg transition-shadow group">
-                         <div className="absolute top-0 right-0 -mt-4 -mr-4 w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center text-xl font-bold shadow-md group-hover:bg-blue-700 transition-colors">3</div>
-                        <div className="h-12 w-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4 text-blue-600">
-                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                        </div>
-                        <h3 className="text-xl font-bold text-slate-900 mb-2">Verify & Analyze</h3>
-                        <p className="text-slate-600">Review the extracted data with side-by-side source verification, then generate comprehensive underwriting models instantly.</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        {/* Footer */}
-        <footer className="bg-white border-t border-slate-200 py-12">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center">
-                    <div>
-                         <span className="font-bold text-xl text-slate-900">Financial Underwriting <span className="text-blue-600">AI</span></span>
-                         <p className="mt-2 text-sm text-slate-500">Intelligent automation for commercial real estate.</p>
-                    </div>
-                    <div className="text-sm text-slate-400">
-                        &copy; 2026 Financial Underwriting AI. All rights reserved.
-                    </div>
-                </div>
-            </div>
-        </footer>
+      </main>
     </div>
   );
+}
+
+// Main Page Component
+export default function Page() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  // Show loading spinner while checking auth state
+  if (isLoading) {
+    return <LoadingSpinner />;
+  }
+
+  // Show Dashboard if authenticated, Login otherwise
+  return isAuthenticated ? <DashboardPage /> : <LoginPage />;
 }

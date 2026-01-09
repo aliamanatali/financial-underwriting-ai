@@ -14,7 +14,7 @@ function DecisionCard({ decision }: { decision: DecisionImpact }) {
         <h4 className="font-bold text-slate-900 text-sm uppercase tracking-wide">
           {decision.metric}
         </h4>
-        <span className="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
+        <span className="bg-#FFE5D9 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
           AI Decision
         </span>
       </div>

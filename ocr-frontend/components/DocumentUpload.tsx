@@ -129,7 +129,7 @@ export default function DocumentUpload({
           relative border-2 border-dashed rounded-lg p-8 text-center transition-colors
           ${
             isDragging
-              ? "border-blue-500 bg-blue-50"
+              ? "border-#FFF5F00 bg-#FFF5F0"
               : "border-gray-300 bg-white"
           }
           ${
@@ -152,7 +152,7 @@ export default function DocumentUpload({
                 <>
                   <div className="w-full bg-gray-200 rounded-full h-2.5">
                     <div
-                      className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                      className="bg-[#FF5E00] h-2.5 rounded-full transition-all duration-300"
                       style={{ width: `${uploadProgress.percentage}%` }}
                     />
                   </div>
@@ -184,7 +184,7 @@ export default function DocumentUpload({
             <div className="mt-4">
               <label
                 htmlFor="file-upload"
-                className="cursor-pointer inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                className="cursor-pointer inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#FF5E00] hover:bg-[#E65400] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00"
               >
                 <span>Choose a PDF file</span>
                 <input

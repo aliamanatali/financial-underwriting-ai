@@ -620,15 +620,23 @@ class ExplainabilityService:
         diligence_note = "None"
         if year_built < 1980:
             diligence_note = f"Structural Inspection Required (Year Built {year_built})"
+        
+        # Dynamic near_campus determination
+        # TODO: Integrate with geocoding API to determine proximity to universities
+        address = self.analysis.property_meta.address or ""
+        near_campus = self._determine_campus_proximity(address)
+        
+        # Dynamic primary risks based on deal characteristics
+        primary_risks = self._identify_primary_risks()
             
         checklist = InvestmentChecklist(
             is_multifamily="Yes" if total_units >= 5 else "No (1-4 Units)",
-            near_campus="Unknown (Requires Map Analysis)",
-            business_plan=f"Capture ${ltl:,.0f} Loss-to-Lease",
+            near_campus=near_campus,
+            business_plan=f"Capture ${ltl:,.0f} Loss-to-Lease" if ltl > 0 else "Stabilized Asset Hold",
             rents_below_market=rents_status,
             is_mismanaged=mismanaged_status,
             diligence_issues=diligence_note,
-            primary_risks="Interest Rate Volatility, Execution Risk",
+            primary_risks=primary_risks,
             price_per_unit_analysis=f"${price_per_unit:,.0f}/unit"
         )
 
@@ -637,3 +645,105 @@ class ExplainabilityService:
             key_decisions=decisions,
             investment_checklist=checklist
         )
+    
+    def _determine_campus_proximity(self, address: str) -> str:
+        """
+        Determines if the property is near a university campus.
+        Currently uses keyword matching; can be enhanced with geocoding API.
+        
+        Args:
+            address: Property address string
+            
+        Returns:
+            String indicating campus proximity status
+        """
+        if not address:
+            return "Unknown (Address Not Provided)"
+        
+        # Common university-related keywords
+        university_keywords = [
+            'university', 'college', 'campus', 'state', 'tech',
+            'berkeley', 'stanford', 'ucla', 'usc', 'caltech',
+            'mit', 'harvard', 'yale', 'princeton', 'columbia'
+        ]
+        
+        address_lower = address.lower()
+        
+        # Check for university keywords in address
+        for keyword in university_keywords:
+            if keyword in address_lower:
+                return f"Likely (Address contains '{keyword}')"
+        
+        # TODO: Integrate with Google Maps API or similar to calculate actual distance
+        # Example: Use geocoding to get lat/lng, then calculate distance to nearest universities
+        
+        return "Unknown (Requires Geocoding Analysis)"
+    
+    def _identify_primary_risks(self) -> str:
+        """
+        Dynamically identifies primary risks based on deal characteristics.
+        
+        Returns:
+            Comma-separated string of identified risks
+        """
+        risks = []
+        
+        # 1. Interest Rate Risk (based on loan structure)
+        interest_rate = self.params.sofr_rate + self.params.bridge_spread
+        if interest_rate > 0.06:  # 6%+
+            risks.append("High Interest Rate Risk")
+        elif self.params.bridge_spread > 0:  # Bridge loan
+            risks.append("Interest Rate Volatility")
+        
+        # 2. Execution Risk (based on loss-to-lease and property condition)
+        ltl = self.analysis.loss_to_lease or 0
+        gpr = self.analysis.gross_potential_rent or 1
+        ltl_pct = ltl / gpr if gpr > 0 else 0
+        
+        if ltl_pct > 0.15:  # >15% below market
+            risks.append("Execution Risk (Significant Rent-Up Required)")
+        elif ltl_pct > 0.05:
+            risks.append("Moderate Execution Risk")
+        
+        # 3. Property Age Risk
+        year_built = self.analysis.property_meta.year_built or 0
+        current_year = 2026  # Could use datetime.now().year
+        property_age = current_year - year_built if year_built > 0 else 0
+        
+        if property_age > 50:
+            risks.append("Deferred Maintenance Risk")
+        elif property_age > 30:
+            risks.append("Capital Expenditure Risk")
+        
+        # 4. Leverage Risk (based on DSCR and LTV)
+        dscr = self.analysis.dscr or 0
+        ltv = self.params.ltv
+        
+        if dscr < 1.15:
+            risks.append("Tight Cash Flow / Default Risk")
+        
+        if ltv > 0.75:
+            risks.append("High Leverage Risk")
+        
+        # 5. Market Risk (based on cap rate spread)
+        entry_cap = self.analysis.cap_rate or 0
+        exit_cap = self.params.exit_cap_rate
+        
+        if entry_cap > 0 and exit_cap > 0:
+            cap_compression = entry_cap - exit_cap
+            if cap_compression < 0:  # Assuming cap rate expansion
+                risks.append("Market Valuation Risk")
+        
+        # 6. Operational Risk (based on expense ratio)
+        egi = self.analysis.effective_gross_income or 1
+        opex = self.analysis.pro_forma_expenses or 0
+        exp_ratio = opex / egi if egi > 0 else 0
+        
+        if exp_ratio > 0.55:
+            risks.append("High Operating Expense Risk")
+        
+        # Return formatted risk string
+        if not risks:
+            return "Standard Market Risks"
+        
+        return ", ".join(risks)

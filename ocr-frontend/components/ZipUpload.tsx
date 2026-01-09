@@ -154,10 +154,7 @@ export default function ZipUpload({
         onUploadSuccess(data.package_id);
       }
 
-      // Redirect to verification page after 2 seconds
-      setTimeout(() => {
-        router.push(`/verification/${data.package_id}`);
-      }, 2000);
+      // Don't redirect - let user start normalization from here
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Upload failed";
       // setError(errorMessage); // Don't show inline error if showing modal
@@ -207,6 +204,12 @@ export default function ZipUpload({
     }
   };
 
+  const handleStartNormalization = () => {
+    if (!dealPackage) return;
+    // Redirect to processing page which will handle normalization
+    router.push(`/processing/${dealPackage.package_id}`);
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto">
       <div
@@ -214,7 +217,7 @@ export default function ZipUpload({
           relative border border-dashed rounded-xl p-16 text-center transition-all duration-200 ease-in-out
           ${
             isDragging
-              ? "border-blue-500 bg-blue-50/50 shadow-inner"
+              ? "border-#FFF5F00 bg-#FFF5F0/50 shadow-inner"
               : "border-slate-300 bg-slate-50/50 hover:bg-slate-50 hover:border-slate-400"
           }
           ${
@@ -230,7 +233,7 @@ export default function ZipUpload({
       >
         {isUploading ? (
           <div className="space-y-4">
-            <LoadingSpinner size="lg" className="mx-auto" />
+            <div className="mx-auto w-16 h-16 border-4 border-gray-200 border-t-[#FF5E00] rounded-full animate-spin"></div>
             <div className="space-y-2">
               <p className="text-gray-700 font-medium text-lg">
                 Processing ZIP file...
@@ -271,7 +274,7 @@ export default function ZipUpload({
               
               <label
                 htmlFor="zip-upload"
-                className="cursor-pointer inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-full text-white bg-blue-600 hover:bg-blue-700 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all transform hover:-translate-y-0.5"
+                className="cursor-pointer inline-flex items-center px-8 py-4 border border-transparent text-lg font-medium rounded-full text-white bg-[#FF5E00] hover:bg-[#E65400] hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00 transition-all transform hover:-translate-y-0.5"
               >
                 <svg
                   className="w-5 h-5 mr-2.5"
@@ -309,7 +312,7 @@ export default function ZipUpload({
               </h4>
               {isLoadingTypes ? (
                 <div className="flex items-center justify-center py-4">
-                  <LoadingSpinner size="sm" />
+                  <div className="w-5 h-5 border-2 border-gray-300 border-t-[#FF5E00] rounded-full animate-spin"></div>
                   <span className="ml-2 text-xs text-gray-500">Loading structure...</span>
                 </div>
               ) : documentTypes.length > 0 ? (
@@ -348,7 +351,7 @@ export default function ZipUpload({
         )}
       </div>
 
-      {/* Success Message with Package Details */}
+      {/* Success Message with Package Details and Normalization */}
       {success && dealPackage && (
         <div className="mt-4 p-6 bg-green-50 border border-green-200 rounded-lg">
           <div className="flex items-start">
@@ -376,9 +379,27 @@ export default function ZipUpload({
                   ))}
                 </ul>
               </div>
-              <p className="mt-3 text-xs text-green-600">
-                Redirecting to verification page...
-              </p>
+              <div className="mt-4 pt-4 border-t border-green-200">
+                <button
+                  onClick={handleStartNormalization}
+                  className="w-full px-6 py-3 bg-[#FF5E00] text-white rounded-lg font-medium hover:bg-[#E65400] transition-colors shadow-sm flex items-center justify-center gap-2"
+                >
+                  <svg
+                    className="w-5 h-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
+                  </svg>
+                  Start Normalization
+                </button>
+              </div>
             </div>
           </div>
         </div>

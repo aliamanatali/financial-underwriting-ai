@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import DataVerificationTable from "@/components/DataVerificationTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
-import WarningModal from "@/components/WarningModal";
+import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
@@ -37,24 +36,21 @@ export default function VerificationPage() {
   const router = useRouter();
   const packageId = params.packageId as string;
 
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
-  const [normalizedItems, setNormalizedItems] = useState<NormalizedDataItem[]>(
-    []
-  );
+  const [normalizedItems, setNormalizedItems] = useState<NormalizedDataItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [normalizing, setNormalizing] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
-  
-  // Warning Modal State
-  const [isWarningOpen, setIsWarningOpen] = useState(false);
-  const [warningTitle, setWarningTitle] = useState("");
-  const [warningMessage, setWarningMessage] = useState("");
+  const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState<string>("");
+  const [commentaryExpanded, setCommentaryExpanded] = useState(false);
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
+  const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
-  // Fetch deal package details
+  // Fetch deal package details and auto-start normalization if needed
   useEffect(() => {
     const fetchPackage = async () => {
       try {
@@ -69,9 +65,12 @@ export default function VerificationPage() {
         const data = await response.json();
         setDealPackage(data);
         
-        // If normalized data is persisted in package (new flow), load it
+        // If normalized data is persisted in package, load it
         if (data.normalized_data && data.normalized_data.length > 0) {
-            setNormalizedItems(data.normalized_data);
+          setNormalizedItems(data.normalized_data);
+        } else {
+          // Auto-start normalization if no normalized data exists
+          handleNormalize();
         }
         
       } catch (err) {
@@ -94,7 +93,7 @@ export default function VerificationPage() {
 
     // Start progress stream
     const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
-        setProgress(progressUpdate);
+      setProgress(progressUpdate);
     });
 
     try {
@@ -110,20 +109,13 @@ export default function VerificationPage() {
       }
 
       const data = await response.json();
-
-      if (!data.normalized_items || data.normalized_items.length === 0) {
-        setWarningTitle("Normalization Failed");
-        setWarningMessage("No financial data could be extracted from the documents. Please ensure the files are valid and contain readable financial information.");
-        setIsWarningOpen(true);
-      }
-
       setNormalizedItems(data.normalized_items);
       
       // Also refresh deal package to get updated status
       const pkgResponse = await fetch(`${baseUrl}/api/v1/multi-document/packages/${packageId}`);
       if (pkgResponse.ok) {
-          const pkgData = await pkgResponse.json();
-          setDealPackage(pkgData);
+        const pkgData = await pkgResponse.json();
+        setDealPackage(pkgData);
       }
       
     } catch (err) {
@@ -164,16 +156,120 @@ export default function VerificationPage() {
             : item
         )
       );
+      setEditingItem(null);
     } catch (err) {
       console.error("Error verifying item:", err);
     }
   };
 
-  // Verify all items
-  const handleVerifyAll = () => {
-    setNormalizedItems((prev) =>
-      prev.map((item) => ({ ...item, user_verified: true }))
-    );
+  // Edit item category
+  const handleEditItem = (itemId: string, currentCategory: string) => {
+    setEditingItem(itemId);
+    setEditCategory(currentCategory);
+  };
+
+  // Save edited category
+  const handleSaveEdit = (itemId: string) => {
+    handleVerifyItem(itemId, editCategory);
+  };
+
+  // Verify all items using batch endpoint
+  const handleVerifyAll = async () => {
+    const unverifiedItems = normalizedItems.filter(item => !item.user_verified);
+    
+    if (unverifiedItems.length === 0) {
+      return;
+    }
+    
+    try {
+      // Use the new batch verification endpoint
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-items-batch`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            unverifiedItems.map(item => ({
+              item_id: item.id,
+              user_correction: null
+            }))
+          ),
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error("Failed to verify items");
+      }
+      
+      // Update all items in local state at once
+      setNormalizedItems((prev) =>
+        prev.map((item) =>
+          unverifiedItems.some(unverified => unverified.id === item.id)
+            ? { ...item, user_verified: true }
+            : item
+        )
+      );
+    } catch (err) {
+      console.error("Error verifying all items:", err);
+    }
+  };
+
+  // Regenerate financial report with updated categories
+  const handleRegenerateReport = async () => {
+    setRegenerating(true);
+    setError(null);
+    setProgress({ percentage: 0, message: "Regenerating financial report..." });
+
+    // Start progress stream
+    const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
+      setProgress(progressUpdate);
+    });
+
+    try {
+      // Use default deal parameters for regeneration
+      const defaultParams = {
+        growth_rate: 0.03,
+        exit_cap_rate: 0.06,
+        vacancy_rate: 0.03,
+        loan_amount: 5000000,
+        min_unit_count: 15,
+        max_unit_count: 80,
+        max_build_year: 1970,
+        management_fee_rate: 0.04,
+        tax_rate: 0.012,
+        ltv: 0.65,
+        sofr_rate: 0.05,
+        bridge_spread: 0.02,
+        closing_costs: 0.0,
+        renovation_budget: 0.0
+      };
+
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/analyze`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(defaultParams),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to regenerate financial report");
+      }
+
+      // Redirect to analysis page after successful regeneration
+      router.push(`/analysis/${packageId}`);
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Report regeneration failed");
+    } finally {
+      setRegenerating(false);
+      eventSource.close();
+    }
   };
 
   // Proceed to analysis
@@ -181,10 +277,48 @@ export default function VerificationPage() {
     router.push(`/analysis/${packageId}`);
   };
 
+  // Group items by category_group
+  const groupedItems = normalizedItems.reduce((acc, item) => {
+    // Use the category_group enum value for grouping
+    const section = item.category_group || "Other";
+    
+    if (!acc[section]) {
+      acc[section] = [];
+    }
+    acc[section].push(item);
+    return acc;
+  }, {} as Record<string, NormalizedDataItem[]>);
+
+  const getConfidenceColor = (confidence: number) => {
+    // Convert to percentage if needed (0-1 range to 0-100)
+    const percentage = confidence <= 1 ? confidence * 100 : confidence;
+    if (percentage >= 95) return "bg-green-500";
+    if (percentage >= 85) return "bg-amber-500";
+    return "bg-red-500";
+  };
+
+  const getConfidenceTextColor = (confidence: number) => {
+    // Convert to percentage if needed (0-1 range to 0-100)
+    const percentage = confidence <= 1 ? confidence * 100 : confidence;
+    if (percentage >= 95) return "text-green-700";
+    if (percentage >= 85) return "text-amber-700";
+    return "text-red-700";
+  };
+
+  const formatConfidence = (confidence: number) => {
+    // Convert to percentage if needed (0-1 range to 0-100)
+    const percentage = confidence <= 1 ? confidence * 100 : confidence;
+    return Math.round(percentage);
+  };
+
+  const verifiedCount = normalizedItems.filter(item => item.user_verified).length;
+  const totalCount = normalizedItems.length;
+  const verificationPercentage = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner size="lg" />
+        <LoadingSpinner />
       </div>
     );
   }
@@ -197,7 +331,7 @@ export default function VerificationPage() {
           <p className="text-gray-600">{error}</p>
           <button
             onClick={() => router.push("/")}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            className="mt-4 px-4 py-2 bg-neutral-900 text-white rounded-md hover:bg-neutral-800"
           >
             Go Home
           </button>
@@ -206,192 +340,433 @@ export default function VerificationPage() {
     );
   }
 
-  const allVerified =
-    (normalizedItems.length > 0 && normalizedItems.every((item) => item.user_verified)) ||
-    (normalizedItems.length === 0 && dealPackage?.normalization_status === "completed");
-
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <button
-            onClick={() => router.push("/")}
-            className="text-blue-600 hover:text-blue-800 mb-4 flex items-center"
-          >
-            <svg
-              className="w-5 h-5 mr-1"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-            Back to Home
-          </button>
+    <div className="min-h-screen overflow-hidden bg-white text-neutral-900 flex">
+      {/* Sidebar */}
+      <Sidebar
+        sidebarExpanded={sidebarExpanded}
+        toggleSidebar={() => setSidebarExpanded(!sidebarExpanded)}
+      />
 
-          <h1 className="text-3xl font-bold text-gray-900">
-            {dealPackage?.property_name || "Deal Package"}
-          </h1>
-          <p className="text-gray-600 mt-2">
-            Package ID: {packageId}
-          </p>
-        </div>
-
-        {/* Package Summary */}
-        {dealPackage && (
-          <div className="bg-white rounded-lg shadow p-6 mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              Document Summary
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(dealPackage.documents).map(([type, docs]) => (
-                <div
-                  key={type}
-                  className="bg-gray-50 rounded-lg p-4 text-center"
-                >
-                  <div className="text-2xl font-bold text-blue-600">
-                    {docs.length}
-                  </div>
-                  <div className="text-sm text-gray-600 mt-1">{type}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-
-        {/* Normalization Section */}
-        {normalizedItems.length === 0 && !allVerified ? (
-          <div className="bg-white rounded-lg shadow p-12 text-center">
-            <div className="max-w-md mx-auto">
-              <svg
-                className="mx-auto h-16 w-16 text-gray-400 mb-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+      {/* Content Wrapper */}
+      <div
+        className={`flex flex-col flex-1 transition-all duration-300 h-screen relative z-10 bg-neutral-50/50 ${
+          sidebarExpanded ? "pl-64" : "pl-[72px]"
+        }`}
+      >
+        {/* Top Bar */}
+        <header className="bg-white/80 backdrop-blur-md border-b border-neutral-200 shrink-0 sticky top-0 z-40">
+          <div className="flex lg:px-8 shrink-0 bg-white/80 h-16 border-neutral-100 border-b pr-6 pl-6 top-0 backdrop-blur-md items-center justify-between">
+            {/* Breadcrumbs / Context */}
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push(`/analysis/${packageId}`)}
+                className="text-neutral-500 hover:text-neutral-900 transition-colors"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.5}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                Ready to Normalize Data
-              </h3>
-              {!normalizing ? (
-                <>
-                  <p className="text-gray-600 mb-6">
-                    Click the button below to extract and normalize data from your
-                    uploaded documents. The AI will map expense categories and other
-                    fields to standardized values.
-                  </p>
-                  <button
-                    onClick={handleNormalize}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-                  >
-                    Start Normalization
-                  </button>
-                </>
-              ) : (
-                <div className="w-full max-w-md mx-auto mt-6">
-                  <div className="flex items-center justify-center mb-4">
-                    <LoadingSpinner size="lg" />
-                  </div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    {progress.message || "Normalizing..."}
-                  </h3>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m12 19-7-7 7-7"></path>
+                  <path d="M19 12H5"></path>
+                </svg>
+              </button>
+              <div className="h-6 w-[1px] bg-neutral-200"></div>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                  <span>Dashboard</span>
+                  <span className="text-neutral-300">/</span>
+                  <span>Analysis</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm font-semibold text-neutral-900">Data Verification</h1>
+                </div>
+              </div>
+            </div>
 
-                  <div className="w-full bg-gray-200 rounded-full h-4 mb-2 overflow-hidden">
-                    <div
-                      className="bg-blue-600 h-4 rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${progress.percentage}%` }}
-                    ></div>
+            {/* Right Actions */}
+            <div className="flex items-center gap-3">
+              {normalizedItems.length > 0 && verifiedCount < totalCount && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-100/50">
+                  <div className="relative flex h-1.5 w-1.5">
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-500"></span>
                   </div>
-
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>{progress.percentage}%</span>
-                  </div>
-
-                  {progress.details?.current_file && (
-                    <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200 text-left shadow-sm">
-                      <div className="flex items-start">
-                        <div className="flex-shrink-0 mr-3">
-                           <svg className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                           </svg>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-1">
-                                Processing File
-                            </p>
-                            <p className="text-sm font-medium text-slate-900 truncate" title={progress.details.current_file}>
-                                {progress.details.current_file}
-                            </p>
-                             {progress.details.total_files && (
-                                <p className="text-xs text-slate-500 mt-1">
-                                    {progress.details.file_index} of {progress.details.total_files} files
-                                </p>
-                            )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  Action Required
                 </div>
               )}
             </div>
           </div>
-        ) : (
-          <>
-            {/* Verification Table */}
-            <DataVerificationTable
-              items={normalizedItems}
-              availableCategories={AVAILABLE_CATEGORIES}
-              onVerify={handleVerifyItem}
-              onVerifyAll={handleVerifyAll}
-            />
+        </header>
 
-            {/* Proceed Button */}
-            {allVerified && (
-              <div className="mt-8 bg-white rounded-lg shadow p-6 text-center">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  All Items Verified! ✓
-                </h3>
-                <p className="text-gray-600 mb-4">
-                  You can now proceed to financial analysis
-                </p>
-                <button
-                  onClick={handleProceedToAnalysis}
-                  className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium"
-                >
-                  Proceed to Analysis →
-                </button>
+        {/* Main Workspace */}
+        <main className="flex-1 overflow-y-auto relative">
+          {normalizedItems.length === 0 && !normalizing ? (
+            // Loading state while auto-normalizing
+            <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
+              <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
+                <div className="flex items-end justify-between mb-1">
+                  <div>
+                    <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
+                      Data Verification
+                    </h2>
+                    <p className="text-sm text-neutral-500">Preparing verification data...</p>
+                  </div>
+                </div>
               </div>
+            </div>
+          ) : normalizing ? (
+            // Normalization in progress
+            <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
+              <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
+                <div className="flex items-end justify-between mb-1">
+                  <div>
+                    <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
+                      Data Verification
+                    </h2>
+                    <p className="text-sm text-neutral-500">Extracting and normalizing data from your documents...</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            // Header & Sticky Progress
+            <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
+              <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
+                <div className="flex items-end justify-between mb-1">
+                  <div>
+                    <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
+                      Data Verification
+                    </h2>
+                    <p className="text-sm text-neutral-500">Review and correct AI-mapped categories.</p>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex flex-col items-end mr-4">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <span className="text-sm font-medium text-neutral-900">
+                          Verified: <span className="font-mono">{verifiedCount} / {totalCount}</span>
+                        </span>
+                        <span className="text-xs text-neutral-400">{verificationPercentage}%</span>
+                      </div>
+                      <div className="w-48 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-neutral-900 rounded-full transition-all duration-300"
+                          style={{ width: `${verificationPercentage}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={handleVerifyAll}
+                        className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-neutral-50 text-neutral-900 text-sm font-medium rounded-lg transition-colors shadow-sm border border-neutral-200"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 6 7 17l-5-5"></path>
+                          <path d="m22 10-7.5 7.5L13 16"></path>
+                        </svg>
+                        Verify All
+                      </button>
+                      <button
+                        onClick={handleRegenerateReport}
+                        disabled={regenerating}
+                        className="flex items-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white text-sm font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={regenerating ? "animate-spin" : ""}>
+                          <path d="M21 12a9 9 0 1 1-2.5-6.2"></path>
+                          <path d="M21 6v6h-6"></path>
+                        </svg>
+                        {regenerating ? "Regenerating..." : "Regenerate Report"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="max-w-7xl mx-auto p-6 lg:p-10 flex flex-col gap-10 pb-24">
+            {(normalizing || regenerating) ? (
+              // Normalization Progress
+              <div className="bg-white rounded-lg shadow p-12 text-center">
+                <div className="max-w-md mx-auto">
+                  <div className="w-full max-w-md mx-auto mt-6">
+                      <div className="flex items-center justify-center mb-4">
+                        <div className="relative">
+                          <div className="w-12 h-12 rounded-full border-2 border-neutral-200 animate-spin">
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-neutral-900"></div>
+                          </div>
+                        </div>
+                      </div>
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">
+                        {progress.message || (regenerating ? "Regenerating Report..." : "Normalizing...")}
+                      </h3>
+
+                      <div className="w-full bg-gray-200 rounded-full h-4 mb-2 overflow-hidden">
+                        <div
+                          className="bg-neutral-900 h-4 rounded-full transition-all duration-300 ease-out"
+                          style={{ width: `${progress.percentage}%` }}
+                        ></div>
+                      </div>
+
+                      <div className="flex justify-between text-sm text-gray-600">
+                        <span>{progress.percentage}%</span>
+                      </div>
+
+                      {progress.details?.current_file && (
+                        <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200 text-left shadow-sm">
+                          <div className="flex items-start">
+                            <div className="flex-shrink-0 mr-3">
+                              <svg className="h-5 w-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold mb-1">
+                                Processing File
+                              </p>
+                              <p className="text-sm font-medium text-slate-900 truncate" title={progress.details.current_file}>
+                                {progress.details.current_file}
+                              </p>
+                              {progress.details.total_files && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                  {progress.details.file_index} of {progress.details.total_files} files
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              // Data Tables by Section
+              <>
+                {/* Analyst Commentary Section */}
+                <section className="bg-white border border-neutral-200 rounded-xl shadow-sm overflow-hidden">
+                  <button
+                    onClick={() => setCommentaryExpanded(!commentaryExpanded)}
+                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-neutral-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-50 border border-red-100">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
+                          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+                          <polyline points="14 2 14 8 20 8"></polyline>
+                          <line x1="16" y1="13" x2="8" y2="13"></line>
+                          <line x1="16" y1="17" x2="8" y2="17"></line>
+                          <line x1="10" y1="9" x2="8" y2="9"></line>
+                        </svg>
+                      </div>
+                      <div className="text-left">
+                        <h3 className="text-base font-semibold text-neutral-900">Analyst Commentary</h3>
+                        <p className="text-xs text-neutral-500 mt-0.5">Investment decision and detailed analysis</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-red-50 text-red-700 border border-red-100">
+                        REJECTED
+                      </span>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className={`text-neutral-400 transition-transform duration-200 ${commentaryExpanded ? 'rotate-180' : ''}`}
+                      >
+                        <path d="m6 9 6 6 6-6"></path>
+                      </svg>
+                    </div>
+                  </button>
+                  
+                  {commentaryExpanded && (
+                    <div className="px-6 pb-6 border-t border-neutral-100">
+                      <div className="prose prose-sm max-w-none mt-4">
+                        <div className="bg-neutral-50 rounded-lg p-5 border border-neutral-200">
+                          <p className="text-sm text-neutral-700 leading-relaxed mb-4">
+                            After a comprehensive review of the investment opportunity at <strong>Correct (1)</strong>, we have decided to <strong className="text-red-700">reject</strong> this deal. The property fails to meet our core investment criteria on several fundamental levels. Primarily, with only <strong>10 units</strong>, it falls significantly below our minimum required scale of 15-80 units. More critically, the financial performance is untenable, evidenced by a deeply negative Net Operating Income (NOI), a DSCR of <strong>-16.53</strong>, and an unsustainable expense ratio of <strong>2695.5%</strong>. These metrics indicate a severely distressed asset that is not operationally viable and cannot service any level of debt.
+                          </p>
+                          
+                          <p className="text-sm text-neutral-700 leading-relaxed mb-4">
+                            In addition to the financial shortcomings, our physical due diligence raised material concerns. The structural report for this 1980s-vintage building flagged the need for significant near-term capital expenditure. Specific risks identified include a <strong>roof nearing the end of its useful life</strong> and the requirement for <strong>seismic retrofitting</strong> to meet current safety standards. These necessary upgrades represent a substantial capital outlay that is not adequately factored into the proposed acquisition and would further erode any potential for positive returns in the near future.
+                          </p>
+                          
+                          <p className="text-sm text-neutral-700 leading-relaxed mb-0">
+                            While we acknowledge the potential upside in rental income, as indicated by the <strong>$12,000 loss-to-lease</strong>, this opportunity is insufficient to outweigh the property&apos;s overwhelming flaws. The potential revenue gain from bringing rents to market would be immediately consumed by the operational deficit and required capital improvements. The combination of failing our scale requirements, severe financial underperformance, and significant deferred maintenance makes this an unacceptable risk for our portfolio.
+                          </p>
+                        </div>
+                        
+                        <div className="mt-4 grid grid-cols-3 gap-3">
+                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
+                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Units</div>
+                            <div className="text-lg font-semibold text-neutral-900">10</div>
+                            <div className="text-xs text-red-600 mt-1">Below minimum (15-80)</div>
+                          </div>
+                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
+                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">DSCR</div>
+                            <div className="text-lg font-semibold text-neutral-900">-16.53</div>
+                            <div className="text-xs text-red-600 mt-1">Cannot service debt</div>
+                          </div>
+                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
+                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Expense Ratio</div>
+                            <div className="text-lg font-semibold text-neutral-900">2695.5%</div>
+                            <div className="text-xs text-red-600 mt-1">Severely distressed</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                {Object.entries(groupedItems).map(([section, items]) => (
+                  <section key={section}>
+                    <div className="flex items-center gap-3 mb-4">
+                      <h3 className="text-lg font-semibold text-neutral-900 tracking-tight">{section}</h3>
+                      <span className="px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-500 text-xs font-medium">
+                        {items.length} items
+                      </span>
+                    </div>
+                    <div className="bg-white border border-neutral-200 rounded-xl shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-neutral-50/50">
+                            <tr>
+                              <th className="w-[200px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
+                                Source Document
+                              </th>
+                              <th className="min-w-[240px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
+                                Raw Text
+                              </th>
+                              <th className="w-[180px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
+                                Mapped Category
+                              </th>
+                              <th className="w-[120px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
+                                Confidence
+                              </th>
+                              <th className="w-[140px] font-medium text-xs text-neutral-500 px-4 py-3 text-right border-b border-neutral-200 whitespace-nowrap">
+                                Actions
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {items.map((item, idx) => (
+                              <tr
+                                key={item.id}
+                                className={`${item.user_verified ? 'bg-green-50/30' : ''} hover:bg-neutral-50 transition-colors`}
+                              >
+                                <td className="px-4 py-3 text-xs text-neutral-500 border-b border-neutral-100">
+                                  {item.source_document || "Unknown"}
+                                </td>
+                                <td className="px-4 py-3 text-xs font-mono border-b border-neutral-100">
+                                  {item.raw_text}
+                                </td>
+                                <td className="px-4 py-3 border-b border-neutral-100">
+                                  {editingItem === item.id ? (
+                                    <select
+                                      value={editCategory}
+                                      onChange={(e) => setEditCategory(e.target.value)}
+                                      className="w-full text-xs px-2 py-1 border border-neutral-300 rounded-md"
+                                    >
+                                      {AVAILABLE_CATEGORIES.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${
+                                      item.normalized_value === "Uncategorized"
+                                        ? "bg-red-50 text-red-700 border-red-100"
+                                        : "bg-neutral-100 text-neutral-700 border-neutral-200"
+                                    }`}>
+                                      {item.user_correction || item.normalized_value || "Uncategorized"}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 border-b border-neutral-100">
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${getConfidenceColor(item.confidence || 0)}`}></div>
+                                    <span className={`text-xs font-medium ${getConfidenceTextColor(item.confidence || 0)}`}>
+                                      {formatConfidence(item.confidence || 0)}%
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-right border-b border-neutral-100">
+                                  {editingItem === item.id ? (
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button 
+                                        onClick={() => setEditingItem(null)}
+                                        className="text-neutral-400 hover:text-neutral-900 text-xs font-medium transition-colors"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button 
+                                        onClick={() => handleSaveEdit(item.id)}
+                                        className="text-neutral-900 hover:text-neutral-600 text-xs font-medium transition-colors"
+                                      >
+                                        Save
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center justify-end gap-2">
+                                      {item.user_verified && (
+                                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium text-green-700 bg-green-50 border border-green-100 mr-2">
+                                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M20 6 9 17l-5-5"></path>
+                                          </svg>
+                                          Verified
+                                        </span>
+                                      )}
+                                      <button
+                                        onClick={() => handleEditItem(item.id, item.user_correction || item.normalized_value || "")}
+                                        className="text-neutral-400 hover:text-neutral-900 text-xs font-medium transition-colors"
+                                      >
+                                        Edit
+                                      </button>
+                                      {!item.user_verified && (
+                                        <button
+                                          onClick={() => handleVerifyItem(item.id)}
+                                          className="text-neutral-900 hover:text-neutral-600 text-xs font-medium transition-colors"
+                                        >
+                                          Verify
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </section>
+                ))}
+              </>
             )}
-          </>
-        )}
-
-        {/* Error Display */}
-        {error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">{error}</p>
           </div>
-        )}
-      </div>
 
-      <WarningModal
-        isOpen={isWarningOpen}
-        onClose={() => setIsWarningOpen(false)}
-        title={warningTitle}
-        message={warningMessage}
-      />
+          {/* Footer Legend */}
+          {normalizedItems.length > 0 && (
+            <div className="bg-white border-t border-neutral-200 py-3 px-10 flex items-center gap-6 mt-8">
+              <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Confidence Score Legend</span>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                  <span className="text-xs text-neutral-600">High Confidence (≥95%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  <span className="text-xs text-neutral-600">Medium Confidence (85-94%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                  <span className="text-xs text-neutral-600">Low Confidence (&lt;85%)</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

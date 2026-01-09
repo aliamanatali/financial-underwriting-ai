@@ -182,6 +182,16 @@ class ApiClient {
     }>(response);
   }
 
+  async renameDealPackage(packageId: string, newName: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/rename?new_name=${encodeURIComponent(newName)}`, {
+      method: 'PATCH',
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
   async deleteDealPackage(packageId: string): Promise<void> {
     const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}`, {
       method: 'DELETE',
