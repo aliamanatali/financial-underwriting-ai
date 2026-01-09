@@ -4,13 +4,14 @@ import { FireIcon } from "@/assets/icons";
 
 interface LoadingSpinnerProps {
   size?: "sm" | "lg";
+  className?: string;
 }
 
-export default function LoadingSpinner({ size }: LoadingSpinnerProps = {}) {
+export default function LoadingSpinner({ size, className = "" }: LoadingSpinnerProps = {}) {
   // Small spinner for inline use
   if (size === "sm") {
     return (
-      <div className="inline-flex items-center justify-center">
+      <div className={`inline-flex items-center justify-center ${className}`}>
         <div className="relative w-4 h-4">
           <div className="w-4 h-4 rounded-full border border-neutral-300 animate-spin">
             <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-[#FF5E00]"></div>
@@ -20,9 +21,9 @@ export default function LoadingSpinner({ size }: LoadingSpinnerProps = {}) {
     );
   }
 
-  // Full-screen spinner (default)
+  // Full-screen spinner (default) or large spinner
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/95 backdrop-blur-xl">
+    <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-white/95 backdrop-blur-xl ${className}`}>
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px] animate-pulse"></div>
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle,rgba(255,94,0,0.15)_0%,rgba(255,255,255,0)_70%)] animate-[pulse_2s_ease-in-out_infinite]"></div>
