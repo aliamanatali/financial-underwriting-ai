@@ -2,7 +2,25 @@
 
 import { FireIcon } from "@/assets/icons";
 
-export default function LoadingSpinner() {
+interface LoadingSpinnerProps {
+  size?: "sm" | "lg";
+}
+
+export default function LoadingSpinner({ size }: LoadingSpinnerProps = {}) {
+  // Small spinner for inline use
+  if (size === "sm") {
+    return (
+      <div className="inline-flex items-center justify-center">
+        <div className="relative w-4 h-4">
+          <div className="w-4 h-4 rounded-full border border-neutral-300 animate-spin">
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-[#FF5E00]"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Full-screen spinner (default)
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/95 backdrop-blur-xl">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
