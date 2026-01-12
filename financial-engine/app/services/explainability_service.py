@@ -35,10 +35,13 @@ class ExplainabilityService:
         self._explain_taxes()
         self._explain_mgmt_fee()
         self._explain_total_expenses()
+        self._explain_historical_total_expenses()
 
         # --- Profitability Metrics ---
         self._explain_noi()
+        self._explain_historical_noi()
         self._explain_cap_rate()
+        self._explain_historical_cap_rate()
 
         # --- Debt & Cash Flow ---
         self._explain_loan_amount()
@@ -118,6 +121,24 @@ class ExplainabilityService:
             ),
             calculation=ExplanationCalculation(
                 formula="Sum(Unit Market Rent * 12)",
+                inputs={"Total Units": len(self.analysis.rent_roll)}
+            ),
+            adjustments=[],
+            classification="Derived"
+        ))
+        
+        # Historical GPR (Annualized Current Rent)
+        historical_gpr = self.analysis.rent_roll_summary.total_annual_rent if self.analysis.rent_roll_summary else 0.0
+        self._add_explanation("Historical Gross Potential Rent", ExplainabilityMetadata(
+            metric="Historical Gross Potential Rent",
+            value=historical_gpr,
+            source=ExplanationSource(
+                document="Rent Roll",
+                fields_used=["Current Rent"],
+                data_type="Derived"
+            ),
+            calculation=ExplanationCalculation(
+                formula="Sum(Current Monthly Rent * 12)",
                 inputs={"Total Units": len(self.analysis.rent_roll)}
             ),
             adjustments=[],
@@ -276,6 +297,37 @@ class ExplainabilityService:
             classification="Derived"
         ))
 
+    def _explain_historical_total_expenses(self):
+        val = self.analysis.historical_total_expenses or 0.0
+        
+        # Check if we have detailed historical expenses
+        if self.analysis.historical_expenses:
+             inputs = {item.mapped_category: item.amount for item in self.analysis.historical_expenses}
+             source_doc = "Historical Financials (T12)"
+             formula = "Sum(Historical Expense Items)"
+             classification = "Sourced"
+        else:
+             inputs = {"Total Expenses": val}
+             source_doc = "Historical Financials"
+             formula = "Extracted Total Expenses"
+             classification = "Sourced"
+
+        self._add_explanation("Historical Total Operating Expenses", ExplainabilityMetadata(
+            metric="Historical Total Operating Expenses",
+            value=val,
+            source=ExplanationSource(
+                document=source_doc,
+                fields_used=["Operating Expenses"],
+                data_type="Sourced"
+            ),
+            calculation=ExplanationCalculation(
+                formula=formula,
+                inputs=inputs
+            ),
+            adjustments=[],
+            classification=classification
+        ))
+
     # --- Profitability Implementations ---
 
     def _explain_noi(self):
@@ -302,6 +354,38 @@ class ExplainabilityService:
             classification="Derived"
         ))
 
+    def _explain_historical_noi(self):
+        val = self.analysis.historical_noi or 0.0
+        # Try to reconstruct calculation if components exist, otherwise treat as sourced
+        # Note: We don't have historical_egi explicitly stored usually, but we can approximate or just explain the NOI directly if it came from T12
+        
+        # Assuming NOI is derived from Revenue - Expenses if we calculated it, or sourced if extracted
+        # In this system, historical_noi is typically calculated from (Rent Roll Summary Annual Rent - Historical Expenses) or similar proxy
+        # But let's check how it's defined in financial_service.py usually.
+        # Typically: historical_noi = (rent_roll_summary.total_annual_rent) - historical_total_expenses
+        
+        revenue = self.analysis.rent_roll_summary.total_annual_rent if self.analysis.rent_roll_summary else 0.0
+        expenses = self.analysis.historical_total_expenses or 0.0
+        
+        self._add_explanation("Historical Net Operating Income (NOI)", ExplainabilityMetadata(
+            metric="Historical Net Operating Income (NOI)",
+            value=val,
+            source=ExplanationSource(
+                document="Calculation",
+                fields_used=["Historical Revenue", "Historical Expenses"],
+                data_type="Derived"
+            ),
+            calculation=ExplanationCalculation(
+                formula="Historical Revenue - Historical Expenses",
+                inputs={
+                    "Historical Revenue": revenue,
+                    "Historical Expenses": expenses
+                }
+            ),
+            adjustments=["Revenue based on current rent roll annualized"],
+            classification="Derived"
+        ))
+
     def _explain_cap_rate(self):
         val = self.analysis.cap_rate or 0.0
         noi = self.analysis.pro_forma_noi or 0.0
@@ -325,6 +409,36 @@ class ExplainabilityService:
                 formula="NOI / Purchase Price",
                 inputs={
                     "NOI": noi,
+                    "Purchase Price": purchase_price
+                }
+            ),
+            adjustments=adjustments,
+            classification=classification
+        ))
+        
+    def _explain_historical_cap_rate(self):
+        val = self.analysis.historical_cap_rate or 0.0
+        noi = self.analysis.historical_noi or 0.0
+        purchase_price = self.analysis.property_meta.purchase_price or 0.0
+        
+        classification = "Derived"
+        adjustments = []
+        if purchase_price == 0:
+            classification = "Invalid / Not Meaningful"
+            adjustments.append("Purchase Price missing")
+            
+        self._add_explanation("Historical Cap Rate", ExplainabilityMetadata(
+            metric="Historical Cap Rate",
+            value=val,
+            source=ExplanationSource(
+                document="Calculation",
+                fields_used=["Historical NOI", "Purchase Price"],
+                data_type="Derived"
+            ),
+            calculation=ExplanationCalculation(
+                formula="Historical NOI / Purchase Price",
+                inputs={
+                    "Historical NOI": noi,
                     "Purchase Price": purchase_price
                 }
             ),

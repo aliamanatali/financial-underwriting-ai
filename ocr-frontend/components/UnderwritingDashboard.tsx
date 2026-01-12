@@ -49,13 +49,13 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
   if (!metadata) return null;
 
   return (
-    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-96 p-4 bg-white border border-slate-200 rounded-lg shadow-xl text-left text-sm font-normal normal-case">
+    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/explanation:block w-96 p-4 bg-white border border-slate-200 rounded-lg shadow-xl text-left text-sm font-normal normal-case">
       <div className="flex justify-between items-start mb-2 border-b pb-2">
         <h4 className="font-bold text-slate-900">{metadata.metric}</h4>
         <span className={`px-2 py-0.5 text-xs rounded-full ${
           metadata.classification.includes("Assumptions")
             ? "bg-amber-100 text-amber-800"
-            : "bg-#FFE5D9 text-blue-800"
+            : "bg-[#FFE5D9] text-blue-800"
         }`}>
           {metadata.classification}
         </span>
@@ -505,51 +505,6 @@ export default function UnderwritingDashboard({
         </div>
       </div>
 
-      {/* Detailed Investment Criteria Section */}
-      {analysis.conclusion?.investment_checklist && (
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-            <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Detailed Investment Criteria
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Is the property a multifamily investment?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.is_multifamily}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Is it within 6 blocks of campus?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.near_campus}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">What is the business plan?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.business_plan}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Are existing rents below market?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.rents_below_market}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Is it poorly run/mismanaged?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.is_mismanaged}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Diligence items remaining?</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.diligence_issues}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Primary Risks</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{analysis.conclusion.investment_checklist.primary_risks}</span>
-            </div>
-            <div className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-              <span className="text-xs font-medium text-neutral-600">Price Per Unit Analysis</span>
-              <span className="text-xs font-semibold text-neutral-900 text-right">{formatCurrency(pricePerUnit)}</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Financial Analysis Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -685,7 +640,7 @@ export default function UnderwritingDashboard({
         </div>
 
         {/* Center: Operating Data */}
-        <div className="lg:col-span-8 bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden flex flex-col">
+        <div className="lg:col-span-8 bg-white rounded-xl border border-neutral-200 shadow-sm flex flex-col">
           <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-neutral-900">Operating Analysis</h3>
             <div className="flex gap-2">
@@ -710,31 +665,83 @@ export default function UnderwritingDashboard({
               </thead>
               <tbody className="divide-y divide-neutral-100">
                 <tr className="group hover:bg-neutral-50 transition-colors">
-                  <td className="px-6 py-3.5 text-neutral-600 font-medium">Gross Potential Rent</td>
-                  <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">{formatCurrency(analysis.rent_roll_summary?.total_annual_rent || 0)}</td>
-                  <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">{formatCurrency(analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0))}</td>
+                  <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
+                    Gross Potential Rent
+                    <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} />
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatCurrency(analysis.rent_roll_summary?.total_annual_rent || 0)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Gross Potential Rent"]} />
+                    </span>
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatCurrency(analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0))}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} />
+                    </span>
+                  </td>
                   <td className="px-6 py-3.5 text-right text-emerald-600 text-xs">
                     {((analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0) - (analysis.rent_roll_summary?.total_annual_rent || 0)) / (analysis.rent_roll_summary?.total_annual_rent || 1) * 100).toFixed(1)}%
                   </td>
                 </tr>
                 <tr className="group hover:bg-neutral-50 transition-colors">
-                  <td className="px-6 py-3.5 text-neutral-600 font-medium">Total Expenses</td>
-                  <td className="px-6 py-3.5 text-right text-neutral-900">({formatCurrency(analysis.historical_total_expenses || analysis.historical_expenses?.reduce((sum, e) => sum + e.amount, 0) || 0)})</td>
-                  <td className="px-6 py-3.5 text-right text-neutral-900">({formatCurrency(analysis.pro_forma_expenses || 0)})</td>
+                  <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
+                    Total Expenses
+                    <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} />
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-neutral-900">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      ({formatCurrency(analysis.historical_total_expenses || analysis.historical_expenses?.reduce((sum, e) => sum + e.amount, 0) || 0)})
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Total Operating Expenses"]} />
+                    </span>
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-neutral-900">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      ({formatCurrency(analysis.pro_forma_expenses || 0)})
+                      <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} />
+                    </span>
+                  </td>
                   <td className="px-6 py-3.5 text-right text-emerald-600 text-xs">
                     {(((analysis.historical_total_expenses || 0) - (analysis.pro_forma_expenses || 0)) / (analysis.historical_total_expenses || 1) * 100).toFixed(1)}%
                   </td>
                 </tr>
                 <tr className="bg-neutral-50/30 font-semibold border-t border-neutral-200">
-                  <td className="px-6 py-4 text-neutral-900">Net Operating Income</td>
-                  <td className="px-6 py-4 text-right text-rose-600">{formatCurrency(historicalNOI)}</td>
-                  <td className="px-6 py-4 text-right text-rose-600">{formatCurrency(proFormaNOI)}</td>
+                  <td className="px-6 py-4 text-neutral-900 group/explanation relative cursor-help">
+                    Net Operating Income
+                    <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} />
+                  </td>
+                  <td className="px-6 py-4 text-right text-rose-600">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatCurrency(historicalNOI)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Net Operating Income (NOI)"]} />
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right text-rose-600">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatCurrency(proFormaNOI)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} />
+                    </span>
+                  </td>
                   <td className="px-6 py-4 text-right text-emerald-600 text-xs">{noiChangePercent.toFixed(1)}%</td>
                 </tr>
                 <tr className="group hover:bg-neutral-50 transition-colors">
-                  <td className="px-6 py-3.5 text-neutral-600 font-medium">Cap Rate</td>
-                  <td className="px-6 py-3.5 text-right text-rose-600 font-medium">{formatPercent(historicalCapRate)}</td>
-                  <td className="px-6 py-3.5 text-right text-rose-600 font-medium">{formatPercent(proFormaCapRate)}</td>
+                  <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
+                    Cap Rate
+                    <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} />
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-rose-600 font-medium">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatPercent(historicalCapRate)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Cap Rate"]} />
+                    </span>
+                  </td>
+                  <td className="px-6 py-3.5 text-right text-rose-600 font-medium">
+                    <span className="relative group/explanation cursor-help inline-block">
+                      {formatPercent(proFormaCapRate)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} />
+                    </span>
+                  </td>
                   <td className="px-6 py-3.5 text-right"></td>
                 </tr>
               </tbody>
@@ -800,34 +807,6 @@ export default function UnderwritingDashboard({
 
       {/* Additional Detailed Sections with Neutral Design */}
       
-      {/* Expanded Investment Checklist */}
-      {analysis.conclusion?.investment_checklist && (
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-            <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            Detailed Investment Criteria
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {[
-              { q: "Is the property a multifamily investment?", a: analysis.conclusion.investment_checklist.is_multifamily },
-              { q: "Is it within 6 blocks of campus?", a: analysis.conclusion.investment_checklist.near_campus },
-              { q: "What is the business plan?", a: analysis.conclusion.investment_checklist.business_plan },
-              { q: "Are existing rents below market?", a: analysis.conclusion.investment_checklist.rents_below_market },
-              { q: "Is it poorly run/mismanaged?", a: analysis.conclusion.investment_checklist.is_mismanaged },
-              { q: "Diligence items remaining?", a: analysis.conclusion.investment_checklist.diligence_issues },
-              { q: "Primary Risks", a: analysis.conclusion.investment_checklist.primary_risks },
-              { q: "Price Per Unit Analysis", a: analysis.conclusion.investment_checklist.price_per_unit_analysis },
-            ].map((item, idx) => (
-              <div key={idx} className="bg-neutral-50 p-3 rounded-lg border border-neutral-100 flex justify-between items-start gap-3">
-                <span className="text-xs font-medium text-neutral-600">{item.q}</span>
-                <span className="text-xs font-semibold text-neutral-900 text-right">{item.a}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Alternative Deal Parameters View */}
       {analysis.deal_parameters && (
@@ -929,7 +908,7 @@ export default function UnderwritingDashboard({
               )}
             </div>
 
-            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'} group relative cursor-help`}>
+            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'} group/explanation relative cursor-help`}>
               <div className="text-xs text-neutral-600 flex items-center mb-1">
                 Loan Amount <InfoTooltip term="Loan Amount" />
               </div>
@@ -958,137 +937,7 @@ export default function UnderwritingDashboard({
         </div>
       )}
 
-      {/* Historical vs Pro Forma Comparison */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* T12 (Historical) */}
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center">
-            <span className="w-2 h-2 rounded-full bg-orange-500 mr-2"></span> T12 (Historical) <InfoTooltip term="T12" />
-          </h3>
-          <div className="space-y-3">
-            <div className="flex justify-between pb-2 border-b border-neutral-100">
-              <span className="text-xs text-neutral-600 flex items-center">
-                Gross Potential Rent <InfoTooltip term="Gross Potential Rent" />
-              </span>
-              <span className="text-sm font-semibold text-neutral-900">
-                {formatCurrency(analysis.rent_roll_summary?.total_annual_rent || 0)}
-              </span>
-            </div>
-            <div className="flex justify-between pb-2 border-b border-neutral-100">
-              <span className="text-xs text-neutral-600 flex items-center">
-                Total Expenses <InfoTooltip term="Total Expenses" />
-              </span>
-              <span className="text-sm font-semibold text-rose-600">
-                -{formatCurrency(
-                  analysis.historical_total_expenses ||
-                  analysis.historical_expenses?.reduce((sum, e) => sum + e.amount, 0) ||
-                  0
-                )}
-              </span>
-            </div>
-            <div className="flex justify-between bg-orange-50 p-3 rounded-lg text-sm font-bold border border-orange-100">
-              <span className="flex items-center text-orange-900">
-                Net Operating Income <InfoTooltip term="NOI" />
-              </span>
-              <span className="text-orange-700">{formatCurrency(historicalNOI)}</span>
-            </div>
-            <div className="flex justify-between pt-2 text-sm font-bold">
-              <span className="flex items-center text-neutral-700">
-                Cap Rate <InfoTooltip term="Cap Rate" />
-              </span>
-              <span className="text-neutral-900">{formatPercent(historicalCapRate)}</span>
-            </div>
-          </div>
-        </div>
 
-        {/* F12 (Pro Forma) */}
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-          <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 mr-2"></span> F12 (Pro Forma) <InfoTooltip term="F12" />
-          </h3>
-          <div className="space-y-3">
-            <div className="flex justify-between pb-2 border-b border-neutral-100 group relative cursor-help">
-              <span className="text-xs text-neutral-600 flex items-center">
-                Gross Potential Rent <InfoTooltip term="Gross Potential Rent" />
-              </span>
-              <span className="text-sm font-semibold text-neutral-900">
-                {formatCurrency(
-                  analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0)
-                )}
-              </span>
-              <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} />
-            </div>
-            <div className="flex justify-between pb-2 border-b border-neutral-100 group relative cursor-help">
-              <span className="text-xs text-neutral-600 flex items-center">
-                Total Expenses <InfoTooltip term="Total Expenses" />
-              </span>
-              <span className="text-sm font-semibold text-rose-600">
-                -{formatCurrency(analysis.pro_forma_expenses || 0)}
-              </span>
-              <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} />
-            </div>
-            <div className="flex justify-between bg-emerald-50 p-3 rounded-lg text-sm font-bold border border-emerald-100 group relative cursor-help">
-              <span className="flex items-center text-emerald-900">
-                Net Operating Income <InfoTooltip term="NOI" />
-              </span>
-              <span className="text-emerald-700">{formatCurrency(proFormaNOI)}</span>
-              <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} />
-            </div>
-            <div className="flex justify-between pt-2 text-sm font-bold group relative cursor-help">
-              <span className="flex items-center text-neutral-700">
-                Cap Rate <InfoTooltip term="Cap Rate" />
-              </span>
-              <span className="text-neutral-900">{formatPercent(proFormaCapRate)}</span>
-              <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Additional Investment Returns */}
-      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-        <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-          <svg className="w-4 h-4 text-[#FF5E00]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Detailed Investment Returns (5-Year Hold)
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-lg shadow-sm">
-            <div className="text-xs flex items-center mb-1 font-semibold">
-              IRR (Levered) <InfoTooltip term="IRR" />
-            </div>
-            <p className={`text-2xl font-bold ${(analysis.irr || 0) < 0 ? 'text-rose-600' : 'text-orange-700'}`}>
-              {formatPercent(analysis.irr || 0)}
-            </p>
-            <p className="text-[10px] text-orange-600 mt-1">
-              Internal Rate of Return
-            </p>
-          </div>
-          <div className="p-4 rounded-lg shadow-sm">
-            <div className="text-xs flex items-center mb-1 font-semibold">
-              MOIC <InfoTooltip term="MOIC" />
-            </div>
-            <p className="text-2xl font-bold text-amber-700">
-              {(analysis.moic || 0).toFixed(2)}x
-            </p>
-            <p className="text-[10px] text-amber-600 mt-1">
-              Multiple on Invested Capital
-            </p>
-          </div>
-          <div className="p-4 rounded-lg shadow-sm">
-            <div className="text-xs flex items-center mb-1 font-semibold">
-              Cash-on-Cash <InfoTooltip term="Cash on Cash" />
-            </div>
-            <p className={`text-2xl font-bold ${(analysis.cash_on_cash_return || 0) < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
-              {formatPercent(analysis.cash_on_cash_return || 0)}
-            </p>
-            <p className="text-[10px] text-emerald-600 mt-1">
-              Avg. Annual Cash Yield
-            </p>
-          </div>
-        </div>
-      </div>
 
       {/* Upside Potential */}
       <div className="bg-gradient-to-br from-slate-50 via-neutral-50 to-stone-50 rounded-xl border border-slate-200 shadow-sm p-6">
