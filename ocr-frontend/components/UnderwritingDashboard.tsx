@@ -276,12 +276,45 @@ export default function UnderwritingDashboard({
     return missing;
   };
 
+  const checkLogicErrors = () => {
+    const errors = [];
+    
+    // Logic Error: NOI should not be greater than Gross Potential Rent
+    if (analysis.pro_forma_noi && analysis.rent_roll_summary?.total_annual_rent && analysis.pro_forma_noi > analysis.rent_roll_summary.total_annual_rent) {
+      errors.push("Net Operating Income (NOI) cannot exceed Gross Potential Rent.");
+    }
+
+    // Logic Error: Expenses should be positive
+    if (analysis.pro_forma_expenses && analysis.pro_forma_expenses < 0) {
+      errors.push("Operating Expenses cannot be negative.");
+    }
+
+    // Logic Error: Occupancy cannot exceed 100% (with small buffer for floating point)
+    if (analysis.rent_roll_summary?.occupancy_rate && analysis.rent_roll_summary.occupancy_rate > 1.01) {
+      errors.push("Occupancy Rate cannot exceed 100%.");
+    }
+
+    // Logic Error: Purchase Price must be positive
+    if (analysis.property_meta?.purchase_price && analysis.property_meta.purchase_price <= 0) {
+      errors.push("Purchase Price must be greater than zero.");
+    }
+    
+    // Logic Error: Cap Rate shouldn't be negative (unless deep distress, but usually indicates data error here)
+    if (analysis.cap_rate && analysis.cap_rate < 0) {
+      errors.push("Cap Rate is negative, indicating potential data error in NOI or Price.");
+    }
+
+    return errors;
+  };
+
   const missingValues = checkMissingValues();
+  const logicErrors = checkLogicErrors();
+  const hasCriticalIssues = missingValues.length > 0 || logicErrors.length > 0;
 
   return (
     <div className="space-y-6 font-sans">
-      {/* Missing Values Banner */}
-      {missingValues.length > 0 && (
+      {/* Critical Issues Banner (Missing Values or Logic Errors) */}
+      {hasCriticalIssues && (
         <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
           <div className="p-1.5 bg-rose-100 rounded-full text-rose-600 shrink-0 mt-0.5">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -291,11 +324,27 @@ export default function UnderwritingDashboard({
             </svg>
           </div>
           <div>
-            <h3 className="text-sm font-bold text-rose-800">Report Inaccurate: Missing Crucial Values</h3>
-            <p className="text-xs text-rose-700 mt-1">
-              The financial analysis cannot be accurately generated because the following crucial data points are missing: <span className="font-semibold">{missingValues.join(", ")}</span>.
-            </p>
-            <p className="text-xs text-rose-700 mt-1">
+            <h3 className="text-sm font-bold text-rose-800">Report Inaccurate: Critical Data Issues</h3>
+            
+            {missingValues.length > 0 && (
+              <div className="mt-1">
+                 <p className="text-xs text-rose-700 font-semibold mb-0.5">Missing Crucial Values:</p>
+                 <ul className="list-disc list-inside text-xs text-rose-700 ml-1">
+                   {missingValues.map(val => <li key={val}>{val}</li>)}
+                 </ul>
+              </div>
+            )}
+
+            {logicErrors.length > 0 && (
+              <div className="mt-2">
+                 <p className="text-xs text-rose-700 font-semibold mb-0.5">Data Logic Errors:</p>
+                 <ul className="list-disc list-inside text-xs text-rose-700 ml-1">
+                   {logicErrors.map(err => <li key={err}>{err}</li>)}
+                 </ul>
+              </div>
+            )}
+
+            <p className="text-xs text-rose-700 mt-3 font-medium border-t border-rose-200 pt-2">
               Please verify the data in the Property Details section below or check the source documents.
             </p>
           </div>
@@ -347,9 +396,9 @@ export default function UnderwritingDashboard({
               <span className="text-sm font-semibold text-neutral-900">{analysis.property_meta.year_built || "-"}</span>
             )}
           </div>
-          <div className={`bg-white p-4 flex flex-col gap-1 ${!totalUnits && missingValues.includes("Total Units") ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
-            <span className={`text-[10px] uppercase tracking-wide font-medium ${!totalUnits && missingValues.includes("Total Units") ? "text-rose-500" : "text-neutral-500"}`}>
-              Total Units {!totalUnits && missingValues.includes("Total Units") && "(Missing)"}
+          <div className={`bg-white p-4 flex flex-col gap-1 ${(!totalUnits && missingValues.includes("Total Units")) ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
+            <span className={`text-[10px] uppercase tracking-wide font-medium ${(!totalUnits && missingValues.includes("Total Units")) ? "text-rose-500" : "text-neutral-500"}`}>
+              Total Units {(!totalUnits && missingValues.includes("Total Units")) && "(Missing)"}
             </span>
             {isEditingPropertyDetails ? (
               <input
@@ -364,13 +413,15 @@ export default function UnderwritingDashboard({
               <span className="text-sm font-semibold text-neutral-900">{totalUnits || "-"}</span>
             )}
           </div>
-          <div className="bg-white p-4 flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Occupancy</span>
+          <div className={`bg-white p-4 flex flex-col gap-1 ${(occupancyRate > 1.01) ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
+            <span className={`text-[10px] uppercase tracking-wide font-medium ${(occupancyRate > 1.01) ? "text-rose-500" : "text-neutral-500"}`}>
+              Occupancy {(occupancyRate > 1.01) && "(Invalid)"}
+            </span>
             <span className="text-sm font-semibold text-neutral-900">{formatPercent(occupancyRate)}</span>
           </div>
-          <div className={`bg-white p-4 flex flex-col gap-1 ${!purchasePrice && missingValues.includes("Purchase Price") ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
-            <span className={`text-[10px] uppercase tracking-wide font-medium ${!purchasePrice && missingValues.includes("Purchase Price") ? "text-rose-500" : "text-neutral-500"}`}>
-              Purchase Price {!purchasePrice && missingValues.includes("Purchase Price") && "(Missing)"}
+          <div className={`bg-white p-4 flex flex-col gap-1 ${(!purchasePrice && missingValues.includes("Purchase Price")) || purchasePrice <= 0 ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
+            <span className={`text-[10px] uppercase tracking-wide font-medium ${(!purchasePrice && missingValues.includes("Purchase Price")) || purchasePrice <= 0 ? "text-rose-500" : "text-neutral-500"}`}>
+              Purchase Price {(!purchasePrice && missingValues.includes("Purchase Price")) ? "(Missing)" : purchasePrice <= 0 ? "(Invalid)" : ""}
             </span>
             {isEditingPropertyDetails ? (
               <input
@@ -410,8 +461,33 @@ export default function UnderwritingDashboard({
       {/* AI Underwriting Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* AI Conclusion Card */}
-        <div className="lg:col-span-8 bg-white rounded-xl border border-neutral-200 shadow-sm p-6 relative overflow-hidden">
-          <div className="flex items-start justify-between mb-6">
+        <div className="lg:col-span-8 bg-white rounded-xl border border-neutral-200 shadow-sm p-6 relative overflow-hidden min-h-[300px]">
+          
+          {/* Verdict Suspended Overlay */}
+          {hasCriticalIssues && (
+            <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-30 flex flex-col items-center justify-center text-center p-6">
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 mb-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                  <line x1="12" y1="9" x2="12" y2="13"></line>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </div>
+              <h3 className="text-lg font-bold text-neutral-900 mb-1">Verdict Suspended</h3>
+              <p className="text-sm text-neutral-600 max-w-xs mb-6">
+                We cannot determine if this deal passes investment criteria until critical data issues are resolved.
+              </p>
+              <button
+                onClick={() => setIsEditingPropertyDetails(true)}
+                className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
+              >
+                Fix Data Issues
+              </button>
+            </div>
+          )}
+
+          <div className={hasCriticalIssues ? "opacity-20 blur-[1px] pointer-events-none select-none" : ""}>
+            <div className="flex items-start justify-between mb-6">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
@@ -493,6 +569,7 @@ export default function UnderwritingDashboard({
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -691,7 +768,7 @@ export default function UnderwritingDashboard({
           </div>
           
           <div className="p-0 relative min-h-[200px]">
-            {missingValues.length > 0 ? (
+            {hasCriticalIssues ? (
               <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-center p-6 border-b border-neutral-100 rounded-b-xl">
                 <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center text-rose-500 mb-3">
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -702,13 +779,21 @@ export default function UnderwritingDashboard({
                 </div>
                 <h4 className="text-neutral-900 font-semibold mb-2">Analysis Paused</h4>
                 <p className="text-sm text-neutral-600 max-w-sm mb-4">
-                  We cannot populate the Operating Analysis table because crucial values are missing:
+                  We cannot populate the Operating Analysis table due to critical data issues:
                 </p>
-                <ul className="text-sm text-rose-600 font-medium mb-6">
-                  {missingValues.map((val) => (
-                    <li key={val}>• {val}</li>
-                  ))}
-                </ul>
+                <div className="text-left inline-block mb-6">
+                  {missingValues.length > 0 && (
+                     <ul className="text-sm text-rose-600 font-medium mb-2">
+                       {missingValues.map((val) => <li key={val}>• Missing: {val}</li>)}
+                     </ul>
+                  )}
+                  {logicErrors.length > 0 && (
+                     <ul className="text-sm text-rose-600 font-medium">
+                       {logicErrors.map((err) => <li key={err}>• Error: {err}</li>)}
+                     </ul>
+                  )}
+                </div>
+                
                 <button
                   onClick={() => setIsEditingPropertyDetails(true)}
                   className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
@@ -718,7 +803,7 @@ export default function UnderwritingDashboard({
               </div>
             ) : null}
             
-            <table className={`w-full text-left text-sm ${missingValues.length > 0 ? 'opacity-20 pointer-events-none' : ''}`}>
+            <table className={`w-full text-left text-sm ${hasCriticalIssues ? 'opacity-20 pointer-events-none' : ''}`}>
               <thead>
                 <tr className="bg-neutral-50/50 border-b border-neutral-100 text-xs text-neutral-500 font-medium">
                   <th className="px-6 py-3 font-medium">Item</th>
@@ -1072,18 +1157,43 @@ export default function UnderwritingDashboard({
           </button>
 
           {isCommentaryExpanded && (
-            <div className="px-6 pb-6 pt-2 bg-gradient-to-br from-slate-50/30 to-neutral-50/30 border-t border-neutral-100">
-              {/* 3-Paragraph Summary */}
-              <div className="bg-white rounded-lg p-5 border border-neutral-200 shadow-sm space-y-4 mb-6">
-                {analysis.analyst_commentary.split('\n\n').filter(p => p.trim()).map((paragraph, idx) => (
-                  <p key={idx} className="text-sm text-neutral-800 leading-relaxed">
-                    {paragraph.trim()}
+            <div className="px-6 pb-6 pt-2 bg-gradient-to-br from-slate-50/30 to-neutral-50/30 border-t border-neutral-100 relative min-h-[300px]">
+              
+              {/* Critical Issues Overlay for Analyst Commentary */}
+              {hasCriticalIssues && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex flex-col items-center justify-center text-center p-6 rounded-b-xl">
+                  <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center text-rose-500 mb-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                      <line x1="12" y1="9" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                  </div>
+                  <h4 className="text-neutral-900 font-semibold mb-2">Commentary Suspended</h4>
+                  <p className="text-sm text-neutral-600 max-w-sm mb-6">
+                    Professional commentary and final verdict cannot be generated while critical data is missing or invalid.
                   </p>
-                ))}
-              </div>
+                  <button
+                    onClick={() => setIsEditingPropertyDetails(true)}
+                    className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
+                  >
+                    Resolve Data Issues
+                  </button>
+                </div>
+              )}
 
-              {/* Detailed Analysis Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className={hasCriticalIssues ? "opacity-20 blur-[1px] pointer-events-none select-none" : ""}>
+                {/* 3-Paragraph Summary */}
+                <div className="bg-white rounded-lg p-5 border border-neutral-200 shadow-sm space-y-4 mb-6">
+                  {analysis.analyst_commentary.split('\n\n').filter(p => p.trim()).map((paragraph, idx) => (
+                    <p key={idx} className="text-sm text-neutral-800 leading-relaxed">
+                      {paragraph.trim()}
+                    </p>
+                  ))}
+                </div>
+
+                {/* Detailed Analysis Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Deal Viability */}
                 <div className="bg-white rounded-lg p-4 border border-neutral-200 shadow-sm">
                   <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide">Deal Viability</h4>
@@ -1189,6 +1299,7 @@ export default function UnderwritingDashboard({
                         Reflects the market pricing and initial yield. Compare with market benchmark of {formatPercent(analysis.deal_parameters?.exit_cap_rate || 0.06)}.
                       </p>
                     </div>
+                  </div>
                   </div>
                 </div>
               </div>
