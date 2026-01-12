@@ -267,8 +267,41 @@ export default function UnderwritingDashboard({
     setIsEditingPropertyDetails(false);
   };
 
+  const checkMissingValues = () => {
+    const missing = [];
+    if (!analysis.property_meta?.purchase_price) missing.push("Purchase Price");
+    if (!analysis.property_meta?.total_units) missing.push("Total Units");
+    if (!analysis.rent_roll_summary?.total_annual_rent) missing.push("Gross Potential Rent");
+    if (!analysis.historical_total_expenses && (!analysis.historical_expenses || analysis.historical_expenses.length === 0)) missing.push("Operating Expenses");
+    return missing;
+  };
+
+  const missingValues = checkMissingValues();
+
   return (
     <div className="space-y-6 font-sans">
+      {/* Missing Values Banner */}
+      {missingValues.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
+          <div className="p-1.5 bg-rose-100 rounded-full text-rose-600 shrink-0 mt-0.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" x2="12" y1="8" y2="12"></line>
+              <line x1="12" x2="12.01" y1="16" y2="16"></line>
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-rose-800">Report Inaccurate: Missing Crucial Values</h3>
+            <p className="text-xs text-rose-700 mt-1">
+              The financial analysis cannot be accurately generated because the following crucial data points are missing: <span className="font-semibold">{missingValues.join(", ")}</span>.
+            </p>
+            <p className="text-xs text-rose-700 mt-1">
+              Please verify the data in the Property Details section below or check the source documents.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Quick Stats Row */}
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
         <div className="flex items-center justify-between mb-4">
@@ -311,11 +344,13 @@ export default function UnderwritingDashboard({
                 onChange={(e) => handlePropertyDetailChange('year_built', e.target.value)}
               />
             ) : (
-              <span className="text-sm font-semibold text-neutral-900">{analysis.property_meta.year_built}</span>
+              <span className="text-sm font-semibold text-neutral-900">{analysis.property_meta.year_built || "-"}</span>
             )}
           </div>
-          <div className="bg-white p-4 flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Total Units</span>
+          <div className={`bg-white p-4 flex flex-col gap-1 ${!totalUnits && missingValues.includes("Total Units") ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
+            <span className={`text-[10px] uppercase tracking-wide font-medium ${!totalUnits && missingValues.includes("Total Units") ? "text-rose-500" : "text-neutral-500"}`}>
+              Total Units {!totalUnits && missingValues.includes("Total Units") && "(Missing)"}
+            </span>
             {isEditingPropertyDetails ? (
               <input
                 type="text"
@@ -326,15 +361,17 @@ export default function UnderwritingDashboard({
                 onChange={(e) => handlePropertyDetailChange('total_units', e.target.value)}
               />
             ) : (
-              <span className="text-sm font-semibold text-neutral-900">{totalUnits}</span>
+              <span className="text-sm font-semibold text-neutral-900">{totalUnits || "-"}</span>
             )}
           </div>
           <div className="bg-white p-4 flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Occupancy</span>
             <span className="text-sm font-semibold text-neutral-900">{formatPercent(occupancyRate)}</span>
           </div>
-          <div className="bg-white p-4 flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Purchase Price</span>
+          <div className={`bg-white p-4 flex flex-col gap-1 ${!purchasePrice && missingValues.includes("Purchase Price") ? "ring-2 ring-rose-200 bg-rose-50" : ""}`}>
+            <span className={`text-[10px] uppercase tracking-wide font-medium ${!purchasePrice && missingValues.includes("Purchase Price") ? "text-rose-500" : "text-neutral-500"}`}>
+              Purchase Price {!purchasePrice && missingValues.includes("Purchase Price") && "(Missing)"}
+            </span>
             {isEditingPropertyDetails ? (
               <input
                 type="text"
@@ -653,8 +690,35 @@ export default function UnderwritingDashboard({
             </div>
           </div>
           
-          <div className="p-0">
-            <table className="w-full text-left text-sm">
+          <div className="p-0 relative min-h-[200px]">
+            {missingValues.length > 0 ? (
+              <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-center p-6 border-b border-neutral-100 rounded-b-xl">
+                <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center text-rose-500 mb-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                </div>
+                <h4 className="text-neutral-900 font-semibold mb-2">Analysis Paused</h4>
+                <p className="text-sm text-neutral-600 max-w-sm mb-4">
+                  We cannot populate the Operating Analysis table because crucial values are missing:
+                </p>
+                <ul className="text-sm text-rose-600 font-medium mb-6">
+                  {missingValues.map((val) => (
+                    <li key={val}>• {val}</li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => setIsEditingPropertyDetails(true)}
+                  className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
+                >
+                  Verify & Fix Data
+                </button>
+              </div>
+            ) : null}
+            
+            <table className={`w-full text-left text-sm ${missingValues.length > 0 ? 'opacity-20 pointer-events-none' : ''}`}>
               <thead>
                 <tr className="bg-neutral-50/50 border-b border-neutral-100 text-xs text-neutral-500 font-medium">
                   <th className="px-6 py-3 font-medium">Item</th>
