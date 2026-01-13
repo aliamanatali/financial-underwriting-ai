@@ -287,6 +287,12 @@ class MultiDocumentExtractionService:
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 
+                CRITICAL RULES TO AVOID ERRORS:
+                1. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma", or "Stabilized" vs "Market"), extract ONLY the "Current" or "Actual" or "T-12" column. Do NOT extract "Pro Forma" or "Market" scenarios as additional items. If only Pro Forma is available, extract the "Stabilized" version only.
+                2. NO SISTER PROPERTIES: If the document lists expenses for multiple properties (e.g. a portfolio), extract ONLY the expenses for the subject property if identifiable. Do not sum up expenses from different properties.
+                3. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines (e.g. "Total Repairs & Maintenance", "Total Operating Expenses") if you are also extracting the individual line items. We want the granular line items, NOT the subtotals. Only extract a Total if granular items are not available.
+                4. NO ASSESSED VALUES: Do NOT extract "Assessed Value" or "Appraised Value" as a Tax Expense. Only extract the actual Ad Valorem Tax amount due.
+                
                 For each item, provide:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable.
