@@ -347,28 +347,9 @@ function UploadPackageContent() {
                             </div>
                           </>
                         ) : (
-                          <>
-                            <div className="relative pt-1">
-                              <div className="flex mb-2 items-center justify-between">
-                                <div>
-                                  <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-emerald-600 bg-emerald-100">
-                                    Processing
-                                  </span>
-                                </div>
-                                <div className="text-right">
-                                  <span className="text-xs font-semibold inline-block text-emerald-600">
-                                    {processingProgress.percentage}%
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-neutral-200">
-                                <div
-                                  style={{ width: `${processingProgress.percentage}%` }}
-                                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-emerald-500 transition-all duration-300 ease-in-out"
-                                ></div>
-                              </div>
-                            </div>
-                            <div className="space-y-2">
+                          <div className="flex flex-col items-center justify-center space-y-4 py-6">
+                            <div className="w-12 h-12 border-4 border-neutral-200 border-t-emerald-500 rounded-full animate-spin"></div>
+                            <div className="space-y-2 text-center">
                               <p className="text-neutral-700 font-medium text-lg">
                                 Processing ZIP file...
                               </p>
@@ -376,7 +357,7 @@ function UploadPackageContent() {
                                 {processingProgress.message || "Extracting and categorizing documents"}
                               </p>
                             </div>
-                          </>
+                          </div>
                         )}
                       </div>
                     ) : (
