@@ -214,6 +214,81 @@ class ApiClient {
     }
   }
 
+  async uploadZipChunked(
+    file: File,
+    onProgress?: (progress: number) => void
+  ): Promise<DealPackage> {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const fileName = file.name;
+
+    // 1. Initialize upload
+    const initFormData = new FormData();
+    initFormData.append("filename", fileName);
+    initFormData.append("total_chunks", totalChunks.toString());
+
+    const initResponse = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/upload-chunk/init`, {
+      method: "POST",
+      body: initFormData,
+    });
+
+    if (!initResponse.ok) {
+      throw new Error("Failed to initialize upload");
+    }
+
+    const { upload_id } = await initResponse.json();
+
+    // 2. Upload chunks
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+
+      const chunkFormData = new FormData();
+      chunkFormData.append("upload_id", upload_id);
+      chunkFormData.append("chunk_index", i.toString());
+      chunkFormData.append("chunk", chunk);
+
+      const chunkResponse = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/upload-chunk`, {
+        method: "POST",
+        body: chunkFormData,
+      });
+
+      if (!chunkResponse.ok) {
+        throw new Error(`Failed to upload chunk ${i + 1}/${totalChunks}`);
+      }
+
+      if (onProgress) {
+        const progress = Math.round(((i + 1) / totalChunks) * 100);
+        onProgress(progress);
+      }
+    }
+
+    // 3. Complete upload
+    const completeFormData = new FormData();
+    completeFormData.append("upload_id", upload_id);
+    completeFormData.append("original_filename", fileName);
+    
+    // Extract property name from filename (remove .zip and _Inputs suffix)
+    const propertyName = fileName
+      .replace('.zip', '')
+      .replace('_Inputs', '')
+      .replace(/_/g, ' ');
+    completeFormData.append("property_name", propertyName);
+
+    const completeResponse = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/upload-chunk/complete`, {
+      method: "POST",
+      body: completeFormData,
+    });
+
+    if (!completeResponse.ok) {
+      const errorData = await completeResponse.json().catch(() => ({ detail: "Upload completion failed" }));
+      throw new Error(errorData.detail || "Upload completion failed");
+    }
+
+    return completeResponse.json();
+  }
+
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
     // Create default deal parameters
     const params: DealParameters = {

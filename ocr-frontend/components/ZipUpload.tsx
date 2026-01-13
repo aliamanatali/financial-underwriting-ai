@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { apiClient } from "@/lib/api";
 import LoadingSpinner from "./LoadingSpinner";
 import WarningModal from "./WarningModal";
 
@@ -85,11 +86,11 @@ export default function ZipUpload({
       return "Only ZIP files are allowed";
     }
 
-    // Check file size (max 100MB for ZIP)
-    const maxSize = 100 * 1024 * 1024; // 100MB
-    if (file.size > maxSize) {
-      return "File size must be less than 100MB";
-    }
+    // Validation limit removed
+    // const maxSize = 500 * 1024 * 1024; // 500MB
+    // if (file.size > maxSize) {
+    //   return "File size must be less than 500MB";
+    // }
 
     return null;
   };
@@ -114,33 +115,19 @@ export default function ZipUpload({
     setUploadProgress(0);
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      // Use chunked upload for better large file support
+      const data = await apiClient.uploadZipChunked(file, (progress) => {
+        setUploadProgress(progress);
+      });
+
+      setDealPackage(data);
       
       // Extract property name from filename (remove .zip and _Inputs suffix)
       const propertyName = file.name
         .replace('.zip', '')
         .replace('_Inputs', '')
         .replace(/_/g, ' ');
-      formData.append("property_name", propertyName);
 
-      // Upload to backend
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/upload-zip`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Upload failed");
-      }
-
-      const data: DealPackage = await response.json();
-      setDealPackage(data);
-      
       const documentCount = Object.values(data.documents).reduce(
         (sum, docs) => sum + docs.length,
         0
@@ -232,16 +219,43 @@ export default function ZipUpload({
         onDrop={handleDrop}
       >
         {isUploading ? (
-          <div className="space-y-4">
-            <div className="mx-auto w-16 h-16 border-4 border-gray-200 border-t-[#FF5E00] rounded-full animate-spin"></div>
+          <div className="space-y-4 w-full max-w-md mx-auto">
+            {/* Progress Circle or Bar */}
+            <div className="relative pt-1">
+              <div className="flex mb-2 items-center justify-between">
+                <div>
+                  <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-[#FF5E00] bg-[#FFF5F0]">
+                    Uploading
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-semibold inline-block text-[#FF5E00]">
+                    {uploadProgress}%
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+                <div
+                  style={{ width: `${uploadProgress}%` }}
+                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-[#FF5E00] transition-all duration-300 ease-in-out"
+                ></div>
+              </div>
+            </div>
+
             <div className="space-y-2">
               <p className="text-gray-700 font-medium text-lg">
-                Processing ZIP file...
+                {uploadProgress < 100 ? "Uploading ZIP file..." : "Processing..."}
               </p>
               <p className="text-sm text-gray-600">
-                Extracting and categorizing documents
+                {uploadProgress < 100
+                  ? "Please wait while we upload your documents."
+                  : "Extracting and categorizing documents. This may take a moment."}
               </p>
             </div>
+            
+            {uploadProgress === 100 && (
+               <div className="mx-auto w-8 h-8 border-2 border-gray-200 border-t-[#FF5E00] rounded-full animate-spin"></div>
+            )}
           </div>
         ) : (
           <>
@@ -302,7 +316,7 @@ export default function ZipUpload({
               </label>
               
               <p className="text-sm text-gray-600">or drag and drop</p>
-              <p className="text-xs text-gray-500">ZIP files up to 100MB</p>
+              <p className="text-xs text-gray-500">ZIP files (No Size Limit)</p>
             </div>
 
             {/* Expected Structure Info - Dynamic */}

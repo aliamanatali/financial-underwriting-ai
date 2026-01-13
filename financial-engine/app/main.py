@@ -27,6 +27,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Increase the file upload limit
+# Note: FastAPI/Starlette doesn't have a direct file size limit middleware by default,
+# but server implementations (like uvicorn/gunicorn) or reverse proxies (nginx) usually handle this.
+# However, we can add a middleware to handle potential large request bodies if needed,
+# though standard FastAPI streaming handles large files efficiently.
+# If running behind Nginx/Apache, their config needs adjustment (client_max_body_size).
+# For dev/direct uvicorn, it streams, so typically no hard limit unless specified.
+
 
 app.include_router(analysis.router, prefix="/api/v1", tags=["Analysis"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingestion"])

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # PDF processing settings
     chunk_size_pages: int = 15
     large_file_page_threshold: int = 100
-    large_file_threshold_mb: int = 10
+    large_file_threshold_mb: int = 100
 
     # Storage settings
     upload_dir: str = "./uploads"

@@ -50,6 +50,64 @@ export default function VerificationPage() {
 
   const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
+  // Internal Audit Log for Verification
+  useEffect(() => {
+    if (normalizedItems.length > 0) {
+      console.group("🔍 INTERNAL AUDIT REPORT: OCR & Categorization Analysis");
+      console.log(`Generated at: ${new Date().toISOString()}`);
+      console.log(`Package ID: ${packageId}`);
+      console.log(`Total Items: ${normalizedItems.length}`);
+
+      // Group items for clear reporting
+      const auditGroups = normalizedItems.reduce((acc, item) => {
+        const group = item.category_group || "Uncategorized";
+        if (!acc[group]) acc[group] = [];
+        acc[group].push(item);
+        return acc;
+      }, {} as Record<string, NormalizedDataItem[]>);
+
+      Object.entries(auditGroups).forEach(([group, items]) => {
+        console.groupCollapsed(`📂 Category Group: ${group} (${items.length} items)`);
+        
+        // Create a tabular view for high-level scan
+        const tableData = items.map(item => ({
+          "Mapped Category": item.normalized_value,
+          "Raw Text": item.raw_text,
+          "Source": item.source_document,
+          "Confidence": `${(item.confidence * 100).toFixed(1)}%`,
+          "Classification": item.data_classification,
+          // Cast to any to check for direct properties that might be sent by backend but not in type definition
+          "Extracted Amount": (item as any).amount || item.metadata?.amount || "N/A",
+          "Period": (item as any).period || item.metadata?.period || "N/A"
+        }));
+        console.table(tableData);
+
+        // Detailed view for "Maths" and specific metadata
+        console.log("📝 Detailed Item Breakdown (Maths & Metadata):");
+        items.forEach(item => {
+            console.groupCollapsed(`Item: ${item.normalized_value || "Unknown"} (from ${item.source_document})`);
+            console.log("Raw OCR Text:", item.raw_text);
+            console.log("Categorization:", {
+                group: item.category_group,
+                mapped_value: item.normalized_value,
+                confidence: item.confidence
+            });
+            console.log("Maths/Values:", {
+                amount: (item as any).amount || item.metadata?.amount,
+                period: (item as any).period || item.metadata?.period,
+                ...item.metadata
+            });
+            console.log("Full Object:", item);
+            console.groupEnd();
+        });
+
+        console.groupEnd();
+      });
+
+      console.groupEnd();
+    }
+  }, [normalizedItems, packageId]);
+
   // Fetch deal package details and auto-start normalization if needed
   useEffect(() => {
     const fetchPackage = async () => {

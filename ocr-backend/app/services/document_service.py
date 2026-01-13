@@ -150,6 +150,7 @@ class DocumentService:
             pdf_info = await self.chunking_service.get_pdf_info(file_data)
             
             # Determine if chunking is needed
+            # We use the configured thresholds from settings (updated to higher values)
             should_chunk = self.chunking_service.should_use_chunking(
                 page_count=pdf_info["page_count"],
                 file_size_mb=pdf_info["file_size_mb"],

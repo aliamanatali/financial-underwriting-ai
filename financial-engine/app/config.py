@@ -13,7 +13,7 @@ load_dotenv(dotenv_path=ENV_PATH, override=True)
 class Settings(BaseSettings):
     # Gemini API settings
     gemini_api_key: str
-    gemini_model: str = "gemini-1.5-pro"
+    gemini_model: str = "gemini-2.5-pro"
     gemini_temperature: float = 0.0
     gemini_max_output_tokens: int = 8192
     

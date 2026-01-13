@@ -41,10 +41,11 @@ function UploadPackageContent() {
     if (!file.name.endsWith('.zip')) {
       return "Only ZIP files are allowed";
     }
-    const maxSize = 100 * 1024 * 1024; // 100MB
-    if (file.size > maxSize) {
-      return "File size must be less than 100MB";
-    }
+    // Validation limit removed
+    // const maxSize = 100 * 1024 * 1024; // 100MB
+    // if (file.size > maxSize) {
+    //   return "File size must be less than 100MB";
+    // }
     return null;
   };
 
@@ -371,7 +372,7 @@ function UploadPackageContent() {
                         </button>
 
                         <span className="text-xs text-neutral-400 font-medium mt-6">
-                          ZIP files up to 100MB
+                          ZIP files (No Size Limit)
                         </span>
                       </>
                     )}

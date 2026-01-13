@@ -10,6 +10,65 @@ import ExportButtons from "@/components/ExportButtons";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 
+const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, sourceContext: string) => {
+  console.log(`🔍 INTERNAL AUDIT REPORT: Analysis Data Load (${sourceContext})`);
+  console.log("Time:", new Date().toISOString());
+  console.log("Package ID:", packageId);
+
+  // 1. OCR Extracted Values (Raw Mapped Data)
+  const extractedValues: Record<string, any> = {};
+  data.historical_expenses?.forEach((item) => {
+    const source = item.audit_log?.source || "Unknown";
+    const key = `[${source}] ${item.original_text}`;
+    extractedValues[key] = item.amount;
+  });
+  console.log(`OCR Extracted Values (from ${sourceContext}):`, extractedValues);
+
+  // 2. Categorization Report (Table)
+  console.log(`📊 Historical Expenses Categorization (${data.historical_expenses?.length || 0} items)`);
+  if (data.historical_expenses?.length > 0) {
+    const expenseTable = data.historical_expenses.map((item) => ({
+      Category: item.mapped_category,
+      "Original Text": item.original_text,
+      Amount: item.amount,
+      Source: item.audit_log?.source || "Unknown",
+      Confidence: item.confidence
+    }));
+    console.table(expenseTable);
+  }
+
+  // 3. Rent Roll Summary
+  if (data.rent_roll_summary) {
+    console.log(`🏠 Rent Roll Summary (${data.rent_roll_summary.total_units} units)`);
+    console.log({
+      TotalUnits: data.rent_roll_summary.total_units,
+      Occupied: data.rent_roll_summary.occupied_units,
+      OccupancyRate: `${(data.rent_roll_summary.occupancy_rate * 100).toFixed(1)}%`,
+      AnnualRent: data.rent_roll_summary.total_annual_rent
+    });
+  }
+
+  // 4. Financial Metrics
+  console.log("📈 Financial Metrics:", {
+    NOI: data.pro_forma_noi,
+    "Cap Rate": data.cap_rate,
+    DSCR: data.dscr,
+    Yield: data.debt_yield,
+  });
+
+  // 5. The Maths (Explainability)
+  if (data.explainability) {
+    console.log("🧮 Calculation Logic (The Maths):");
+    Object.entries(data.explainability).forEach(([metric, details]) => {
+      console.log(`  🔹 ${metric}:`, {
+        Formula: details.calculation.formula,
+        Inputs: details.calculation.inputs,
+        Source: details.source
+      });
+    });
+  }
+};
+
 export default function AnalysisResultPage() {
   const params = useParams();
   const router = useRouter();
@@ -71,6 +130,7 @@ export default function AnalysisResultPage() {
       const result: UnderwritingAnalysis = await response.json();
       console.log("✅ Analysis completed successfully");
       setAnalysis(result);
+      logInternalAuditReport(result, id, "Analysis");
       setError(null);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Failed to fetch analysis results.";
@@ -106,6 +166,7 @@ export default function AnalysisResultPage() {
               const existingResult = await existingAnalysisResponse.json();
               console.log("Loaded existing analysis from history");
               setAnalysis(existingResult);
+              logInternalAuditReport(existingResult, id, "History");
               setError(null);
               setIsLoading(false);
               closeEventSource();
@@ -164,6 +225,7 @@ export default function AnalysisResultPage() {
 
           const result: UnderwritingAnalysis = await response.json();
           setAnalysis(result);
+          logInternalAuditReport(result, id, "Analysis");
           setError(null);
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : "Failed to fetch analysis results.";

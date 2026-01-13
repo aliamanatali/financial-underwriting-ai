@@ -30,11 +30,11 @@ export default function DocumentUpload({
       return "Only PDF files are allowed";
     }
 
-    // Check file size (max 50MB)
-    const maxSize = 50 * 1024 * 1024; // 50MB
-    if (file.size > maxSize) {
-      return "File size must be less than 50MB";
-    }
+    // Validation limit removed
+    // const maxSize = 50 * 1024 * 1024; // 50MB
+    // if (file.size > maxSize) {
+    //   return "File size must be less than 50MB";
+    // }
 
     return null;
   };
@@ -199,7 +199,7 @@ export default function DocumentUpload({
               </label>
             </div>
             <p className="mt-2 text-sm text-gray-600">or drag and drop</p>
-            <p className="mt-1 text-xs text-gray-500">PDF files up to 50MB</p>
+            <p className="mt-1 text-xs text-gray-500">PDF files (No Size Limit)</p>
           </>
         )}
       </div>

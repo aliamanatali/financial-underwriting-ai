@@ -25,6 +25,110 @@ class MultiDocumentExtractionService:
         """Initialize the extraction service with optional Gemini service."""
         self.gemini_service = gemini_service
     
+    async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
+        """
+        Extract aggregated financial data from CSV files.
+        Returns a single summary entry per document.
+        
+        Args:
+            file_content: Raw bytes of the CSV file
+            filename: Name of the file for reference
+            
+        Returns:
+            List with a single dictionary containing aggregated expense data
+        """
+        import csv
+        
+        try:
+            logger.info(f"Processing CSV file: {filename}")
+            
+            # Decode content
+            try:
+                text_content = file_content.decode('utf-8')
+            except UnicodeDecodeError:
+                text_content = file_content.decode('latin-1')
+                
+            f = io.StringIO(text_content)
+            reader = csv.reader(f)
+            all_rows = list(reader)
+            
+            if not all_rows:
+                logger.warning(f"No rows found in {filename}")
+                return []
+            
+            # Check for header
+            first_row = all_rows[0] if all_rows else []
+            skip_first_row = False
+            if first_row:
+                first_row_str = " ".join([str(cell).lower() for cell in first_row])
+                if any(keyword in first_row_str for keyword in ["id", "description", "category", "amount", "date", "notes", "expense", "item"]):
+                    skip_first_row = True
+            
+            # Aggregate data
+            start_row = 1 if skip_first_row else 0
+            total_amount = 0.0
+            row_count = 0
+            categories = set()
+            
+            for row in all_rows[start_row:]:
+                if not row:
+                    continue
+                
+                # Find category
+                for cell in row:
+                    if cell and len(str(cell).strip()) > 1:
+                        # Check if it's NOT a number
+                        try:
+                            float(str(cell).replace(',', '').replace('$', ''))
+                        except ValueError:
+                            categories.add(str(cell).strip())
+                            break
+                
+                # Find amount
+                for cell in row:
+                    if cell:
+                        try:
+                            val = float(str(cell).replace(',', '').replace('$', ''))
+                            if val > 0:
+                                total_amount += val
+                                row_count += 1
+                                break
+                        except ValueError:
+                            continue
+            
+            if row_count == 0:
+                logger.warning(f"No valid data rows found in {filename}")
+                return []
+                
+            # Determine document type
+            doc_type = "Financial Statement"
+            if "t12" in filename.lower():
+                doc_type = "T12 Statement"
+            elif "rent" in filename.lower() and "roll" in filename.lower():
+                doc_type = "Rent Roll"
+            elif "p&l" in filename.lower() or "pl" in filename.lower():
+                doc_type = "P&L Statement"
+            
+            entry_type = "expense"
+            if "rent" in filename.lower() and "roll" in filename.lower():
+                entry_type = "property_info"
+            
+            aggregated_entry = {
+                "raw_text": f"{doc_type} - {filename}",
+                "amount": total_amount,
+                "source_document": filename,
+                "row_count": row_count,
+                "type": entry_type,
+                "categories_found": list(categories)[:5]
+            }
+            
+            logger.info(f"Extracted aggregated data from CSV {filename}: {row_count} rows, total amount: ${total_amount:,.2f}")
+            return [aggregated_entry]
+
+        except Exception as e:
+            logger.error(f"Error extracting from CSV file {filename}: {str(e)}", exc_info=True)
+            raise
+
     async def extract_from_excel(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
         Extract aggregated financial data from Excel files (T12, P&L, Rent Roll, etc.).
@@ -133,38 +237,46 @@ class MultiDocumentExtractionService:
             logger.error(f"Error inside sync Excel extraction for {filename}: {str(e)}", exc_info=True)
             raise
     
-    async def extract_from_pdf(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
+    async def extract_from_visual_document(self, file_content: bytes, filename: str, mime_type: str = "application/pdf") -> List[Dict[str, Any]]:
         """
-        Extract expense line items from PDF files using Gemini Vision API.
+        Extract expense line items from visual files (PDFs, Images) using Gemini Vision API.
         
         Args:
-            file_content: Raw bytes of the PDF file
+            file_content: Raw bytes of the file
             filename: Name of the file for reference
+            mime_type: MIME type of the file (e.g., "application/pdf", "image/png")
             
         Returns:
             List of dictionaries containing raw expense data
         """
         if not self.gemini_service:
-            logger.warning("Gemini service not available for PDF extraction")
+            logger.warning("Gemini service not available for visual extraction")
             return []
         
         try:
-            logger.info(f"Starting PDF extraction for {filename} ({len(file_content)} bytes)")
+            logger.info(f"Starting visual extraction for {filename} ({len(file_content)} bytes, type: {mime_type})")
             
-            # Upload PDF to Gemini using the File API
-            import base64
+            # Upload file to Gemini using the File API
             import tempfile
+            import os
             
-            # For PDFs, we need to use the File API
+            # Determine extension from mime type or filename
+            ext = ".pdf"
+            if "image" in mime_type:
+                if "png" in mime_type: ext = ".png"
+                elif "jpeg" in mime_type or "jpg" in mime_type: ext = ".jpg"
+            elif filename:
+                 _, ext = os.path.splitext(filename)
+            
             # Create a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
                 tmp_file.write(file_content)
                 tmp_path = tmp_file.name
             
             try:
                 # Upload the file to Gemini
-                uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
-                logger.info(f"Uploaded PDF to Gemini: {uploaded_file.name}")
+                uploaded_file = genai.upload_file(tmp_path, mime_type=mime_type)
+                logger.info(f"Uploaded file to Gemini: {uploaded_file.name} ({mime_type})")
                 
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
@@ -237,7 +349,7 @@ class MultiDocumentExtractionService:
                             logger.warning(f"Could not convert amount to float for monthly calculation: {expense.get('amount')}")
                             expense["amount"] = 0.0
                 
-                logger.info(f"Extracted {len(expenses_data)} expense items from PDF {filename}")
+                logger.info(f"Extracted {len(expenses_data)} expense items from {filename}")
                 return expenses_data
                 
             finally:
@@ -251,16 +363,16 @@ class MultiDocumentExtractionService:
             logger.error(f"Response text was: {response_text if 'response_text' in locals() else 'N/A'}")
             # Return placeholder instead of raising
             return [{
-                "raw_text": f"PDF Document - {filename} (JSON parsing error)",
+                "raw_text": f"Document - {filename} (JSON parsing error)",
                 "amount": 0.0,
                 "source_document": filename,
                 "error": str(e)
             }]
         except Exception as e:
-            logger.error(f"Error extracting from PDF file {filename}: {str(e)}", exc_info=True)
+            logger.error(f"Error extracting from file {filename}: {str(e)}", exc_info=True)
             # Return placeholder instead of raising
             return [{
-                "raw_text": f"PDF Document - {filename} (Extraction error: {str(e)[:100]})",
+                "raw_text": f"Document - {filename} (Extraction error: {str(e)[:100]})",
                 "amount": 0.0,
                 "source_document": filename,
                 "error": str(e)
@@ -500,16 +612,29 @@ class MultiDocumentExtractionService:
                     logger.info(f"Extracting from Excel file: {filename}")
                     expenses = await self.extract_from_excel(file_content, filename)
                     logger.info(f"Extracted {len(expenses)} expenses from Excel: {filename}")
-                elif file_type == "pdf" or filename.endswith(".pdf"):
-                    logger.info(f"Extracting from PDF file: {filename}")
-                    expenses = await self.extract_from_pdf(file_content, filename)
-                    logger.info(f"Extracted {len(expenses)} expenses from PDF: {filename}")
+                elif file_type == "csv" or filename.lower().endswith(".csv"):
+                    logger.info(f"Extracting from CSV file: {filename}")
+                    expenses = await self.extract_from_csv(file_content, filename)
+                    logger.info(f"Extracted {len(expenses)} expenses from CSV: {filename}")
+
+                elif file_type == "visual" or file_type == "pdf" or filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
+                    logger.info(f"Extracting from visual file: {filename}")
                     
-                    # If PDF extraction returned empty, create a placeholder entry
+                    # Determine MIME type
+                    mime_type = "application/pdf"
+                    if filename.lower().endswith(".png"):
+                        mime_type = "image/png"
+                    elif filename.lower().endswith((".jpg", ".jpeg")):
+                        mime_type = "image/jpeg"
+                        
+                    expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
+                    logger.info(f"Extracted {len(expenses)} expenses from {filename}")
+                    
+                    # If extraction returned empty, create a placeholder entry
                     if not expenses:
-                        logger.warning(f"PDF extraction returned no expenses for {filename}, creating placeholder")
+                        logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
                         expenses = [{
-                            "raw_text": f"PDF Document - {filename} (No expenses extracted)",
+                            "raw_text": f"Document - {filename} (No expenses extracted)",
                             "amount": 0.0,
                             "source_document": filename
                         }]
