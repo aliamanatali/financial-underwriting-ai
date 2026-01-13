@@ -57,6 +57,13 @@ class ExpenseCategory(str, Enum):
     PROPERTY_INFO = "Property Characteristic"
     PHYSICAL_CONDITION = "Physical Condition"
     
+    # Explicit Major Variables
+    PURCHASE_PRICE = "Purchase Price"
+    PRICE_PER_UNIT = "Price per Unit"
+    TOTAL_UNITS = "Total Units"
+    YEAR_BUILT = "Year Built"
+    CURRENT_LOAN_BALANCE = "Current Loan Balance"
+    
     UNCATEGORIZED = "Uncategorized"
 
 # --- 2. Sub-Models ---

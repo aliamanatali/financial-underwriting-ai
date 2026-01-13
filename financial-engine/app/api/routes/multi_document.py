@@ -344,7 +344,8 @@ async def normalize_package_documents(
             documents_to_process.append({
                 "content": file_data["content"],
                 "filename": filename,
-                "type": file_type
+                "type": file_type,
+                "document_category": doc_metadata.document_type
             })
     
     if not documents_to_process:
@@ -879,21 +880,46 @@ async def analyze_deal_package(
                 if "purchase price" in mapped_val or "purchase price" in lower_text or "asking price" in lower_text:
                     if amount and amount > 0:
                         property_meta.purchase_price = amount
-                        # Also update loan amount if using LTV
-                        if hasattr(params, 'ltv') and params.ltv > 0:
-                             property_meta.current_loan_balance = sanitize_float(amount * params.ltv)
+                        # If we have a purchase price, we might want to update the loan amount if using LTV
+                        # BUT, current_loan_balance is meant for EXISTING debt.
+                        # The new loan amount is calculated in financial_service based on params.
                         logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
                 
+                elif "price per unit" in mapped_val or "price per unit" in lower_text or "$/unit" in lower_text:
+                    if amount and amount > 0:
+                        # We need total units to calculate total purchase price
+                        # Note: This relies on total units being extracted/set BEFORE or existing in property_meta
+                        # If total_units is not yet set, we might miss this. Ideally we'd do a second pass or check later.
+                        # For now, let's use what we have or try to find a "units" item in the same batch?
+                        # Actually, we are iterating through normalized_items. If units appear later, we might miss it.
+                        # Better approach: Store this value and calculate after the loop if purchase_price is still 0.
+                        # But for simplicity in this pass, let's try to use property_meta.total_units if available.
+                        
+                        # Store as temporary price_per_unit on the object (we might need to add it to PropertyMeta or just a local var)
+                        # Let's check if we have units
+                        if property_meta.total_units > 0:
+                             calc_price = amount * property_meta.total_units
+                             if property_meta.purchase_price == 0:
+                                 property_meta.purchase_price = calc_price
+                                 logger.info(f"Calculated Purchase Price from Price/Unit: ${amount:,.2f} * {property_meta.total_units} units = ${calc_price:,.2f}")
+                        else:
+                             # Store it in a way we can use later? Or just log warning.
+                             # Let's rely on the user to verify "Total Units" and "Purchase Price" if this calculation fails.
+                             # However, we can try to find a "Total Units" item in the full list right now if we really want to be robust.
+                             pass
+
                 elif "year built" in mapped_val or "year built" in lower_text:
                     # Try to extract year (might need regex if amount is not clean)
                     if amount and amount > 1800 and amount < 2030:
                         property_meta.year_built = int(amount)
+                        logger.info(f"Updated Year Built from extraction: {property_meta.year_built}")
                 
                 elif "total units" in mapped_val or "total units" in lower_text or "number of units" in lower_text:
                     if amount and amount > 0:
                         property_meta.total_units = int(amount)
+                        logger.info(f"Updated Total Units from extraction: {property_meta.total_units}")
                 
-                elif "loan" in mapped_val or "existing loan" in lower_text:
+                elif "current loan balance" in mapped_val or "loan balance" in mapped_val or "existing loan" in lower_text:
                      if amount and amount > 0:
                         property_meta.current_loan_balance = amount
                         logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")

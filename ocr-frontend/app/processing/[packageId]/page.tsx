@@ -78,7 +78,27 @@ function ProcessingContent() {
         setProgress(progressUpdate);
         
         // Update category statuses based on progress
-        if (progressUpdate.details?.current_file && progressUpdate.details?.total_files) {
+        if (progressUpdate.details?.document_category) {
+          const currentCategory = progressUpdate.details.document_category;
+          
+          setCategories(prev => {
+            return prev.map(cat => {
+              // If this is the current category, mark as processing
+              if (cat.name === currentCategory) {
+                return { ...cat, status: 'processing' };
+              }
+              
+              // If this category was previously processing but is no longer current, mark as completed
+              if (cat.status === 'processing') {
+                return { ...cat, status: 'completed' };
+              }
+              
+              // Keep existing status for others (completed stay completed, queued stay queued)
+              return cat;
+            });
+          });
+        } else if (progressUpdate.details?.current_file && progressUpdate.details?.total_files) {
+          // Fallback logic for legacy backend or missing category
           const fileIndex = progressUpdate.details.file_index || 0;
           const totalFiles = progressUpdate.details.total_files;
           

@@ -28,6 +28,14 @@ const AVAILABLE_CATEGORIES = [
   // Property Info
   "Property Characteristic",
   "Physical Condition",
+  
+  // Explicit Major Variables
+  "Purchase Price",
+  "Price per Unit",
+  "Total Units",
+  "Year Built",
+  "Current Loan Balance",
+
   "Uncategorized",
 ];
 

@@ -11,6 +11,7 @@ from typing import Dict, Any
 from app.dependencies import get_ingestion_service, get_financial_service, get_excel_service, get_memo_service, get_explainability_service, get_progress_service
 import logging
 from datetime import datetime
+import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -179,6 +180,41 @@ async def perform_analysis(
     
     await storage_service.save_deal_package(package.model_dump())
     logger.info(f"Saved analysis and package wrapper for {document_id}")
+
+    # Save audit logs to root directory
+    try:
+        # Assuming current working directory is inside financial-engine, root is one level up
+        # or we just save to the CWD if that's what "root" implies in context of execution,
+        # but user said "root directly". Assuming repo root.
+        # Check if we are in financial-engine
+        cwd = os.getcwd()
+        if os.path.basename(cwd) == "financial-engine":
+            root_dir = os.path.dirname(cwd)
+        else:
+            root_dir = cwd
+            
+        audit_file_path = os.path.join(root_dir, f"audit_logs_{document_id}.txt")
+        
+        with open(audit_file_path, "w", encoding="utf-8") as f:
+            f.write(f"AUDIT LOGS FOR DOCUMENT: {document_id}\n")
+            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+            f.write("=" * 80 + "\n\n")
+            
+            if analysis.audit_trail:
+                for log in analysis.audit_trail:
+                    f.write(f"Field:      {log.get('field_name', 'N/A')}\n")
+                    f.write(f"Value:      {log.get('extracted_value', 'N/A')}\n")
+                    f.write(f"Source:     {log.get('source', 'N/A')}\n")
+                    f.write(f"Method:     {log.get('method', 'N/A')}\n")
+                    f.write(f"Confidence: {log.get('confidence_score', 'N/A')}\n")
+                    f.write("-" * 40 + "\n")
+            else:
+                f.write("No audit trails found for this analysis.\n")
+                
+        logger.info(f"Successfully saved audit logs to: {audit_file_path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save audit logs to file: {str(e)}")
 
     # Return a dictionary created from the model, ensuring correct field names
     return analysis

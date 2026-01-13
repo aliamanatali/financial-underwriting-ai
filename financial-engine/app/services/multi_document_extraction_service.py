@@ -420,7 +420,12 @@ class MultiDocumentExtractionService:
             
             Rules:
             - Map income/rent to Group: "Revenue".
-            - Map property stats (Year Built, Roof Age) to Group: "Property Info" and Category: "Property Characteristic".
+            - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price".
+            - Map "Price per Unit", "Cost per Unit", "Asking Price per Unit" to Group: "Property Info" and Category: "Price per Unit".
+            - Map "Units", "Total Units", "Unit Count", "Number of Units" to Group: "Property Info" and Category: "Total Units".
+            - Map "Year Built", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built".
+            - Map "Loan Balance", "Mortgage", "Existing Debt", "Principal Balance" to Group: "Debt" and Category: "Current Loan Balance".
+            - Map general property stats (Roof Age, Sq Ft) to Group: "Property Info" and Category: "Property Characteristic".
             - Map Tax/Insurance to Group: "Tax & Insurance".
             - Map repairs/maintenance to Group: "Operating Expense".
             - For aggregated Excel documents (like "Rent Roll - rent_roll.xlsx" or "T12 Statement - T12_Statement.xlsx"), map to Category: "Property Characteristic" and Group: "Other".
@@ -512,6 +517,11 @@ class MultiDocumentExtractionService:
         
         # Keyword mapping
         category_keywords = {
+            "Purchase Price": (["purchase price","price", "asking price", "sale price"], "Property Info"),
+            "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),
+            "Total Units": (["units", "total units", "unit count", "number of units"], "Property Info"),
+            "Year Built": (["year built", "construction year", "built in"], "Property Info"),
+            "Current Loan Balance": (["loan balance", "existing loan", "mortgage balance", "principal balance"], "Debt"),
             "Utilities": (["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"], "Operating Expense"),
             "Real Estate Taxes": (["tax", "property tax", "real estate tax"], "Tax & Insurance"),
             "Repairs & Maintenance": (["repair", "maintenance", "r&m", "plumbing", "hvac", "painting"], "Operating Expense"),
@@ -523,7 +533,7 @@ class MultiDocumentExtractionService:
             "Marketing": (["marketing", "advertising", "leasing"], "Operating Expense"),
             "Administrative": (["administrative", "office", "supplies", "postage"], "Operating Expense"),
             "Gross Potential Rent": (["rent", "income", "revenue", "lease payment"], "Revenue"),
-            "Property Characteristic": (["year built", "roof age", "units", "sq ft"], "Property Info"),
+            "Property Characteristic": (["roof age", "sq ft", "square feet"], "Property Info"),
         }
         
         for category, (keywords, group) in category_keywords.items():
@@ -597,7 +607,8 @@ class MultiDocumentExtractionService:
                         "current_file": filename,
                         "file_index": idx + 1,
                         "total_files": total_files,
-                        "file_type": file_type
+                        "file_type": file_type,
+                        "document_category": doc.get("document_category")
                     }
                 )
             
@@ -725,6 +736,10 @@ class MultiDocumentExtractionService:
                                     group_enum = CategoryGroup.OPERATING_EXPENSE
                                 elif "Revenue" in category_group or "Income" in category_group:
                                     group_enum = CategoryGroup.REVENUE
+                                elif "Property" in category_group:
+                                    group_enum = CategoryGroup.PROPERTY_INFO
+                                elif "Debt" in category_group:
+                                    group_enum = CategoryGroup.DEBT
                                 else:
                                     group_enum = CategoryGroup.OTHER
                             except:
