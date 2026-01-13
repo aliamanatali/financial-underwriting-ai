@@ -6,21 +6,8 @@ import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import LoginPage from "@/components/LoginPage";
-
-interface DocumentMetadata {
-  document_id: string;
-  filename: string;
-  document_type: string;
-  upload_timestamp: string;
-  file_size: number;
-}
-
-interface DealPackage {
-  package_id: string;
-  property_name: string;
-  created_at: string;
-  documents: Record<string, DocumentMetadata[]>;
-}
+import { apiClient } from "@/lib/api";
+import { UploadProgress, DealPackage } from "@/lib/types";
 
 function UploadPackageContent() {
   const { user } = useAuth();
@@ -28,6 +15,8 @@ function UploadPackageContent() {
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ loaded: 0, total: 0, percentage: 0 });
+  const [processingProgress, setProcessingProgress] = useState<{ percentage: number; message: string }>({ percentage: 0, message: "Initializing..." });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
@@ -61,33 +50,40 @@ function UploadPackageContent() {
     }
 
     setIsUploading(true);
+    setUploadProgress({ loaded: 0, total: file.size, percentage: 0 });
+    setProcessingProgress({ percentage: 0, message: "Initializing..." });
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      // Use chunked upload with progress tracking
+      const data = await apiClient.uploadZipChunked(
+        file,
+        (progress) => {
+          setUploadProgress(progress);
+        },
+        (processing) => {
+          // Prevent race conditions: ignore "Initializing..." or 0% updates if we already have progress
+          setProcessingProgress((prev) => {
+            if (processing.message === "Initializing..." && prev.percentage > 0) {
+              return prev;
+            }
+            if (processing.percentage > prev.percentage ||
+               (processing.percentage === prev.percentage && processing.message !== "Initializing...") ||
+               prev.percentage === 0) {
+              return processing;
+            }
+            return prev;
+          });
+        }
+      );
+
+      setDealPackage(data);
       
+      // Extract property name from filename (remove .zip and _Inputs suffix)
       const propertyName = file.name
         .replace('.zip', '')
         .replace('_Inputs', '')
         .replace(/_/g, ' ');
-      formData.append("property_name", propertyName);
 
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/upload-zip`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Upload failed");
-      }
-
-      const data: DealPackage = await response.json();
-      setDealPackage(data);
-      
       const documentCount = Object.values(data.documents).reduce(
         (sum, docs) => sum + docs.length,
         0
@@ -103,6 +99,7 @@ function UploadPackageContent() {
       setError(errorMessage);
     } finally {
       setIsUploading(false);
+      setUploadProgress({ loaded: 0, total: 0, percentage: 0 });
     }
   };
 
@@ -196,8 +193,9 @@ function UploadPackageContent() {
             {/* Breadcrumbs / Context */}
             <div className="flex items-center gap-4">
               <button
+                type="button"
                 onClick={() => router.push("/dashboard")}
-                className="text-neutral-500 hover:text-neutral-900 transition-colors"
+                className="text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -268,8 +266,9 @@ function UploadPackageContent() {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={handleDownloadTemplate}
-                className="hidden sm:flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-900 transition-colors"
+                className="hidden sm:flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -315,16 +314,70 @@ function UploadPackageContent() {
                     />
 
                     {isUploading ? (
-                      <div className="space-y-4">
-                        <div className="mx-auto w-16 h-16 border-4 border-neutral-200 border-t-neutral-900 rounded-full animate-spin"></div>
-                        <div className="space-y-2">
-                          <p className="text-neutral-700 font-medium text-lg">
-                            Processing ZIP file...
-                          </p>
-                          <p className="text-sm text-neutral-600">
-                            Extracting and categorizing documents
-                          </p>
-                        </div>
+                      <div className="space-y-4 w-full max-w-sm px-4">
+                        {uploadProgress.percentage < 100 ? (
+                          <>
+                             <div className="relative pt-1">
+                              <div className="flex mb-2 items-center justify-between">
+                                <div>
+                                  <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-neutral-600 bg-neutral-200">
+                                    Uploading
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-xs font-semibold inline-block text-neutral-600">
+                                    {uploadProgress.percentage}%
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-neutral-200">
+                                <div
+                                  style={{ width: `${uploadProgress.percentage}%` }}
+                                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-neutral-900 transition-all duration-300 ease-in-out"
+                                ></div>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <p className="text-neutral-700 font-medium text-lg">
+                                Uploading ZIP file...
+                              </p>
+                              <p className="text-sm text-neutral-600">
+                                Please wait while we upload your documents.
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="relative pt-1">
+                              <div className="flex mb-2 items-center justify-between">
+                                <div>
+                                  <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-emerald-600 bg-emerald-100">
+                                    Processing
+                                  </span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-xs font-semibold inline-block text-emerald-600">
+                                    {processingProgress.percentage}%
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-neutral-200">
+                                <div
+                                  style={{ width: `${processingProgress.percentage}%` }}
+                                  className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-emerald-500 transition-all duration-300 ease-in-out"
+                                ></div>
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <p className="text-neutral-700 font-medium text-lg">
+                                Processing ZIP file...
+                              </p>
+                              <p className="text-sm text-neutral-600">
+                                {processingProgress.message || "Extracting and categorizing documents"}
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <>
@@ -354,7 +407,10 @@ function UploadPackageContent() {
                           or drag and drop your deal package archive here
                         </p>
 
-                        <button className="bg-neutral-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="bg-neutral-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                        >
                           <svg
                             xmlns="http://www.w3.org/2000/svg"
                             width="16"
@@ -409,8 +465,9 @@ function UploadPackageContent() {
                         </div>
                         <div className="mt-3 pt-3 border-t border-emerald-200">
                           <button
+                            type="button"
                             onClick={handleStartNormalization}
-                            className="w-full px-4 py-2.5 bg-neutral-900 text-white rounded-lg text-sm font-medium hover:bg-neutral-800 transition-colors shadow-sm flex items-center justify-center gap-2"
+                            className="w-full px-4 py-2.5 bg-neutral-900 text-white rounded-lg text-sm font-medium hover:bg-neutral-800 transition-colors shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                           >
                             <svg
                               className="w-4 h-4"

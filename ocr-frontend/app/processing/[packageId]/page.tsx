@@ -72,10 +72,28 @@ function ProcessingContent() {
         return; // Don't start normalization if already done
       }
       let hasRedirected = false;
+      let eventSource: EventSource | null = null;
       
       // Start progress stream
-      const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
-        setProgress(progressUpdate);
+      eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
+        // Only update progress if the percentage is greater or equal to current, 
+        // or if it's not the initial "Connecting..." message (which often has 0%)
+        // This prevents race conditions where a late "Connecting..." message overwrites actual progress
+        setProgress(prev => {
+            // Ignore "Connecting..." if we already have progress
+            if (progressUpdate.message === "Connecting..." && prev.percentage > 0) {
+                return prev;
+            }
+            
+            if (progressUpdate.percentage > prev.percentage || 
+               (progressUpdate.percentage === prev.percentage) ||
+               // Always accept if we are stuck at 0
+               prev.percentage === 0
+            ) {
+                return progressUpdate;
+            }
+            return prev;
+        });
         
         // Update category statuses based on progress
         if (progressUpdate.details?.document_category) {
@@ -138,7 +156,7 @@ function ProcessingContent() {
           
           // Close event source and redirect
           setTimeout(() => {
-            eventSource.close();
+            if (eventSource) eventSource.close();
             router.push(`/analysis/${packageId}`);
           }, 1500);
         }
@@ -160,15 +178,33 @@ function ProcessingContent() {
         
       } catch (err) {
         console.error("Normalization failed:", err);
-        eventSource.close();
+        if (eventSource) eventSource.close();
         // Redirect back to upload page on error
         setTimeout(() => {
           router.push(`/upload-package`);
         }, 2000);
       }
+      
+      // Return cleanup function to useEffect
+      return () => {
+          if (eventSource) {
+              console.log("Cleaning up EventSource");
+              eventSource.close();
+          }
+      };
     };
 
-    startNormalization();
+    // startNormalization is async, so we can't return its result directly to useEffect
+    // But we can keep track of the cleanup function it generates
+    let cleanupFunc: (() => void) | undefined;
+    
+    startNormalization().then(cleanup => {
+        cleanupFunc = cleanup;
+    });
+    
+    return () => {
+        if (cleanupFunc) cleanupFunc();
+    };
   }, [packageId, router]);
 
   return (

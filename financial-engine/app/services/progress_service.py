@@ -11,6 +11,7 @@ class ProgressService:
         self._active_progress: Dict[str, Dict[str, Any]] = {}
         # Listeners: {task_id: Set[asyncio.Queue]}
         self._listeners: Dict[str, Set[asyncio.Queue]] = {}
+        logger.info(f"ProgressService initialized at {id(self)}")
 
     async def update_progress(self, task_id: str, percentage: int, message: str, details: Optional[Dict[str, Any]] = None):
         """Updates the progress for a specific task ID."""
@@ -22,12 +23,12 @@ class ProgressService:
             progress_data["details"] = details
             
         self._active_progress[task_id] = progress_data
-        logger.info(f"Progress update for {task_id}: {percentage}% - {message}")
+        logger.info(f"Progress update for {task_id}: {percentage}% - {message} (Service ID: {id(self)})")
         
         # Notify listeners
         if task_id in self._listeners:
             listener_count = len(self._listeners[task_id])
-            logger.info(f"Dispatching progress for {task_id} to {listener_count} listeners")
+            logger.info(f"Dispatching progress for {task_id} to {listener_count} listeners (Service ID: {id(self)})")
             # Create a snapshot of listeners to avoid modification during iteration if a listener disconnects
             for i, queue in enumerate(list(self._listeners[task_id])):
                 try:
@@ -46,7 +47,7 @@ class ProgressService:
             self._listeners[task_id] = set()
         self._listeners[task_id].add(queue)
         
-        logger.info(f"New listener connected for task {task_id}")
+        logger.info(f"New listener connected for task {task_id} (Service ID: {id(self)})")
         
         # Send current state immediately if available
         if task_id in self._active_progress:

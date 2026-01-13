@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient } from "@/lib/api";
 import LoadingSpinner from "./LoadingSpinner";
 import WarningModal from "./WarningModal";
+import { UploadProgress } from "@/lib/types";
 
 interface ZipUploadProps {
   onUploadSuccess?: (packageId: string) => void;
@@ -38,13 +39,17 @@ export default function ZipUpload({
   const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ loaded: 0, total: 0, percentage: 0 });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [documentTypes, setDocumentTypes] = useState<DocumentTypeInfo[]>([]);
   const [isLoadingTypes, setIsLoadingTypes] = useState(true);
   
+  // Upload Speed Calculation
+  const startTimeRef = useRef<number>(0);
+  const [uploadSpeed, setUploadSpeed] = useState<string>("");
+
   // Warning Modal State
   const [isWarningOpen, setIsWarningOpen] = useState(false);
   const [warningTitle, setWarningTitle] = useState("");
@@ -112,12 +117,20 @@ export default function ZipUpload({
     }
 
     setIsUploading(true);
-    setUploadProgress(0);
+    setUploadProgress({ loaded: 0, total: file.size, percentage: 0 });
+    startTimeRef.current = Date.now();
 
     try {
       // Use chunked upload for better large file support
       const data = await apiClient.uploadZipChunked(file, (progress) => {
         setUploadProgress(progress);
+        
+        // Calculate speed
+        const elapsedTime = (Date.now() - startTimeRef.current) / 1000; // seconds
+        if (elapsedTime > 0) {
+          const speed = progress.loaded / elapsedTime; // bytes per second
+          setUploadSpeed(formatSpeed(speed));
+        }
       });
 
       setDealPackage(data);
@@ -152,8 +165,20 @@ export default function ZipUpload({
       }
     } finally {
       setIsUploading(false);
-      setUploadProgress(0);
+      // setUploadProgress({ loaded: 0, total: 0, percentage: 0 }); // Keep final state for UX
     }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const formatSpeed = (bytesPerSecond: number) => {
+    return formatBytes(bytesPerSecond) + '/s';
   };
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -230,30 +255,37 @@ export default function ZipUpload({
                 </div>
                 <div className="text-right">
                   <span className="text-xs font-semibold inline-block text-[#FF5E00]">
-                    {uploadProgress}%
+                    {uploadProgress.percentage}%
                   </span>
                 </div>
               </div>
               <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
                 <div
-                  style={{ width: `${uploadProgress}%` }}
+                  style={{ width: `${uploadProgress.percentage}%` }}
                   className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-[#FF5E00] transition-all duration-300 ease-in-out"
                 ></div>
               </div>
+              {/* Detailed Stats */}
+              {uploadProgress.percentage < 100 && (
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>{formatBytes(uploadProgress.loaded)} / {formatBytes(uploadProgress.total)}</span>
+                  <span>{uploadSpeed}</span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
               <p className="text-gray-700 font-medium text-lg">
-                {uploadProgress < 100 ? "Uploading ZIP file..." : "Processing..."}
+                {uploadProgress.percentage < 100 ? "Uploading ZIP file..." : "Processing ZIP file..."}
               </p>
               <p className="text-sm text-gray-600">
-                {uploadProgress < 100
+                {uploadProgress.percentage < 100
                   ? "Please wait while we upload your documents."
                   : "Extracting and categorizing documents. This may take a moment."}
               </p>
             </div>
             
-            {uploadProgress === 100 && (
+            {uploadProgress.percentage === 100 && (
                <div className="mx-auto w-8 h-8 border-2 border-gray-200 border-t-[#FF5E00] rounded-full animate-spin"></div>
             )}
           </div>
@@ -395,8 +427,9 @@ export default function ZipUpload({
               </div>
               <div className="mt-4 pt-4 border-t border-green-200">
                 <button
+                  type="button"
                   onClick={handleStartNormalization}
-                  className="w-full px-6 py-3 bg-[#FF5E00] text-white rounded-lg font-medium hover:bg-[#E65400] transition-colors shadow-sm flex items-center justify-center gap-2"
+                  className="w-full px-6 py-3 bg-[#FF5E00] text-white rounded-lg font-medium hover:bg-[#E65400] transition-colors shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <svg
                     className="w-5 h-5"

@@ -62,12 +62,16 @@ async def upload_zip_package(
     if not property_name:
         property_name = file.filename.replace('.zip', '').replace('_Inputs', '')
     
-    # Read ZIP file
-    content = await file.read()
+    # Create temp file for processing
+    temp_zip_path = os.path.join(TEMP_UPLOAD_DIR, f"temp_{uuid.uuid4()}.zip")
     
     try:
+        # Stream upload to temp file to avoid memory issues
+        with open(temp_zip_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+            
         # Process ZIP using the service
-        package, file_data_map = await zip_service.process_zip_content(content, property_name)
+        package, file_data_map = await zip_service.process_zip_file(temp_zip_path, property_name)
         
         # Update caches
         deal_packages_cache[package.package_id] = package
@@ -80,6 +84,13 @@ async def upload_zip_package(
     except Exception as e:
         logger.error(f"Error processing ZIP file: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing ZIP file: {str(e)}")
+    finally:
+        # Cleanup temp file
+        if os.path.exists(temp_zip_path):
+            try:
+                os.remove(temp_zip_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temp file {temp_zip_path}: {e}")
 
 
 @router.post("/packages/upload-chunk/init")
@@ -125,6 +136,7 @@ async def complete_chunk_upload(
     upload_id: str = Form(...),
     original_filename: str = Form(...),
     property_name: Optional[str] = Form(None),
+    progress_service: ProgressService = Depends(get_progress_service),
 ):
     """Complete the chunked upload and process the full file."""
     upload_dir = os.path.join(TEMP_UPLOAD_DIR, upload_id)
@@ -143,21 +155,27 @@ async def complete_chunk_upload(
         if not chunk_files:
              raise HTTPException(status_code=400, detail="No chunks found")
 
-        # Combine chunks into a single byte stream
-        zip_content = io.BytesIO()
-        for chunk_file in chunk_files:
-            with open(os.path.join(upload_dir, chunk_file), "rb") as f:
-                zip_content.write(f.read())
+        # Combine chunks into a single file
+        combined_zip_path = os.path.join(upload_dir, "combined.zip")
         
-        # Set file pointer to beginning
-        zip_content.seek(0)
+        with open(combined_zip_path, "wb") as outfile:
+            for chunk_file in chunk_files:
+                chunk_path = os.path.join(upload_dir, chunk_file)
+                with open(chunk_path, "rb") as infile:
+                    # Stream chunk content to output file
+                    shutil.copyfileobj(infile, outfile)
         
         # Determine property name if not provided
         if not property_name:
              property_name = original_filename.replace('.zip', '').replace('_Inputs', '')
 
-        # Process the full ZIP content
-        package, file_data_map = await zip_service.process_zip_content(zip_content.getvalue(), property_name)
+        # Process the full ZIP file from disk
+        package, file_data_map = await zip_service.process_zip_file(
+            combined_zip_path,
+            property_name,
+            progress_service=progress_service,
+            task_id=upload_id
+        )
         
         # Update caches
         deal_packages_cache[package.package_id] = package

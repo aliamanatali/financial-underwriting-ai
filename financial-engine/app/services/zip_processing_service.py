@@ -9,6 +9,9 @@ from typing import Optional, Dict, Any, Tuple
 
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
+# Avoid circular import if ProgressService is needed only for typing
+# But we need it for execution. We'll import inside the method if needed or use Any
+from app.services.progress_service import ProgressService
 
 logger = logging.getLogger(__name__)
 
@@ -81,14 +84,23 @@ def get_document_type_from_folder(folder_path: str) -> Optional[DocumentType]:
 class ZipProcessingService:
     """Service for processing ZIP uploads containing financial documents."""
 
-    async def process_zip_content(self, zip_content: bytes, property_name: str) -> Tuple[DealPackage, Dict[str, Any]]:
+    async def process_zip_file(
+        self,
+        zip_path: str,
+        property_name: str,
+        progress_service: Optional[ProgressService] = None,
+        task_id: Optional[str] = None
+    ) -> Tuple[DealPackage, Dict[str, Any]]:
         """
-        Process the content of a ZIP file, extract documents, creating a DealPackage,
+        Process a ZIP file from disk, extract documents, creating a DealPackage,
         and saving files to storage.
 
         Returns:
             Tuple containing the created DealPackage and a dictionary of file cache data.
         """
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 0, "Initializing ZIP processing...")
+
         # Create deal package
         package_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
@@ -109,13 +121,16 @@ class ZipProcessingService:
         file_cache_data = {}
         
         try:
-            with zipfile.ZipFile(io.BytesIO(zip_content)) as zip_ref:
+            # Open ZIP file from disk directly to avoid loading into memory
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 # Get list of all files in the ZIP
                 file_list = zip_ref.namelist()
                 logger.info(f"ZIP contains {len(file_list)} entries")
                 
                 # Process each file
-                for file_path in file_list:
+                total_files = len(file_list)
+                
+                for idx, file_path in enumerate(file_list):
                     # Skip directories and hidden files
                     if file_path.endswith('/') or os.path.basename(file_path).startswith('.'):
                         continue
@@ -190,6 +205,16 @@ class ZipProcessingService:
                     )
                     
                     files_processed += 1
+                    
+                    if progress_service and task_id:
+                        # Calculate progress
+                        # We use 10-90% range for processing files
+                        percent = 10 + int((idx + 1) / total_files * 80)
+                        await progress_service.update_progress(
+                            task_id,
+                            percent,
+                            f"Processing file {files_processed}/{total_files}: {filename}"
+                        )
                 
                 # Check for empty or missing document categories
                 for doc_type in DocumentType:
@@ -211,6 +236,9 @@ class ZipProcessingService:
         package_dict = package.model_dump()
         await storage_service.save_deal_package(package_dict)
         
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 100, "ZIP processing complete!")
+
         logger.info(f"Created deal package {package_id} with {sum(len(docs) for docs in package.documents.values())} documents")
         
         return package, file_cache_data

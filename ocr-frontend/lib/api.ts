@@ -216,7 +216,8 @@ class ApiClient {
 
   async uploadZipChunked(
     file: File,
-    onProgress?: (progress: number) => void
+    onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void,
+    onProcessingProgress?: (progress: { percentage: number; message: string }) => void
   ): Promise<DealPackage> {
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -259,8 +260,13 @@ class ApiClient {
       }
 
       if (onProgress) {
-        const progress = Math.round(((i + 1) / totalChunks) * 100);
-        onProgress(progress);
+        const loaded = Math.min((i + 1) * CHUNK_SIZE, file.size);
+        const percentage = Math.round((loaded / file.size) * 100);
+        onProgress({
+          loaded,
+          total: file.size,
+          percentage
+        });
       }
     }
 
@@ -276,17 +282,56 @@ class ApiClient {
       .replace(/_/g, ' ');
     completeFormData.append("property_name", propertyName);
 
-    const completeResponse = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/upload-chunk/complete`, {
-      method: "POST",
-      body: completeFormData,
-    });
-
-    if (!completeResponse.ok) {
-      const errorData = await completeResponse.json().catch(() => ({ detail: "Upload completion failed" }));
-      throw new Error(errorData.detail || "Upload completion failed");
+    // Start listening for processing progress before calling complete
+    let eventSource: EventSource | null = null;
+    if (onProcessingProgress) {
+        try {
+            // Using the progress/stream endpoint with the upload_id as task_id
+            eventSource = new EventSource(`${FIN_API_URL}/api/v1/progress/${upload_id}`);
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.percentage !== undefined) {
+                        onProcessingProgress({
+                            percentage: data.percentage,
+                            message: data.message || "Processing..."
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error parsing progress event:", e);
+                }
+            };
+            eventSource.onerror = (err) => {
+                // Connection might close normally when task finishes or on error
+                // We don't want to log heavy errors here as it might just be the stream ending
+                // console.log("Progress stream closed/error", err);
+                if (eventSource) {
+                    eventSource.close();
+                }
+            };
+        } catch (e) {
+            console.error("Failed to setup progress stream:", e);
+        }
     }
 
-    return completeResponse.json();
+    try {
+        const completeResponse = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/upload-chunk/complete`, {
+          method: "POST",
+          body: completeFormData,
+        });
+
+        if (!completeResponse.ok) {
+          const errorData = await completeResponse.json().catch(() => ({ detail: "Upload completion failed" }));
+          throw new Error(errorData.detail || "Upload completion failed");
+        }
+
+        return completeResponse.json();
+    } finally {
+        // Cleanup event source
+        if (eventSource) {
+            eventSource.close();
+        }
+    }
   }
 
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {
