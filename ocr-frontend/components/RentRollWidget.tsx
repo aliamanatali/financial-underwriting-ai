@@ -134,16 +134,58 @@ export default function RentRollWidget({
     };
   }, [items]);
 
+  // Calculate summary groups by unit type
+  const summaryGroups = React.useMemo(() => {
+    const groups: Record<string, {
+      count: number;
+      totalCurrentRent: number;
+      totalStabilizedRent: number;
+      totalMarketRent: number;
+      totalSqFt: number;
+    }> = {};
+
+    items.forEach(item => {
+      let key = item.unit_type || "Unknown";
+      
+      // Check if unit is vacant
+      const isVacant = item.tenant_name && item.tenant_name.toLowerCase() === "vacant";
+      if (isVacant) {
+        key = `${key} - Vacant`;
+      }
+      
+      if (!groups[key]) {
+        groups[key] = { count: 0, totalCurrentRent: 0, totalStabilizedRent: 0, totalMarketRent: 0, totalSqFt: 0 };
+      }
+      
+      groups[key].count++;
+      groups[key].totalCurrentRent += item.current_rent || 0;
+      groups[key].totalStabilizedRent += item.stabilized_rent || 0;
+      groups[key].totalMarketRent += item.market_rent || 0;
+      groups[key].totalSqFt += item.unit_size || 0;
+    });
+
+    return Object.entries(groups).map(([type, data]) => ({
+      type,
+      count: data.count,
+      percent: items.length > 0 ? data.count / items.length : 0,
+      avgCurrentRent: data.count > 0 ? data.totalCurrentRent / data.count : 0,
+      avgStabilizedRent: data.count > 0 ? data.totalStabilizedRent / data.count : 0,
+      avgMarketRent: data.count > 0 ? data.totalMarketRent / data.count : 0,
+      avgSqFt: data.count > 0 ? data.totalSqFt / data.count : 0
+    })).sort((a, b) => b.count - a.count); // Sort by count descending
+  }, [items]);
+
   const displaySummary = isEditing ? localSummary : (summary || localSummary);
 
-  const formatCurrency = (val: number) => 
+  const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
 
-  const formatPercent = (val: number) => 
-    (val * 100).toFixed(1) + "%";
+  const formatPercent = (val: number) =>
+    (val * 100).toFixed(0) + "%";
 
   return (
-    <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
+    <>
+      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
         <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
@@ -374,5 +416,56 @@ export default function RentRollWidget({
         </table>
       </div>
      </div>
-   );
- }
+
+      {/* Rent Roll Summary Table */}
+      <div className="mt-8">
+        <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
+        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
+            <h3 className="text-white font-medium">Rent Roll Summary</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
+                  <th className="px-6 py-3">Unit Mix</th>
+                  <th className="px-6 py-3 text-center">Unit Count</th>
+                  <th className="px-6 py-3 text-center">%</th>
+                  <th className="px-6 py-3 text-right">Avg. Current Rent</th>
+                  <th className="px-6 py-3 text-right">Stabilized Rent</th>
+                  <th className="px-6 py-3 text-right">Market Rent</th>
+                  <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {summaryGroups.map((group, idx) => (
+                  <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
+                    <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
+                    <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
+                    <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
+                    <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
+                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
+                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
+                    <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
+                  </tr>
+                ))}
+                {/* Totals Row */}
+                <tr className="border-t-2 border-neutral-900 font-bold bg-white">
+                  <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
+                  <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
+                  <td className="px-6 py-4 text-center text-neutral-900">100%</td>
+                  <td className="px-6 py-4 text-right text-neutral-900">
+                    {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
+                  </td>
+                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
+                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
+                  <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

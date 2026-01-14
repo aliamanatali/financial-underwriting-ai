@@ -114,7 +114,6 @@ export default function UnderwritingDashboard({
   analysis,
   onReanalyze,
 }: UnderwritingDashboardProps) {
-  const [isEditing, setIsEditing] = useState(false);
   const [isEditingPropertyDetails, setIsEditingPropertyDetails] = useState(false);
   const [isCommentaryExpanded, setIsCommentaryExpanded] = useState(true);
   const [editParams, setEditParams] = useState<DealParameters>(
@@ -155,7 +154,6 @@ export default function UnderwritingDashboard({
     if (onReanalyze) {
       console.log("Calling onReanalyze with params:", editParams);
       onReanalyze(editParams);
-      setIsEditing(false);
     } else {
       console.error("onReanalyze callback is not defined!");
     }
@@ -163,7 +161,6 @@ export default function UnderwritingDashboard({
 
   const handleCancel = () => {
     setEditParams(analysis.deal_parameters || editParams);
-    setIsEditing(false);
   };
 
   const getStatusDisplay = (status: string) => {
@@ -920,134 +917,6 @@ export default function UnderwritingDashboard({
       {/* Additional Detailed Sections with Neutral Design */}
       
 
-      {/* Alternative Deal Parameters View */}
-      {analysis.deal_parameters && (
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-sm font-semibold text-neutral-900">Alternative Parameters View</h3>
-            {!isEditing ? (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="text-[10px] font-medium text-neutral-500 hover:text-neutral-900 border border-neutral-200 px-2 py-1 rounded bg-neutral-50 hover:bg-white transition-all"
-              >
-                Edit Parameters
-              </button>
-            ) : (
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCancel}
-                  className="text-[10px] font-medium text-neutral-500 hover:text-neutral-900 border border-neutral-200 px-2 py-1 rounded bg-neutral-50 hover:bg-white transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all"
-                >
-                  Save & Regenerate
-                </button>
-              </div>
-            )}
-          </div>
-          
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'}`}>
-              <div className="text-xs text-neutral-600 flex items-center mb-1">
-                Rent Growth Rate <InfoTooltip term="Rent Growth" />
-              </div>
-              {isEditing ? (
-                <div className="flex items-center">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    pattern="[0-9.]*"
-                    className="w-full bg-white border border-neutral-300 rounded px-2 py-1 text-base font-bold text-neutral-900 focus:outline-none focus:border-neutral-900"
-                    value={(editParams.growth_rate * 100).toFixed(1)}
-                    onChange={(e) => handleParamChange('growth_rate', e.target.value)}
-                  />
-                  <span className="ml-1 font-bold text-neutral-500 text-sm">%</span>
-                </div>
-              ) : (
-                <p className="text-xl font-bold text-neutral-900">
-                  {formatPercent(analysis.deal_parameters.growth_rate)}
-                </p>
-              )}
-            </div>
-
-            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'}`}>
-              <div className="text-xs text-neutral-600 flex items-center mb-1">
-                Vacancy Rate <InfoTooltip term="Vacancy Rate" />
-              </div>
-              {isEditing ? (
-                <div className="flex items-center">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    pattern="[0-9.]*"
-                    className="w-full bg-white border border-neutral-300 rounded px-2 py-1 text-base font-bold text-neutral-900 focus:outline-none focus:border-neutral-900"
-                    value={(editParams.vacancy_rate * 100).toFixed(1)}
-                    onChange={(e) => handleParamChange('vacancy_rate', e.target.value)}
-                  />
-                  <span className="ml-1 font-bold text-neutral-500 text-sm">%</span>
-                </div>
-              ) : (
-                <p className="text-xl font-bold text-neutral-900">
-                  {formatPercent(analysis.deal_parameters.vacancy_rate)}
-                </p>
-              )}
-            </div>
-
-            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'}`}>
-              <div className="text-xs text-neutral-600 flex items-center mb-1">
-                Exit Cap Rate <InfoTooltip term="Exit Cap" />
-              </div>
-              {isEditing ? (
-                <div className="flex items-center">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    pattern="[0-9.]*"
-                    className="w-full bg-white border border-neutral-300 rounded px-2 py-1 text-base font-bold text-neutral-900 focus:outline-none focus:border-neutral-900"
-                    value={(editParams.exit_cap_rate * 100).toFixed(1)}
-                    onChange={(e) => handleParamChange('exit_cap_rate', e.target.value)}
-                  />
-                  <span className="ml-1 font-bold text-neutral-500 text-sm">%</span>
-                </div>
-              ) : (
-                <p className="text-xl font-bold text-neutral-900">
-                  {formatPercent(analysis.deal_parameters.exit_cap_rate)}
-                </p>
-              )}
-            </div>
-
-            <div className={`bg-neutral-50 p-4 rounded-lg border ${isEditing ? 'border-neutral-900 ring-2 ring-neutral-200' : 'border-neutral-100'} group/explanation relative cursor-help`}>
-              <div className="text-xs text-neutral-600 flex items-center mb-1">
-                Loan Amount <InfoTooltip term="Loan Amount" />
-              </div>
-              {isEditing ? (
-                <div className="flex items-center">
-                  <span className="mr-1 font-bold text-neutral-500 text-sm">$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    pattern="[0-9]*"
-                    className="w-full bg-white border border-neutral-300 rounded px-2 py-1 text-base font-bold text-neutral-900 focus:outline-none focus:border-neutral-900"
-                    value={editParams.loan_amount ?? 0}
-                    onChange={(e) => handleParamChange('loan_amount', e.target.value)}
-                  />
-                </div>
-              ) : (
-                <>
-                  <p className="text-xl font-bold text-neutral-900">
-                    {formatCurrency(analysis.deal_parameters?.loan_amount || 0)}
-                  </p>
-                  <ExplanationTooltip metadata={analysis.explainability?.["Loan Amount"]} />
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
 
 
