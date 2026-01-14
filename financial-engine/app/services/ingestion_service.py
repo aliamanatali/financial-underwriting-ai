@@ -119,6 +119,11 @@ class IngestionService:
         rent_roll_prompt = f"""
         Extract the rent roll from the document {unit_count_str}.
         
+        CRITICAL FOR UNIT TYPE:
+        - Extract the Unit Type EXACTLY as it appears in the document.
+        - Do NOT normalize, translate, or convert it.
+        - Examples: Keep "0/1.00", "2/1.00", "VACANT", "1 BR", "2 BDRM" exactly as written.
+        
         CRITICAL FOR MARKET RENT:
         - Look for "Market Rent", "Pro Forma Rent", "Potential Rent", or "Street Rent".
         - If Market Rent is not explicitly listed for a unit, DO NOT invent one. Return null or 0.0.
@@ -212,6 +217,11 @@ class IngestionService:
         # 2. Extract RentRoll (SAFE METHOD)
         rent_roll_prompt = f"""
         Extract the rent roll from the document for {property_meta.total_units} units.
+        
+        CRITICAL FOR UNIT TYPE:
+        - Extract the Unit Type EXACTLY as it appears in the document.
+        - Do NOT normalize, translate, or convert it.
+        - Examples: Keep "0/1.00", "2/1.00", "VACANT", "1 BR", "2 BDRM" exactly as written.
         
         CRITICAL FOR MARKET RENT:
         - Look for "Market Rent", "Pro Forma Rent", "Potential Rent", or "Street Rent".
