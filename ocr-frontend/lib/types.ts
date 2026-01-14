@@ -133,10 +133,13 @@ export interface PropertyMeta {
 
 export interface RentRollItem {
   unit_number: string;
+  unit_size: number;
   unit_type: string;
   tenant_name: string;
   current_rent: number;
+  stabilized_rent: number;
   market_rent: number;
+  move_in_date: string;
   lease_start: string;
   lease_end: string;
 }
@@ -145,8 +148,17 @@ export interface RentRollSummary {
   total_units: number;
   occupied_units: number;
   occupancy_rate: number;
+  avg_unit_size: number;
   total_monthly_rent: number;
   total_annual_rent: number;
+  total_stabilized_rent: number;
+  total_market_rent: number;
+  avg_rent_per_unit: number;
+  avg_rent_per_sf: number;
+  avg_stabilized_per_unit: number;
+  avg_stabilized_per_sf: number;
+  avg_market_per_unit: number;
+  avg_market_per_sf: number;
 }
 
 export interface StandardizedExpense {

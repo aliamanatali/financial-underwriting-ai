@@ -161,14 +161,25 @@ class NormalizationService:
                 item["lease_start"] = ""
             if item.get("tenant_name") is None:
                 item["tenant_name"] = "VACANT"
+            
+            # New fields defaults
+            if item.get("stabilized_rent") is None:
+                item["stabilized_rent"] = 0.0
+            if item.get("unit_size") is None:
+                item["unit_size"] = 0
+            if item.get("move_in_date") is None:
+                item["move_in_date"] = ""
 
             # Ensure all required fields are present with some default if possible
             rent_roll_item_data = {
                 "unit_number": item.get("unit_number", "N/A"),
                 "unit_type": item.get("unit_type", "Unknown"),
+                "unit_size": int(item.get("unit_size", 0)),
                 "tenant_name": item.get("tenant_name", "Unknown"),
                 "current_rent": item.get("current_rent", 0.0),
+                "stabilized_rent": item.get("stabilized_rent", 0.0),
                 "market_rent": item["market_rent"], # Already defaulted above
+                "move_in_date": item.get("move_in_date", ""),
                 "lease_start": item["lease_start"], # Already defaulted above
                 "lease_end": item.get("lease_end", ""),
             }

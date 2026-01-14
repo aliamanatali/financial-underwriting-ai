@@ -752,6 +752,7 @@ async def analyze_deal_package(
     financial_service = FinancialService(audit_log_service=audit_log_service)
     excel_service = ExcelService()
     memo_service = MemoService(gemini_service=gemini_service)
+    ingestion_service = IngestionService()
     
     # ===== STEP 1: BUILD ANALYSIS OBJECT FROM PACKAGE DATA =====
     # We use the normalized data that was stored in the package (and verified by user)
@@ -833,23 +834,77 @@ async def analyze_deal_package(
     # ===== STEP 2: CONVERT NORMALIZED DATA TO ANALYSIS STRUCTURE =====
     # Build property metadata, rent roll, and expenses from normalized items
     
-    # Handle missing loan_amount gracefully by using LTV calculation or default
-    # Note: current_loan_balance represents EXISTING debt, not the NEW loan being analyzed
-    # The NEW loan amount will be calculated in financial_service based on deal_parameters
-    current_loan_balance = 0.0
-    # Only set if there's an existing loan on the property (from extraction)
-    # The new loan_amount from params will be used in financial calculations, not here
+    # Logic to find Best OM for Extraction (Property Meta & Rent Roll)
+    selected_om = None
+    om_docs = package.documents.get(DocumentType.OFFERING_MEMORANDUM, [])
+    if om_docs:
+        # Select best matching OM based on property name match in filename
+        selected_om = om_docs[0]
+        if len(om_docs) > 1 and package.property_name:
+            prop_parts = package.property_name.lower().split()
+            best_score = 0
+            for doc in om_docs:
+                score = sum(1 for p in prop_parts if p in doc.filename.lower())
+                if score > best_score:
+                    best_score = score
+                    selected_om = doc
+        logger.info(f"Selected OM for extraction: {selected_om.filename}")
+
+    # Extract Property Meta & Rent Roll from OM if available
+    om_property_meta = None
+    om_rent_roll = []
     
-    property_meta = PropertyMeta(
-        address=package.property_name,
-        year_built=1980,  # Default - should be extracted from OM
-        purchase_price=0.0,  # Default to 0, will be updated from extraction
-        total_units=0,  # Default - should be calculated from rent roll
-        is_renovated=False,
-        current_loan_balance=current_loan_balance  # Existing debt, not new loan
-    )
+    if selected_om:
+        try:
+            doc_id = selected_om.document_id
+            file_content = None
+            if doc_id in file_storage_cache:
+                file_content = file_storage_cache[doc_id].get("content")
+            else:
+                extension = Path(selected_om.filename).suffix
+                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+                file_content = await storage_service.get_document_file(storage_path)
+            
+            if file_content:
+                # Extract Meta
+                await progress_service.update_progress(package_id, 30, "Extracting Property Meta from OM...")
+                om_property_meta = await ingestion_service.extract_property_meta_from_pdf(file_content)
+                logger.info(f"Extracted Property Meta from OM: {om_property_meta}")
+                
+                # Extract Rent Roll
+                await progress_service.update_progress(package_id, 40, "Extracting Rent Roll from OM...")
+                target_units = om_property_meta.total_units if om_property_meta else 0
+                om_rent_roll = await ingestion_service.extract_rent_roll_from_pdf(file_content, total_units=target_units)
+                logger.info(f"Extracted {len(om_rent_roll)} Rent Roll items from OM")
+                
+                # Reconcile unit count
+                if len(om_rent_roll) > 0:
+                     if not om_property_meta.total_units or om_property_meta.total_units != len(om_rent_roll):
+                         om_property_meta.total_units = len(om_rent_roll)
+
+        except Exception as e:
+            logger.error(f"Failed to extract from OM: {e}")
+
+    # Initialize Property Meta (OM > Default)
+    if om_property_meta:
+        property_meta = om_property_meta
+        # Ensure address fallback
+        if not property_meta.address or property_meta.address == "Unknown":
+            property_meta.address = package.property_name
+    else:
+        property_meta = PropertyMeta(
+            address=package.property_name,
+            year_built=1980,
+            purchase_price=0.0,
+            total_units=0,
+            is_renovated=False,
+            current_loan_balance=0.0
+        )
     
-    # Apply Manual Overrides for Property Meta
+    # Initialize Rent Roll (OM > Empty)
+    rent_roll: List[RentRollItem] = om_rent_roll if om_rent_roll else []
+
+    # Apply Manual Overrides for Property Meta (Overrides everything)
     if package.manual_overrides:
         if "total_units" in package.manual_overrides:
             property_meta.total_units = int(package.manual_overrides["total_units"])
@@ -863,19 +918,16 @@ async def analyze_deal_package(
         if "current_loan_balance" in package.manual_overrides:
             property_meta.current_loan_balance = float(package.manual_overrides["current_loan_balance"])
             logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
-    
-    rent_roll: List[RentRollItem] = []
     historical_expenses: List[StandardizedExpense] = []
     
-    # Parse normalized items
+    # Parse normalized items (Fill gaps, but don't overwrite OM data unless verified)
     for item in normalized_items:
         # GLOBAL CHECK: Unit Count from Metadata (e.g. from Excel Rent Roll)
-        # We check this on ALL items regardless of category, as Rent Rolls might be miscategorized
         if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
             row_count = item.metadata.get("row_count")
             if row_count and row_count > 0:
-                # Only update if we don't have a value or if this one seems more reliable (e.g. from actual file rows)
-                if property_meta.total_units == 0:
+                # Only update if we don't have a value or if verify forced it
+                if property_meta.total_units == 0 or item.user_verified:
                     property_meta.total_units = int(row_count)
                     logger.info(f"Updated Total Units from Rent Roll row count: {row_count}")
         
@@ -884,63 +936,47 @@ async def analyze_deal_package(
             try:
                 # Update Property Meta based on content
                 lower_text = item.raw_text.lower()
-                # Safely get amount from metadata
                 amount = 0.0
                 if item.metadata:
                     metadata_amount = item.metadata.get("amount", 0.0)
-                    # Handle None or 0.0 explicitly
                     if metadata_amount:
                         amount = sanitize_float(metadata_amount)
                 
-                # Check normalized value first, then raw text
                 mapped_val = item.normalized_value.lower()
+                
+                # Logic: Only update if (Current Value is 0) OR (Item is User Verified)
                 
                 if "purchase price" in mapped_val or "purchase price" in lower_text or "asking price" in lower_text:
                     if amount and amount > 0:
-                        property_meta.purchase_price = amount
-                        # If we have a purchase price, we might want to update the loan amount if using LTV
-                        # BUT, current_loan_balance is meant for EXISTING debt.
-                        # The new loan amount is calculated in financial_service based on params.
-                        logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
+                        if property_meta.purchase_price == 0 or item.user_verified:
+                            property_meta.purchase_price = amount
+                            logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
                 
                 elif "price per unit" in mapped_val or "price per unit" in lower_text or "$/unit" in lower_text:
                     if amount and amount > 0:
-                        # We need total units to calculate total purchase price
-                        # Note: This relies on total units being extracted/set BEFORE or existing in property_meta
-                        # If total_units is not yet set, we might miss this. Ideally we'd do a second pass or check later.
-                        # For now, let's use what we have or try to find a "units" item in the same batch?
-                        # Actually, we are iterating through normalized_items. If units appear later, we might miss it.
-                        # Better approach: Store this value and calculate after the loop if purchase_price is still 0.
-                        # But for simplicity in this pass, let's try to use property_meta.total_units if available.
-                        
-                        # Store as temporary price_per_unit on the object (we might need to add it to PropertyMeta or just a local var)
-                        # Let's check if we have units
                         if property_meta.total_units > 0:
                              calc_price = amount * property_meta.total_units
-                             if property_meta.purchase_price == 0:
+                             if property_meta.purchase_price == 0 or item.user_verified:
                                  property_meta.purchase_price = calc_price
                                  logger.info(f"Calculated Purchase Price from Price/Unit: ${amount:,.2f} * {property_meta.total_units} units = ${calc_price:,.2f}")
-                        else:
-                             # Store it in a way we can use later? Or just log warning.
-                             # Let's rely on the user to verify "Total Units" and "Purchase Price" if this calculation fails.
-                             # However, we can try to find a "Total Units" item in the full list right now if we really want to be robust.
-                             pass
 
                 elif "year built" in mapped_val or "year built" in lower_text:
-                    # Try to extract year (might need regex if amount is not clean)
                     if amount and amount > 1800 and amount < 2030:
-                        property_meta.year_built = int(amount)
-                        logger.info(f"Updated Year Built from extraction: {property_meta.year_built}")
+                        if property_meta.year_built == 0 or property_meta.year_built == 1980 or item.user_verified:
+                            property_meta.year_built = int(amount)
+                            logger.info(f"Updated Year Built from extraction: {property_meta.year_built}")
                 
                 elif "total units" in mapped_val or "total units" in lower_text or "number of units" in lower_text:
                     if amount and amount > 0:
-                        property_meta.total_units = int(amount)
-                        logger.info(f"Updated Total Units from extraction: {property_meta.total_units}")
+                        if property_meta.total_units == 0 or item.user_verified:
+                            property_meta.total_units = int(amount)
+                            logger.info(f"Updated Total Units from extraction: {property_meta.total_units}")
                 
                 elif "current loan balance" in mapped_val or "loan balance" in mapped_val or "existing loan" in lower_text:
                      if amount and amount > 0:
-                        property_meta.current_loan_balance = amount
-                        logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")
+                        if property_meta.current_loan_balance == 0 or item.user_verified:
+                            property_meta.current_loan_balance = amount
+                            logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")
 
             except Exception as e:
                 logger.warning(f"Could not parse property meta item: {item.raw_text}, error: {str(e)}")
@@ -993,6 +1029,24 @@ async def analyze_deal_package(
             except Exception as e:
                 logger.warning(f"Could not parse expense item: {item.raw_text}, error: {str(e)}")
     
+    # (Rent Roll extraction logic moved to start of function)
+
+    # Check for Rent Roll in Manual Overrides
+    if package.manual_overrides and "rent_roll" in package.manual_overrides:
+        try:
+            manual_rr = package.manual_overrides["rent_roll"]
+            if isinstance(manual_rr, list) and len(manual_rr) > 0:
+                rent_roll = []
+                for item in manual_rr:
+                    # Handle dictionary or object
+                    if isinstance(item, dict):
+                        rent_roll.append(RentRollItem(**item))
+                    else:
+                        rent_roll.append(item)
+                logger.info(f"Using manual override for Rent Roll with {len(rent_roll)} units")
+        except Exception as e:
+            logger.error(f"Failed to apply rent roll override: {e}")
+
     # Create a basic rent roll if none exists
     if not rent_roll:
         # Generate placeholder rent roll based on property size
@@ -1001,9 +1055,12 @@ async def analyze_deal_package(
             rent_roll.append(RentRollItem(
                 unit_number=f"Unit {i+1}",
                 unit_type="1BR",
+                unit_size=750,
                 tenant_name="Occupied",
                 current_rent=2000.0,
+                stabilized_rent=2200.0,
                 market_rent=2100.0,
+                move_in_date="",
                 lease_start="2024-01-01",
                 lease_end="2024-12-31"
             ))
@@ -1012,8 +1069,24 @@ async def analyze_deal_package(
     total_units = len(rent_roll)
     occupied_units = sum(1 for unit in rent_roll if unit.current_rent > 0)
     occupancy_rate = occupied_units / total_units if total_units > 0 else 0
+    
     total_monthly_rent = sum(unit.current_rent for unit in rent_roll)
     total_annual_rent = total_monthly_rent * 12
+    total_stabilized_rent = sum((unit.stabilized_rent or 0.0) for unit in rent_roll)
+    total_market_rent = sum((unit.market_rent or 0.0) for unit in rent_roll)
+    total_unit_size = sum((unit.unit_size or 0) for unit in rent_roll)
+
+    # Averages
+    avg_unit_size = total_unit_size / total_units if total_units > 0 else 0
+    
+    avg_rent_per_unit = total_monthly_rent / total_units if total_units > 0 else 0
+    avg_rent_per_sf = total_monthly_rent / total_unit_size if total_unit_size > 0 else 0
+
+    avg_stabilized_per_unit = total_stabilized_rent / total_units if total_units > 0 else 0
+    avg_stabilized_per_sf = total_stabilized_rent / total_unit_size if total_unit_size > 0 else 0
+
+    avg_market_per_unit = total_market_rent / total_units if total_units > 0 else 0
+    avg_market_per_sf = total_market_rent / total_unit_size if total_unit_size > 0 else 0
     
     # Apply Manual Overrides for GPR/Rent
     if package.manual_overrides:
@@ -1037,8 +1110,17 @@ async def analyze_deal_package(
         total_units=total_units,
         occupied_units=occupied_units,
         occupancy_rate=occupancy_rate,
+        avg_unit_size=avg_unit_size,
         total_monthly_rent=total_monthly_rent,
-        total_annual_rent=total_annual_rent
+        total_annual_rent=total_annual_rent,
+        total_stabilized_rent=total_stabilized_rent,
+        total_market_rent=total_market_rent,
+        avg_rent_per_unit=avg_rent_per_unit,
+        avg_rent_per_sf=avg_rent_per_sf,
+        avg_stabilized_per_unit=avg_stabilized_per_unit,
+        avg_stabilized_per_sf=avg_stabilized_per_sf,
+        avg_market_per_unit=avg_market_per_unit,
+        avg_market_per_sf=avg_market_per_sf
     )
     
     # Update property meta total units if 0

@@ -1,0 +1,378 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { RentRollItem, RentRollSummary } from "@/lib/types";
+
+interface RentRollWidgetProps {
+  rentRoll: RentRollItem[];
+  summary?: RentRollSummary;
+  packageId: string;
+  onUpdate?: () => void;
+}
+
+export default function RentRollWidget({
+  rentRoll,
+  summary,
+  packageId,
+  onUpdate,
+}: RentRollWidgetProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [items, setItems] = useState<RentRollItem[]>(rentRoll);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setItems(rentRoll);
+  }, [rentRoll]);
+
+  const handleItemChange = (index: number, field: keyof RentRollItem, value: any) => {
+    const newItems = [...items];
+    newItems[index] = {
+      ...newItems[index],
+      [field]: ["current_rent", "market_rent", "stabilized_rent", "unit_size"].includes(field) ? parseFloat(value) || 0 : value,
+    };
+    setItems(newItems);
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL || "http://localhost:8001";
+      
+      const response = await fetch(`${API_BASE_URL}/api/v1/multi-document/packages/${packageId}/manual-overrides`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rent_roll: items,
+        }),
+      });
+
+      if (response.ok) {
+        setIsEditing(false);
+        if (onUpdate) {
+          onUpdate();
+        }
+      } else {
+        console.error("Failed to save rent roll");
+        alert("Failed to save changes. Please try again.");
+      }
+    } catch (error) {
+      console.error("Error saving rent roll:", error);
+      alert("An error occurred while saving.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setItems(rentRoll);
+    setIsEditing(false);
+  };
+
+  const addItem = () => {
+    setItems([
+      ...items,
+      {
+        unit_number: `Unit ${items.length + 1}`,
+        unit_size: 0,
+        unit_type: "1BR",
+        tenant_name: "Vacant",
+        current_rent: 0,
+        stabilized_rent: 0,
+        market_rent: 0,
+        move_in_date: "",
+        lease_start: "",
+        lease_end: "",
+      },
+    ]);
+  };
+
+  const removeItem = (index: number) => {
+    const newItems = [...items];
+    newItems.splice(index, 1);
+    setItems(newItems);
+  };
+
+  // Calculate local summary for immediate feedback
+  const localSummary = React.useMemo(() => {
+    const totalUnits = items.length;
+    const occupiedUnits = items.filter(i => i.tenant_name && i.tenant_name.toLowerCase() !== "vacant").length;
+    const occupancyRate = totalUnits > 0 ? occupiedUnits / totalUnits : 0;
+    
+    const totalUnitSize = items.reduce((sum, item) => sum + (item.unit_size || 0), 0);
+    const avgUnitSize = totalUnits > 0 ? totalUnitSize / totalUnits : 0;
+
+    const totalMonthlyRent = items.reduce((sum, item) => sum + (item.current_rent || 0), 0);
+    const totalAnnualRent = totalMonthlyRent * 12;
+    
+    const totalStabilizedRent = items.reduce((sum, item) => sum + (item.stabilized_rent || 0), 0);
+    const totalMarketRent = items.reduce((sum, item) => sum + (item.market_rent || 0), 0);
+
+    const avgRentPerUnit = totalUnits > 0 ? totalMonthlyRent / totalUnits : 0;
+    const avgRentPerSF = totalUnitSize > 0 ? totalMonthlyRent / totalUnitSize : 0;
+    
+    const avgStabilizedPerUnit = totalUnits > 0 ? totalStabilizedRent / totalUnits : 0;
+    const avgStabilizedPerSF = totalUnitSize > 0 ? totalStabilizedRent / totalUnitSize : 0;
+    
+    const avgMarketPerUnit = totalUnits > 0 ? totalMarketRent / totalUnits : 0;
+    const avgMarketPerSF = totalUnitSize > 0 ? totalMarketRent / totalUnitSize : 0;
+
+    return {
+      total_units: totalUnits,
+      occupied_units: occupiedUnits,
+      occupancy_rate: occupancyRate,
+      avg_unit_size: avgUnitSize,
+      total_monthly_rent: totalMonthlyRent,
+      total_annual_rent: totalAnnualRent,
+      total_stabilized_rent: totalStabilizedRent,
+      total_market_rent: totalMarketRent,
+      avg_rent_per_unit: avgRentPerUnit,
+      avg_rent_per_sf: avgRentPerSF,
+      avg_stabilized_per_unit: avgStabilizedPerUnit,
+      avg_stabilized_per_sf: avgStabilizedPerSF,
+      avg_market_per_unit: avgMarketPerUnit,
+      avg_market_per_sf: avgMarketPerSF
+    };
+  }, [items]);
+
+  const displaySummary = isEditing ? localSummary : (summary || localSummary);
+
+  const formatCurrency = (val: number) => 
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
+
+  const formatPercent = (val: number) => 
+    (val * 100).toFixed(1) + "%";
+
+  return (
+    <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
+      <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
+        <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="3" y1="9" x2="21" y2="9"></line>
+            <line x1="9" y1="21" x2="9" y2="9"></line>
+          </svg>
+          Rent Roll Detail
+        </h3>
+        {!isEditing ? (
+          <button
+            onClick={() => setIsEditing(true)}
+            className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+            </svg>
+            Edit Rent Roll
+          </button>
+        ) : (
+          <div className="flex gap-2">
+             <button
+              onClick={addItem}
+              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+            >
+              + Add Unit
+            </button>
+            <button
+              onClick={handleCancel}
+              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="text-xs font-medium bg-neutral-900 text-white px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
+              <th className="px-4 py-3">Unit #</th>
+              <th className="px-4 py-3 text-right">Unit Size</th>
+              <th className="px-4 py-3">Unit Type</th>
+              <th className="px-4 py-3 text-right">Current Rent</th>
+              <th className="px-4 py-3 text-right">Stabilized Rent</th>
+              <th className="px-4 py-3 text-right">Market Rent</th>
+              <th className="px-4 py-3 text-center">Move-In Date</th>
+              <th className="px-4 py-3 text-center">Lease Start</th>
+              <th className="px-4 py-3 text-center">Lease End</th>
+              {isEditing && <th className="px-4 py-3 text-center">Action</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {items.map((item, idx) => (
+              <tr key={idx} className="group hover:bg-neutral-50/50 transition-colors">
+                <td className="px-4 py-2.5 font-medium text-neutral-900">
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={item.unit_number}
+                      onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
+                      className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.unit_number}
+                </td>
+                <td className="px-4 py-2.5 text-right text-neutral-600">
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={item.unit_size}
+                      onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
+                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.unit_size || "-"}
+                </td>
+                <td className="px-4 py-2.5 text-neutral-600">
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={item.unit_type}
+                      onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
+                      className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.unit_type}
+                </td>
+                <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={item.current_rent}
+                      onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
+                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : formatCurrency(item.current_rent)}
+                </td>
+                <td className="px-4 py-2.5 text-right text-neutral-600">
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={item.stabilized_rent}
+                      onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
+                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : formatCurrency(item.stabilized_rent || 0)}
+                </td>
+                <td className="px-4 py-2.5 text-right text-neutral-600">
+                  {isEditing ? (
+                    <input
+                      type="number"
+                      value={item.market_rent}
+                      onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
+                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : formatCurrency(item.market_rent || 0)}
+                </td>
+                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={item.move_in_date || ""}
+                      placeholder="MM/DD/YY"
+                      onChange={(e) => handleItemChange(idx, "move_in_date", e.target.value)}
+                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.move_in_date || "-"}
+                </td>
+                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={item.lease_start || ""}
+                      placeholder="MM/DD/YY"
+                      onChange={(e) => handleItemChange(idx, "lease_start", e.target.value)}
+                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.lease_start || "-"}
+                </td>
+                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+                  {isEditing ? (
+                    <input
+                      type="text"
+                      value={item.lease_end || ""}
+                      placeholder="MM/DD/YY"
+                      onChange={(e) => handleItemChange(idx, "lease_end", e.target.value)}
+                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    />
+                  ) : item.lease_end || "-"}
+                </td>
+                {isEditing && (
+                  <td className="px-4 py-2.5 text-center">
+                    <button
+                      onClick={() => removeItem(idx)}
+                      className="text-neutral-400 hover:text-rose-500 transition-colors p-1"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M18 6 6 18"></path>
+                        <path d="m6 6 12 12"></path>
+                      </svg>
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
+                  No rent roll data available.
+                </td>
+              </tr>
+            )}
+          </tbody>
+          <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
+             {/* Header Row */}
+             <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
+               <td className="px-4 py-3 text-center">Total Units</td>
+               <td className="px-4 py-3 text-right">Avg Unit Size</td>
+               <td className="px-4 py-3"></td>
+               <td className="px-4 py-3 text-right">Current Rent</td>
+               <td className="px-4 py-3 text-right">Stabilized Rent</td>
+               <td className="px-4 py-3 text-right">Market Rent</td>
+               <td colSpan={isEditing ? 4 : 3}></td>
+             </tr>
+             {/* Data Row */}
+             <tr className="border-b border-neutral-800/50 align-top">
+               <td className="px-4 py-3 text-center">
+                 <div className="font-bold text-lg">{displaySummary.total_units}</div>
+               </td>
+               <td className="px-4 py-3 text-right">
+                  <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
+               </td>
+               <td className="px-4 py-3"></td>
+               <td className="px-4 py-3 text-right">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
+                  </div>
+               </td>
+               <td className="px-4 py-3 text-right">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
+                  </div>
+               </td>
+               <td className="px-4 py-3 text-right">
+                  <div className="text-xs space-y-1">
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_market_per_unit)}</span></div>
+                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
+                  </div>
+               </td>
+               <td colSpan={isEditing ? 4 : 3}></td>
+             </tr>
+          </tfoot>
+        </table>
+      </div>
+     </div>
+   );
+ }

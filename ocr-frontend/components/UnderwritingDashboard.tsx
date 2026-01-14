@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
+import RentRollWidget from "./RentRollWidget";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
@@ -458,6 +459,14 @@ export default function UnderwritingDashboard({
         </div>
       </div>
 
+      {/* Rent Roll Section - Editable */}
+      <RentRollWidget
+        rentRoll={analysis.rent_roll || []}
+        summary={analysis.rent_roll_summary}
+        packageId={analysis.document_id}
+        onUpdate={() => onReanalyze && onReanalyze(editParams)}
+      />
+
       {/* AI Underwriting Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* AI Conclusion Card */}
@@ -906,52 +915,6 @@ export default function UnderwritingDashboard({
           <SensitivityAnalysisWidget analysis={analysis} />
         </div>
 
-        {/* Rent Roll Summary */}
-        <div className="lg:col-span-7 bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-neutral-100">
-            <h3 className="text-sm font-semibold text-neutral-900">Rent Roll Summary</h3>
-          </div>
-          <div className="p-6 grid grid-cols-4 gap-4 border-b border-neutral-100">
-            <div>
-              <span className="text-[10px] uppercase text-neutral-500 font-medium">Total Units</span>
-              <div className="text-lg font-semibold text-neutral-900 mt-1">{totalUnits}</div>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase text-neutral-500 font-medium">Occupied</span>
-              <div className="text-lg font-semibold text-neutral-900 mt-1">{occupiedUnits}</div>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase text-neutral-500 font-medium">Avg Rent</span>
-              <div className="text-lg font-semibold text-neutral-900 mt-1">{formatCurrency(analysis.rent_roll_summary?.total_monthly_rent ? analysis.rent_roll_summary.total_monthly_rent / totalUnits : 0)}</div>
-            </div>
-            <div>
-              <span className="text-[10px] uppercase text-neutral-500 font-medium">Mkt Rent</span>
-              <div className="text-lg font-semibold text-neutral-900 mt-1">{formatCurrency(analysis.rent_roll.reduce((sum, item) => sum + item.market_rent, 0) / (analysis.rent_roll.length || 1))}</div>
-            </div>
-          </div>
-          {analysis.unit_mix_summary && analysis.unit_mix_summary.length > 0 && (
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="bg-neutral-50/50 text-xs text-neutral-500 font-medium border-b border-neutral-100">
-                  <th className="px-6 py-3 font-medium">Unit Type</th>
-                  <th className="px-6 py-3 font-medium text-right">Count</th>
-                  <th className="px-6 py-3 font-medium text-right">Avg Current Rent</th>
-                  <th className="px-6 py-3 font-medium text-right">Market Rent</th>
-                </tr>
-              </thead>
-              <tbody>
-                {analysis.unit_mix_summary.map((unit, idx) => (
-                  <tr key={idx}>
-                    <td className="px-6 py-3 font-medium text-neutral-900">{unit.unit_type}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{unit.count}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(unit.avg_rent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(unit.market_rent)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
       </div>
 
       {/* Additional Detailed Sections with Neutral Design */}

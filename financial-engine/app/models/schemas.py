@@ -90,10 +90,13 @@ class PropertyMeta(BaseModel):
 
 class RentRollItem(BaseModel):
     unit_number: str
+    unit_size: Optional[int] = 0
     unit_type: str
     tenant_name: Optional[str] = "Unknown"
     current_rent: float = 0.0
+    stabilized_rent: Optional[float] = 0.0
     market_rent: Optional[float] = 0.0
+    move_in_date: Optional[str] = None
     lease_start: Optional[str] = None
     lease_end: Optional[str] = None
 
@@ -101,8 +104,17 @@ class RentRollSummary(BaseModel):
     total_units: int
     occupied_units: int
     occupancy_rate: float
+    avg_unit_size: float
     total_monthly_rent: float
     total_annual_rent: float
+    total_stabilized_rent: float
+    total_market_rent: float
+    avg_rent_per_unit: float
+    avg_rent_per_sf: float
+    avg_stabilized_per_unit: float
+    avg_stabilized_per_sf: float
+    avg_market_per_unit: float
+    avg_market_per_sf: float
 
 class ProFormaExpenseItem(BaseModel):
     name: str

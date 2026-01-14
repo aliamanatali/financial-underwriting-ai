@@ -27,9 +27,12 @@ class AuditLog(BaseModel):
 class RentRollItem(BaseModel):
     unit_number: str = Field(..., alias="Unit #") # Required
     unit_type: str = Field(..., alias="Unit Type")
+    unit_size: Optional[int] = Field(0, alias="Unit Size")
     tenant_name: Optional[str] = Field(None, alias="Tenant Name")
     current_rent: float = Field(..., alias="Current Rent")
+    stabilized_rent: Optional[float] = Field(0.0, alias="Stabilized Rent")
     market_rent: Optional[float] = Field(None, alias="Market Rent")
+    move_in_date: Optional[str] = Field(None, alias="Move-In Date")
     lease_start: Optional[str] = Field(None, alias="Lease Start")
     lease_end: Optional[str] = Field(None, alias="Lease End")
 
