@@ -1068,6 +1068,7 @@ async def analyze_deal_package(
     # Calculate rent roll summary
     total_units = len(rent_roll)
     occupied_units = sum(1 for unit in rent_roll if unit.current_rent > 0)
+    occupied_sf = sum((unit.unit_size or 0) for unit in rent_roll if unit.current_rent > 0)
     occupancy_rate = occupied_units / total_units if total_units > 0 else 0
     
     total_monthly_rent = sum(unit.current_rent for unit in rent_roll)
@@ -1079,8 +1080,9 @@ async def analyze_deal_package(
     # Averages
     avg_unit_size = total_unit_size / total_units if total_units > 0 else 0
     
-    avg_rent_per_unit = total_monthly_rent / total_units if total_units > 0 else 0
-    avg_rent_per_sf = total_monthly_rent / total_unit_size if total_unit_size > 0 else 0
+    # Modified to use occupied units/sf for Current Rent averages (ignore 0$ rent)
+    avg_rent_per_unit = total_monthly_rent / occupied_units if occupied_units > 0 else 0
+    avg_rent_per_sf = total_monthly_rent / occupied_sf if occupied_sf > 0 else 0
 
     avg_stabilized_per_unit = total_stabilized_rent / total_units if total_units > 0 else 0
     avg_stabilized_per_sf = total_stabilized_rent / total_unit_size if total_unit_size > 0 else 0

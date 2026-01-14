@@ -95,10 +95,19 @@ export default function RentRollWidget({
   // Calculate local summary for immediate feedback
   const localSummary = React.useMemo(() => {
     const totalUnits = items.length;
-    const occupiedUnits = items.filter(i => i.tenant_name && i.tenant_name.toLowerCase() !== "vacant").length;
+    
+    // Filter items that are actually paying rent (occupied)
+    const payingItems = items.filter(i =>
+      i.tenant_name &&
+      i.tenant_name.toLowerCase() !== "vacant" &&
+      (i.current_rent || 0) > 0
+    );
+
+    const occupiedUnits = payingItems.length;
     const occupancyRate = totalUnits > 0 ? occupiedUnits / totalUnits : 0;
     
     const totalUnitSize = items.reduce((sum, item) => sum + (item.unit_size || 0), 0);
+    const payingUnitSize = payingItems.reduce((sum, item) => sum + (item.unit_size || 0), 0);
     const avgUnitSize = totalUnits > 0 ? totalUnitSize / totalUnits : 0;
 
     const totalMonthlyRent = items.reduce((sum, item) => sum + (item.current_rent || 0), 0);
@@ -107,8 +116,9 @@ export default function RentRollWidget({
     const totalStabilizedRent = items.reduce((sum, item) => sum + (item.stabilized_rent || 0), 0);
     const totalMarketRent = items.reduce((sum, item) => sum + (item.market_rent || 0), 0);
 
-    const avgRentPerUnit = totalUnits > 0 ? totalMonthlyRent / totalUnits : 0;
-    const avgRentPerSF = totalUnitSize > 0 ? totalMonthlyRent / totalUnitSize : 0;
+    // Calculate averages based on paying units only (ignoring 0$ rent units)
+    const avgRentPerUnit = occupiedUnits > 0 ? totalMonthlyRent / occupiedUnits : 0;
+    const avgRentPerSF = payingUnitSize > 0 ? totalMonthlyRent / payingUnitSize : 0;
     
     const avgStabilizedPerUnit = totalUnits > 0 ? totalStabilizedRent / totalUnits : 0;
     const avgStabilizedPerSF = totalUnitSize > 0 ? totalStabilizedRent / totalUnitSize : 0;
@@ -138,6 +148,7 @@ export default function RentRollWidget({
   const summaryGroups = React.useMemo(() => {
     const groups: Record<string, {
       count: number;
+      payingCount: number;
       totalCurrentRent: number;
       totalStabilizedRent: number;
       totalMarketRent: number;
@@ -147,17 +158,20 @@ export default function RentRollWidget({
     items.forEach(item => {
       let key = item.unit_type || "Unknown";
       
-      // Check if unit is vacant
-      const isVacant = item.tenant_name && item.tenant_name.toLowerCase() === "vacant";
+      // Check if unit is vacant (explicitly or 0 rent)
+      const isVacant = (item.tenant_name && item.tenant_name.toLowerCase() === "vacant") || (item.current_rent || 0) === 0;
       if (isVacant) {
         key = `${key} - Vacant`;
       }
       
       if (!groups[key]) {
-        groups[key] = { count: 0, totalCurrentRent: 0, totalStabilizedRent: 0, totalMarketRent: 0, totalSqFt: 0 };
+        groups[key] = { count: 0, payingCount: 0, totalCurrentRent: 0, totalStabilizedRent: 0, totalMarketRent: 0, totalSqFt: 0 };
       }
       
       groups[key].count++;
+      if ((item.current_rent || 0) > 0) {
+        groups[key].payingCount++;
+      }
       groups[key].totalCurrentRent += item.current_rent || 0;
       groups[key].totalStabilizedRent += item.stabilized_rent || 0;
       groups[key].totalMarketRent += item.market_rent || 0;
@@ -168,7 +182,7 @@ export default function RentRollWidget({
       type,
       count: data.count,
       percent: items.length > 0 ? data.count / items.length : 0,
-      avgCurrentRent: data.count > 0 ? data.totalCurrentRent / data.count : 0,
+      avgCurrentRent: data.payingCount > 0 ? data.totalCurrentRent / data.payingCount : 0,
       avgStabilizedRent: data.count > 0 ? data.totalStabilizedRent / data.count : 0,
       avgMarketRent: data.count > 0 ? data.totalMarketRent / data.count : 0,
       avgSqFt: data.count > 0 ? data.totalSqFt / data.count : 0

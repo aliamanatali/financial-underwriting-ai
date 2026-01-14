@@ -194,7 +194,9 @@ class FinancialService:
             scaled_count = int(round(raw_count * scaling_factor))
             total_scaled_count += scaled_count
             
-            avg_rent = sum(rents) / raw_count if raw_count > 0 else 0
+            # Calculate average rent excluding 0s
+            paying_rents = [r for r in rents if r > 0]
+            avg_rent = sum(paying_rents) / len(paying_rents) if paying_rents else 0
             mkt_rents = unit_market_rents.get(u_type, [])
             avg_mkt = sum(mkt_rents) / raw_count if raw_count > 0 else 0
             

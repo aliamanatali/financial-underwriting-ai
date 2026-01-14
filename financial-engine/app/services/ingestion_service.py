@@ -415,6 +415,9 @@ class IngestionService:
 
         # Calculate Occupied Units (Check if tenant name exists and is not N/A)
         occupied_units = sum(1 for item in rent_roll if item.tenant_name and item.tenant_name.lower() not in ["n/a", "", "vacant"] and item.current_rent and item.current_rent > 0)
+        
+        # Calculate SF for occupied units (for accurate Avg Rent/SF)
+        occupied_sf = sum((item.unit_size or 0) for item in rent_roll if item.tenant_name and item.tenant_name.lower() not in ["n/a", "", "vacant"] and item.current_rent and item.current_rent > 0)
 
         occupancy_rate = occupied_units / total_units if total_units > 0 else 0.0
 
@@ -429,8 +432,9 @@ class IngestionService:
         # Averages
         avg_unit_size = total_unit_size / total_units if total_units > 0 else 0
         
-        avg_rent_per_unit = total_monthly_rent / total_units if total_units > 0 else 0
-        avg_rent_per_sf = total_monthly_rent / total_unit_size if total_unit_size > 0 else 0
+        # Modified to use occupied units/sf for Current Rent averages (ignore 0$ rent)
+        avg_rent_per_unit = total_monthly_rent / occupied_units if occupied_units > 0 else 0
+        avg_rent_per_sf = total_monthly_rent / occupied_sf if occupied_sf > 0 else 0
 
         avg_stabilized_per_unit = total_stabilized_rent / total_units if total_units > 0 else 0
         avg_stabilized_per_sf = total_stabilized_rent / total_unit_size if total_unit_size > 0 else 0
