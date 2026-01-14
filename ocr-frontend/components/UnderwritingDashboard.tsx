@@ -629,7 +629,7 @@ export default function UnderwritingDashboard({
       {/* Financial Analysis Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Parameters */}
-        <div className="lg:col-span-4 bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
+        <div className="lg:col-span-4 bg-white rounded-xl border border-neutral-200 shadow-sm p-6 h-full">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-sm font-semibold text-neutral-900">Deal Parameters</h3>
             <div className="flex gap-2">
@@ -745,35 +745,36 @@ export default function UnderwritingDashboard({
               </div>
             </div>
 
-            {/* Upside Summary */}
-            <div className="bg-neutral-50 rounded-lg p-3 space-y-2 border border-neutral-100 mt-4">
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-neutral-500">NOI Upside</span>
-                <span className="text-emerald-600 font-medium">{formatCurrency(noiChange)}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-neutral-500">Cap Rate Upside</span>
-                <span className="text-neutral-900 font-medium">{(capRateChange * 100).toFixed(2)}%</span>
+              {/* Upside Summary */}
+              <div className="bg-neutral-50 rounded-lg p-3 space-y-2 border border-neutral-100 mt-4">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-500">NOI Upside</span>
+                  <span className="text-emerald-600 font-medium">{formatCurrency(noiChange)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-500">Cap Rate Upside</span>
+                  <span className="text-neutral-900 font-medium">{(capRateChange * 100).toFixed(2)}%</span>
+                </div>
               </div>
             </div>
-          </div>
         </div>
 
-        {/* Center: Operating Data */}
-        <div className="lg:col-span-8 bg-white rounded-xl border border-neutral-200 shadow-sm flex flex-col">
-          <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-neutral-900">Operating Analysis</h3>
-            <div className="flex gap-2">
-              <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-                <span className="w-2 h-2 rounded-full bg-neutral-300"></span> Historical (T12)
-              </span>
-              <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-                <span className="w-2 h-2 rounded-full bg-neutral-900"></span> Pro Forma (F12)
-              </span>
+        {/* Center: Operating Data & Sensitivity */}
+        <div className="lg:col-span-8 flex flex-col gap-6">
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm flex flex-col">
+            <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-neutral-900">Operating Analysis</h3>
+              <div className="flex gap-2">
+                <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+                  <span className="w-2 h-2 rounded-full bg-neutral-300"></span> Historical (T12)
+                </span>
+                <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+                  <span className="w-2 h-2 rounded-full bg-neutral-900"></span> Pro Forma (F12)
+                </span>
+              </div>
             </div>
-          </div>
-          
-          <div className="p-0 relative min-h-[200px]">
+            
+            <div className="p-0 relative">
             {hasCriticalIssues ? (
               <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-center p-6 border-b border-neutral-100 rounded-b-xl">
                 <div className="w-12 h-12 bg-rose-100 rounded-full flex items-center justify-center text-rose-500 mb-3">
@@ -903,20 +904,14 @@ export default function UnderwritingDashboard({
             </table>
           </div>
         </div>
+        
+        <SensitivityAnalysisWidget analysis={analysis} />
       </div>
+    </div>
 
-      {/* Bottom Row: Sensitivity & Rent Roll */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Sensitivity Matrix */}
-        <div className="lg:col-span-5">
-          <SensitivityAnalysisWidget analysis={analysis} />
-        </div>
-
-      </div>
 
       {/* Additional Detailed Sections with Neutral Design */}
       
-
 
 
 
@@ -959,8 +954,7 @@ export default function UnderwritingDashboard({
         <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
           <button
             onClick={() => setIsCommentaryExpanded(!isCommentaryExpanded)}
-            className="w-full px-6 py-4 flex items-center justify-between hover:bg-neutral-50 transition-colors"
-          >
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-neutral-50 transition-colors">
             <div className="flex items-center gap-3">
               <div className="flex-shrink-0 w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
