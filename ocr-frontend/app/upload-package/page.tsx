@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import LoadingSpinner from "@/components/LoadingSpinner";
+import WarningModal from "@/components/WarningModal";
 import LoginPage from "@/components/LoginPage";
 import { apiClient } from "@/lib/api";
 import { UploadProgress, DealPackage } from "@/lib/types";
@@ -20,6 +21,11 @@ function UploadPackageContent() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
+  const [warningModal, setWarningModal] = useState<{ isOpen: boolean; title: string; message: string }>({
+    isOpen: false,
+    title: "",
+    message: ""
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSidebar = () => {
@@ -76,8 +82,6 @@ function UploadPackageContent() {
         }
       );
 
-      setDealPackage(data);
-      
       // Extract property name from filename (remove .zip and _Inputs suffix)
       const propertyName = file.name
         .replace('.zip', '')
@@ -89,6 +93,41 @@ function UploadPackageContent() {
         0
       );
 
+      // Validation: Check for invalid folder structure (no documents found)
+      if (documentCount === 0) {
+        setWarningModal({
+          isOpen: true,
+          title: "Invalid Folder Structure",
+          message: "The uploaded ZIP file does not contain the expected folder structure. Please ensure your folders are named correctly (e.g., '01 - Offering Memorandum', '02 - Rent Roll', etc.) and contain valid files."
+        });
+        return;
+      }
+
+      // Validation: Check for missing required folders
+      // Required folders based on underwriting needs
+      const requiredFolders = [
+        "Offering Memorandum",
+        "Rent Roll",
+        "Financials"
+      ];
+
+      const missingFolders = requiredFolders.filter(folder => {
+        // Check if the folder exists in documents map and has at least one file
+        // The backend initializes all keys, so we check for length
+        const docs = data.documents[folder];
+        return !docs || docs.length === 0;
+      });
+
+      if (missingFolders.length > 0) {
+        setWarningModal({
+          isOpen: true,
+          title: "Missing Required Folders",
+          message: `The following required folders are missing or empty: ${missingFolders.join(", ")}. These documents are essential for the underwriting process. Please check your ZIP file and try again.`
+        });
+        return;
+      }
+
+      setDealPackage(data);
       setSuccess(
         `Successfully uploaded "${propertyName}" with ${documentCount} documents!`
       );
@@ -166,6 +205,13 @@ function UploadPackageContent() {
         sidebarExpanded ? "has-expanded-sidebar" : ""
       }`}
     >
+      <WarningModal
+        isOpen={warningModal.isOpen}
+        onClose={() => setWarningModal({ ...warningModal, isOpen: false })}
+        title={warningModal.title}
+        message={warningModal.message}
+      />
+      
       {/* Background Animation */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]"></div>
