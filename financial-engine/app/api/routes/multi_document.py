@@ -19,7 +19,8 @@ from app.models.schemas import (
     DocumentMetadata,
     DealPackage,
     DocumentNormalizationResult,
-    NormalizedDataItem
+    NormalizedDataItem,
+    OMProformaTable
 )
 from app.services.ingestion_service import IngestionService
 from app.services.normalization_service import NormalizationService
@@ -386,12 +387,12 @@ async def normalize_package_documents(
     
     # Process documents and extract normalized data
     try:
-        normalized_items = await extraction_service.process_financial_documents(
+        normalized_items, om_proforma_results = await extraction_service.process_financial_documents(
             documents_to_process,
             progress_service=progress_service,
             task_id=package_id
         )
-        logger.info(f"Extraction service returned {len(normalized_items) if normalized_items else 0} normalized items")
+        logger.info(f"Extraction service returned {len(normalized_items) if normalized_items else 0} normalized items and {len(om_proforma_results)} OM tables")
     except Exception as e:
         logger.error(f"Error processing documents: {str(e)}", exc_info=True)
         await progress_service.update_progress(package_id, 0, f"Normalization failed: {str(e)}")
@@ -408,6 +409,7 @@ async def normalize_package_documents(
     # Save normalized data to package
     package.normalization_status = "in_progress"
     package.normalized_data = normalized_items  # Save extracted items to package
+    package.om_proforma_data = om_proforma_results # Save OM Proforma tables
     
     # Update cache and persist to GCP
     deal_packages_cache[package_id] = package
@@ -817,7 +819,7 @@ async def analyze_deal_package(
                         "type": file_type
                     })
             
-            normalized_items = await extraction_service.process_financial_documents(
+            normalized_items, _ = await extraction_service.process_financial_documents(
                 documents_to_process,
                 progress_service=progress_service,
                 task_id=package_id,
@@ -1157,7 +1159,8 @@ async def analyze_deal_package(
         exit_cap_rate=params.exit_cap_rate,
         historical_noi=0.0,
         historical_total_expenses=0.0,
-        historical_cap_rate=0.0
+        historical_cap_rate=0.0,
+        om_proforma=package.om_proforma_data
     )
     
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")

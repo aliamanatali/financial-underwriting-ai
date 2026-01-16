@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 import google.generativeai as genai
-from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory
+from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory, OMProformaTable
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +383,86 @@ class MultiDocumentExtractionService:
                 "source_document": filename,
                 "error": str(e)
             }]
+
+    async def extract_om_proforma_from_pdf(self, file_content: bytes, filename: str) -> List[OMProformaTable]:
+        """
+        Extracts the 'Proforma' or 'Pro Forma' table from the OM PDF.
+        """
+        if not self.gemini_service:
+            logger.warning("Gemini service not available for OM Proforma extraction")
+            return []
+
+        try:
+            logger.info(f"Starting OM Proforma extraction for {filename}")
+
+            prompt = """
+            Analyze this Offering Memorandum and find the "Proforma" or "Pro Forma" table(s).
+            These tables typically list Income, Expenses, and NOI for different scenarios like "Stabilized Rent" and "Market Rents".
+
+            Your task is to:
+            1.  Identify each Proforma table/scenario.
+            2.  For each table, extract the scenario name (e.g., "Proforma at Stabilized Rent").
+            3.  Extract all financial rows within that table, including "Annual", "Monthly", and "Per Unit" values.
+            4.  Extract the summary data at the bottom of each table: "Purchase Price", "CAP Rate", and "GRM".
+
+            Return the data as a JSON array of objects, where each object represents one proforma table.
+            The JSON structure must follow this format:
+            [
+                {
+                    "scenario_name": "Proforma at Stabilized Rent",
+                    "rows": [
+                        {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750},
+                        {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05},
+                        ...
+                    ],
+                    "purchase_price": 9440000,
+                    "cap_rate": 0.0559,
+                    "grm": 10.22
+                },
+                ...
+            ]
+
+            CRITICAL:
+            - Preserve the exact row names.
+            - Return ONLY the JSON array.
+            """
+
+            # Since this is a specialized extraction, we'll use the vision model directly
+            import tempfile
+            import os
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(file_content)
+                tmp_path = tmp_file.name
+            
+            try:
+                uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
+                
+                response_text = response.text.strip()
+                if response_text.startswith("```json"):
+                    response_text = response_text[7:]
+                if response_text.endswith("```"):
+                    response_text = response_text[:-3]
+                
+                proforma_data = json.loads(response_text)
+
+                if not isinstance(proforma_data, list):
+                    logger.error(f"Expected a list for OM Proforma, but got {type(proforma_data)}")
+                    return []
+
+                return [OMProformaTable(**item) for item in proforma_data]
+
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error for OM Proforma in {filename}: {str(e)}", exc_info=True)
+            return []
+        except Exception as e:
+            logger.error(f"Error extracting OM Proforma from {filename}: {str(e)}", exc_info=True)
+            return []
     
     async def normalize_expenses_batch(self, expenses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -566,21 +646,24 @@ class MultiDocumentExtractionService:
         task_id: Optional[str] = None,
         progress_start: int = 20,
         progress_end: int = 80
-    ) -> List[NormalizedDataItem]:
+    ) -> (List[NormalizedDataItem], List[OMProformaTable]):
         """
-        Process multiple financial documents and return normalized expense items.
+        Process multiple financial documents and return normalized expense items and OM proforma data.
         
         Args:
-            documents: List of dicts with 'content' (bytes), 'filename', and 'type' (pdf/excel)
+            documents: List of dicts with 'content' (bytes), 'filename', 'document_category'
             progress_service: Optional service to update progress
             task_id: Optional task ID for progress updates
             progress_start: Starting percentage for progress updates (default: 20)
             progress_end: Ending percentage for progress updates (default: 80)
             
         Returns:
-            List of NormalizedDataItem objects ready for user verification
+            A tuple containing:
+            - List of NormalizedDataItem objects ready for user verification
+            - List of OMProformaTable objects
         """
         all_expenses = []
+        om_proforma_results = []
         errors = []
         
         logger.info(f"Starting to process {len(documents)} documents")
@@ -623,6 +706,14 @@ class MultiDocumentExtractionService:
             if not file_content:
                 logger.warning(f"No content for document: {filename}")
                 continue
+
+            # Check if this is the Offering Memorandum to run proforma extraction
+            if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
+                logger.info(f"Running OM Proforma extraction on: {filename}")
+                proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
+                if proforma_tables:
+                    om_proforma_results.extend(proforma_tables)
+                    logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
             
             try:
                 if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
@@ -701,7 +792,7 @@ class MultiDocumentExtractionService:
             # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
-            return []
+            return [], om_proforma_results
         
         # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
@@ -780,5 +871,5 @@ class MultiDocumentExtractionService:
                 # Continue to next batch
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
-        logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items")
-        return normalized_items
+        logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items and {len(om_proforma_results)} OM proforma tables.")
+        return normalized_items, om_proforma_results

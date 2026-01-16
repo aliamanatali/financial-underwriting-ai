@@ -11,18 +11,36 @@ interface ExportButtonsProps {
 }
 
 export default function ExportButtons({ analysis }: ExportButtonsProps) {
-  const [isExporting, setIsExporting] = useState<"excel" | "memo" | null>(null);
+  const [isExporting, setIsExporting] = useState<"excel" | "memo" | "om-proforma" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const handleExport = async (type: "excel" | "memo") => {
+  const handleExport = async (type: "excel" | "memo" | "om-proforma") => {
     setIsExporting(type);
     setError(null);
     setSuccess(null);
 
     try {
-      await apiClient.downloadExport(analysis, type);
-      setSuccess(`${type === "excel" ? "Excel model" : "Investment memo"} downloaded successfully!`);
+      if (type === "excel") {
+        // Download Standard Underwriting Model
+        await apiClient.downloadExport(analysis, "excel");
+        
+        // Also download OM Proforma if available
+        if (analysis.om_proforma && analysis.om_proforma.length > 0) {
+            await apiClient.downloadExport(analysis, "om-proforma");
+        }
+        
+        setSuccess("Excel models downloaded successfully!");
+      } else if (type === "om-proforma") {
+         // Deprecated standalone button logic - kept for type safety but unreachable via UI
+         if (analysis.om_proforma && analysis.om_proforma.length > 0) {
+          await apiClient.downloadExport(analysis, "om-proforma");
+          setSuccess("OM Proforma extracted data downloaded successfully!");
+        }
+      } else {
+        await apiClient.downloadExport(analysis, type);
+        setSuccess("Investment memo downloaded successfully!");
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Download failed";
       setError(errorMessage);
@@ -65,7 +83,7 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
           {isExporting === "excel" ? (
             <>
               <LoadingSpinner size="sm" />
-              Generating Excel...
+              Generating Excel Models...
             </>
           ) : (
             <>
@@ -75,8 +93,8 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
                  </svg>
               </div>
               <div className="text-left">
-                  <div className="text-lg font-bold">Download Excel Model</div>
-                  <div className="text-xs text-slate-500 font-normal mt-1">Full underwriting model (.xlsx)</div>
+                  <div className="text-lg font-bold">Download Excel Models</div>
+                  <div className="text-xs text-slate-500 font-normal mt-1">Analysis & OM Data (.xlsx)</div>
               </div>
             </>
           )}
@@ -89,7 +107,7 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
           className={`group flex items-center justify-center gap-4 px-8 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
             isExporting === "memo"
               ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
-              : "bg-white border-slate-200 text-slate-700 hover:border-#FFF5F00 hover:text-#E65400 hover:bg-#FFF5F0/50"
+              : "bg-white border-slate-200 text-slate-700 hover:border-[#FF5E00] hover:text-[#FF5E00] hover:bg-[#FFF5F0]/50"
           }`}
         >
           {isExporting === "memo" ? (
@@ -99,7 +117,7 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
             </>
           ) : (
             <>
-               <div className="w-12 h-12 bg-#FFE5D9 rounded-lg flex items-center justify-center text-[#FF5E00] group-hover:bg-#FFCBB3 group-hover:scale-110 transition-transform">
+               <div className="w-12 h-12 bg-[#FFE5D9] rounded-lg flex items-center justify-center text-[#FF5E00] group-hover:bg-[#FFCBB3] group-hover:scale-110 transition-transform">
                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                  </svg>
@@ -119,7 +137,7 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
              <ul className="space-y-2 text-sm text-slate-600">
                 <li className="flex items-center gap-2">
                     <span className="text-emerald-500">✓</span>
-                    <strong>Excel Model:</strong> Professional T12 vs F12 analysis
+                    <strong>Excel Models:</strong> Standard Analysis & OM Data
                 </li>
                 <li className="flex items-center gap-2">
                     <span className="text-emerald-500">✓</span>

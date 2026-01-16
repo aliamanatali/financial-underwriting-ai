@@ -6,12 +6,14 @@ from app.models.schemas import RentRollItem, PropertyMeta, UnderwritingAnalysis,
 from app.services.normalization_service import NormalizationService
 from app.services.gemini_client import GeminiClient
 from app.services.ocr_backend_client import OcrBackendClient
+from app.services.extract_om_details import OMScraperService
 
 class IngestionService:
     def __init__(self):
         self.gemini_client = GeminiClient()
         self.normalization_service = NormalizationService(llm_service=self.gemini_client)
         self.ocr_backend_client = OcrBackendClient()
+        self.om_scraper_service = OMScraperService(gemini_client=self.gemini_client)
 
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta) -> List[RentRollItem]:
         # Read with no header initially
@@ -256,6 +258,16 @@ class IngestionService:
         # 5. Compute Rent Roll Summary first (needed for audit trail)
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
         
+        # 5.5 Extract OM Proforma
+        om_proforma = self.om_scraper_service.extract_proforma(raw_text)
+        if not om_proforma:
+            # If text-based extraction fails, try vision-based on the PDF bytes
+            om_proforma = await self.om_scraper_service.extract_om_proforma_from_pdf(pdf_bytes, f"doc_{document_id}.pdf")
+        if om_proforma:
+            logging.info(f"Successfully extracted {len(om_proforma)} OM Proforma tables.")
+        else:
+            logging.warning("Failed to extract OM Proforma data from both text and vision methods.")
+
         # 6. Build comprehensive Audit Trail
         audit_trail_entries = []
         
@@ -328,7 +340,8 @@ class IngestionService:
             rent_roll=rent_roll,
             rent_roll_summary=rent_roll_summary,
             historical_expenses=historical_expenses,
-            audit_trail=audit_trail_entries  # Pass the comprehensive audit trail
+            audit_trail=audit_trail_entries,  # Pass the comprehensive audit trail
+            om_proforma=om_proforma
         )
         
         # 8. Get income from P&L and compare (add warning if mismatch)

@@ -37,6 +37,22 @@ async def export_excel(
         headers={"Content-Disposition": "attachment; filename=financial_analysis.xlsx"}
     )
 
+@router.post("/export/om-proforma")
+async def export_om_proforma(
+    analysis_data: UnderwritingAnalysis,
+    excel_service: ExcelService = Depends(get_excel_service),
+):
+    """
+    Generates and returns an Excel file with the OM Proforma tables.
+    """
+    excel_data = await excel_service.create_om_proforma_excel(analysis_data)
+
+    return StreamingResponse(
+        iter([excel_data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=om_proforma.xlsx"}
+    )
+
 @router.post("/export/memo")
 async def export_memo(
     analysis_data: UnderwritingAnalysis,

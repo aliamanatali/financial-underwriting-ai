@@ -1,43 +1,75 @@
 import json
 from typing import Dict
+from typing import List
 from app.services.gemini_client import GeminiClient
-from extraction_pipeline.schemas import PropertyMeta
+from app.models.schemas import PropertyMeta, OMProformaTable, OMProformaRow
 
 class OMScraperService:
-    def __init__(self):
-        self.gemini_client = GeminiClient()
+    def __init__(self, gemini_client: GeminiClient = None):
+        self.gemini_client = gemini_client or GeminiClient()
+
+    def extract_proforma(self, raw_text: str) -> List[OMProformaTable]:
+        """
+        Extracts the 'Proforma' or 'Pro Forma' table from the OM text.
+        This table usually contains columns like 'Current', 'Year 1', 'Pro Forma', etc.
+        """
+        prompt = """
+        Analyze the Offering Memorandum text and find the "Proforma" or "Pro Forma" table(s).
+        This table typically lists Income, Expenses, and NOI for different scenarios (e.g., "Current", "Year 1", "Market", "Stabilized").
+
+        Task:
+        1. Identify the Proforma tables.
+        2. Extract each scenario (column) as a separate object.
+        3. For each scenario, extract all rows (Income items, Expense items, NOI, etc.).
+        
+        The structure should be:
+        [
+            {
+                "scenario_name": "Proforma at Stabilized Rent" (or "Year 1", "Current", etc.),
+                "rows": [
+                    {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "percentage": null},
+                    {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05},
+                    ...
+                    {"row_name": "Net Operating Income", "annual": 527577, "monthly": 43965, "per_unit": 16487, "percentage": null}
+                ],
+                "purchase_price": 9440000,
+                "cap_rate": 0.0559,
+                "grm": 10.22
+            },
+            ...
+        ]
+
+        CRITICAL RULES:
+        - Extract "Annual", "Monthly", and "Per Unit" values if available.
+        - Extract percentage values if available (e.g. 5.00% -> 0.05).
+        - Preserve the EXACT row names as they appear in the document.
+        - Maintain the order of rows as they appear in the table.
+        - If multiple Proforma tables exist (e.g. "Current" vs "Market"), extract all of them.
+        - Look for "Asking Price", "Purchase Price", "CAP Rate", "GRM" usually at the bottom of the proforma.
+
+        Return ONLY the JSON array.
+        """
+
+        try:
+            proforma_data = self.gemini_client.generate_structured_data(
+                f"{prompt}\n\nDOCUMENT TEXT:\n{raw_text[:30000]}", # Limit text to avoid token limits if needed, but OM text can be large.
+                expect_list=True,
+                pydantic_schema=OMProformaTable
+            )
+            return [OMProformaTable(**item) if isinstance(item, dict) else item for item in proforma_data]
+        except Exception as e:
+            print(f"Error extracting OM Proforma: {e}")
+            return []
 
     def extract_om_details(self, file_path: str) -> PropertyMeta:
         """
         Extracts high-level deal info from the Offering Memorandum (OM).
         """
-        with open(file_path, "rb") as f:
-            pdf_data = f.read()
-            
-        # This is a conceptual implementation.
-        # A real implementation would need to handle the PDF data appropriately.
-        
-        prompt = """
-        Extract the following details from the Offering Memorandum:
-        - Property Address
-        - Year Built
-        - Purchase Price
-        - Total Units
-        
-        Return the data as a JSON object matching the PropertyMeta schema.
-        """
-        
-        # response = self.gemini_client.generate_content(prompt)
-        # om_data = json.loads(response)
-        
-        # return PropertyMeta(**om_data)
-        
-        # The above code is commented out because it is conceptual.
-        # Returning a default object with 0s to indicate extraction is needed
+        # Legacy method stub
         return PropertyMeta(
             address="123 Main St",
             year_built=2022,
-            purchase_price=0.0, # Value should be extracted from OM
+            purchase_price=0.0,
             total_units=32
         )
 

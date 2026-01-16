@@ -265,7 +265,25 @@ class DealPackage(BaseModel):
     normalization_status: str = "pending"  # pending, in_progress, completed
     verification_progress: float = 0.0  # Percentage of items verified by user
     normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data
+    om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
     manual_overrides: Dict[str, Any] = {} # User provided manual overrides
+# --- 4. OM Proforma Models ---
+
+class OMProformaRow(BaseModel):
+    row_name: str
+    annual: Optional[float] = 0.0
+    monthly: Optional[float] = 0.0
+    per_unit: Optional[float] = 0.0
+    percentage: Optional[float] = None # e.g. 0.05 for 5%
+
+class OMProformaTable(BaseModel):
+    scenario_name: str
+    rows: List[OMProformaRow]
+    
+    # Bottom summary
+    purchase_price: Optional[float] = 0.0
+    cap_rate: Optional[float] = 0.0
+    grm: Optional[float] = 0.0
 
 # --- 3. Main Analysis Model ---
 class UnderwritingAnalysis(BaseModel):
@@ -329,3 +347,6 @@ class UnderwritingAnalysis(BaseModel):
     analyst_commentary: Optional[str] = None
     investment_memo: Optional[str] = None
     conclusion: Optional[Conclusion] = None
+    
+    # OM Proforma Extraction
+    om_proforma: Optional[List[OMProformaTable]] = []

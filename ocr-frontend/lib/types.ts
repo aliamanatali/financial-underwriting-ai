@@ -285,6 +285,23 @@ export interface UnderwritingAnalysis {
   };
   conclusion?: Conclusion;
   analyst_commentary?: string;
+  om_proforma?: OMProformaTable[];
+}
+
+export interface OMProformaRow {
+  row_name: string;
+  annual?: number;
+  monthly?: number;
+  per_unit?: number;
+  percentage?: number;
+}
+
+export interface OMProformaTable {
+  scenario_name: string;
+  rows: OMProformaRow[];
+  purchase_price?: number;
+  cap_rate?: number;
+  grm?: number;
 }
 
 export interface DocumentMetadata {

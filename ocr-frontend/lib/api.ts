@@ -350,8 +350,29 @@ class ApiClient {
     return this.startAnalysis(documentId, params);
   }
 
-  async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo'): Promise<void> {
-    const endpoint = type === 'excel' ? 'export/excel' : 'export/memo';
+  async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo' | 'om-proforma'): Promise<void> {
+    let endpoint = '';
+    let filename = '';
+
+    switch (type) {
+        case 'excel':
+            endpoint = 'export/excel';
+            filename = `financial_analysis_${analysisData.document_id}.xlsx`;
+            break;
+        case 'memo':
+            endpoint = 'export/memo';
+            filename = `investment_memo_${analysisData.document_id}.md`;
+            break;
+        case 'om-proforma':
+            endpoint = 'export/om-proforma';
+            filename = `om_proforma_${analysisData.document_id}.xlsx`;
+            break;
+    }
+
+    if (!endpoint) {
+        throw new Error(`Invalid export type: ${type}`);
+    }
+
     const response = await fetch(`${FIN_API_URL}/api/v1/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -367,7 +388,7 @@ class ApiClient {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = type === 'excel' ? `financial_analysis_${analysisData.document_id}.xlsx` : `investment_memo_${analysisData.document_id}.md`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
