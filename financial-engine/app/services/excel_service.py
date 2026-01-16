@@ -345,6 +345,147 @@ class ExcelService:
                  elif cat == "Management Fees": pass # Calculated dynamically
                  else: expenses_map["Admin"] += val # Fallback
 
+        # --- OM Data Lookup Helper ---
+        # Build a lookup for OM data to support specific granular rows
+        om_lookup = {}
+        if analysis_data.om_proforma:
+            for table in analysis_data.om_proforma:
+                # Detect scenario type (Stabilized/Current vs Market)
+                name_lower = table.scenario_name.lower()
+                # Heuristic: "market" or "pro forma" usually implies the future state column
+                # "current", "actual", "t12", "year 1" usually implies the stabilized/current column
+                is_market = "market" in name_lower or "pro forma" in name_lower
+                bucket = 'market' if is_market else 'stabilized'
+                
+                # Track insertion order to distinguish Income vs Expense rows
+                current_index = 0
+                for row in table.rows:
+                    if row.annual is not None:
+                        key = row.row_name.lower().strip()
+                        if key not in om_lookup:
+                            om_lookup[key] = {
+                                'stabilized': 0.0,
+                                'market': 0.0,
+                                'display_name': row.row_name,
+                                'index': current_index
+                            }
+                            current_index += 1
+                        om_lookup[key][bucket] = row.annual
+
+        # Determine Split Point between Income and Expenses
+        # We look for "Total Income", "Effective Gross Income", etc. to define the cutoff.
+        # Unmapped rows BEFORE this index are likely Income.
+        # Unmapped rows AFTER this index are likely Expenses.
+        cutoff_index = 10000 # Default to high number (treat as Income) if not found? No, unsafe.
+        # Better default: If we can't find a cutoff, we might default to Expense to be conservative?
+        # Let's try to find it.
+        
+        cutoff_keywords = ["effective gross", "gross operating", "total income", "gross income", "total operating income", "gross scheduled"]
+        found_cutoff = False
+        for key, val in om_lookup.items():
+            if any(k in key for k in cutoff_keywords):
+                cutoff_index = val['index']
+                found_cutoff = True
+                break
+        
+        if not found_cutoff:
+            # Fallback: Try to find the first "Expense" or "Total Expense" and set cutoff before it?
+            # Or just set to -1 to treat everything as Expense (conservative)
+            cutoff_index = -1
+
+        # Track which keys have been mapped to standard categories
+        consumed_keys = set()
+
+        def get_om_values(keywords: List[str], aggregate: bool = True):
+            """
+            Searches OM lookup for rows containing any of the keywords.
+            Returns (stabilized_sum, market_sum) and a boolean indicating if any were found.
+            Marks matched keys as consumed to avoid double-counting or re-listing.
+            """
+            if not aggregate:
+                # Max Independent Strategy: Find the single best match instead of summing
+                best_key = None
+                best_vals = None
+                max_magnitude = -1.0
+
+                for key, vals in om_lookup.items():
+                    if key in consumed_keys:
+                        continue
+                    
+                    if any(k in key for k in keywords):
+                        # Heuristic: Pick the entry with the largest values
+                        curr_mag = max(abs(vals['stabilized']), abs(vals['market']))
+                        if curr_mag > max_magnitude:
+                            max_magnitude = curr_mag
+                            best_key = key
+                            best_vals = vals
+                
+                if best_key and best_vals:
+                    consumed_keys.add(best_key)
+                    return (best_vals['stabilized'], best_vals['market'])
+                return (None, None)
+
+            # Aggregate Strategy (Default): Sum all matches
+            stab_sum = 0.0
+            mark_sum = 0.0
+            found_any = False
+            for key, vals in om_lookup.items():
+                if key in consumed_keys:
+                    continue
+                
+                if any(k in key for k in keywords):
+                    stab_sum += vals['stabilized']
+                    mark_sum += vals['market']
+                    consumed_keys.add(key)
+                    found_any = True
+            return (stab_sum, mark_sum) if found_any else (None, None)
+
+        def priority_value(keywords: List[str], fallback_stab, fallback_mkt, is_deduction=False, aggregate=True):
+            """
+            Prioritizes values extracted from the OM over calculated fallbacks.
+            """
+            om_stab, om_mkt = get_om_values(keywords, aggregate=aggregate)
+            
+            val_stab = fallback_stab
+            val_mkt = fallback_mkt
+            
+            if om_stab is not None:
+                # Force sign based on line type to handle inconsistent extraction signs
+                val_stab = -abs(om_stab) if is_deduction else abs(om_stab)
+            
+            if om_mkt is not None:
+                val_mkt = -abs(om_mkt) if is_deduction else abs(om_mkt)
+                
+            return val_stab, val_mkt
+
+        def clean_row_name(name: str) -> str:
+            import re
+            
+            def replacer(match):
+                full_match = match.group(0)
+                # If the match is enclosed in parentheses, we keep them but format the inner number
+                is_paren = full_match.startswith('(') and full_match.endswith(')')
+                
+                # Extract the number part
+                number_str = match.group(1) if is_paren else full_match
+                
+                try:
+                    val = float(number_str)
+                    # Handle typical percentages (0.01 to 0.99) - be generous up to 1.0
+                    if 0 < val <= 1:
+                         formatted = f"{val*100:.1f}%".replace(".0%", "%")
+                         return f"({formatted})" if is_paren else formatted
+                    return full_match
+                except:
+                    return full_match
+
+            # Regex Explanation:
+            # We need to be careful not to match substrings inside words, but we want to catch "0.05"
+            # (\(0\.\d+\))  -> Captures (0.05)
+            # |             -> OR
+            # \b(0\.\d+)\b  -> Captures 0.05 as a whole word
+            return re.sub(r'(\(0\.\d+\)|\b0\.\d+\b)', replacer, name)
+
         # --- Helper to write a row ---
         def write_row(row_idx, label, val_stabilized, val_market, is_header=False, is_sub_header=False, is_total=False, format_str=currency_fmt, indent=0):
             # Label
@@ -446,12 +587,25 @@ class ExcelService:
         current_row += 1
         
         # 1. Gross Potential Market Rent
-        write_row(current_row, "Gross Potential Market Rent", market_rent_annual, market_rent_annual)
+        gpr_stab, gpr_mkt = priority_value(
+            ["gross potential", "market rent", "gpr", "street rent", "scheduled rent", "gross market", "market potential", "pro forma rent"],
+            market_rent_annual,
+            market_rent_annual,
+            is_deduction=False,
+            aggregate=False
+        )
+        write_row(current_row, "Gross Potential Market Rent", gpr_stab, gpr_mkt)
         row_gpr = current_row
         current_row += 1
         
         # 2. Loss to Lease (Negative value for deduction, Positive for gain)
-        write_row(current_row, "Loss to Lease / Gain to Lease", loss_to_lease_value, 0)
+        ltl_stab, ltl_mkt = priority_value(
+            ["loss to lease", "gain to lease", "ltl", "concessions"],
+            loss_to_lease_value,
+            0,
+            is_deduction=True
+        )
+        write_row(current_row, "Loss to Lease / Gain to Lease", ltl_stab, ltl_mkt)
         row_ltl = current_row
         current_row += 1
         
@@ -462,7 +616,13 @@ class ExcelService:
         
         # 4. Vacancy
         vac_text = f"Vacancy ({vacancy_rate:.1%})"
-        write_row(current_row, vac_text, f"=-B{row_gsr}*{vacancy_rate}", f"=-F{row_gsr}*{vacancy_rate}")
+        vac_stab, vac_mkt = priority_value(
+            ["vacancy", "vacency", "credit loss", "bad debt"],
+            f"=-B{row_gsr}*{vacancy_rate}",
+            f"=-F{row_gsr}*{vacancy_rate}",
+            is_deduction=True
+        )
+        write_row(current_row, vac_text, vac_stab, vac_mkt)
         row_vac = current_row
         current_row += 1
         
@@ -471,13 +631,90 @@ class ExcelService:
         row_nri = current_row
         current_row += 1
         
-        # 6. Other Income
-        write_row(current_row, "Other Income", other_income_annual, other_income_annual)
+        # 6. Additional Income Rows (Garage, Laundry)
+        # Garage / Parking
+        garage_stab, garage_mkt = get_om_values(["garage", "parking"])
+        row_garage = None
+        if garage_stab is not None or garage_mkt is not None:
+            write_row(current_row, "Garage / Parking", abs(garage_stab or 0), abs(garage_mkt or 0))
+            row_garage = current_row
+            current_row += 1
+            
+        # Laundry Income
+        laundry_stab, laundry_mkt = get_om_values(["laundry", "vending", "washer"])
+        row_laundry = None
+        if laundry_stab is not None or laundry_mkt is not None:
+            write_row(current_row, "Laundry Income", abs(laundry_stab or 0), abs(laundry_mkt or 0))
+            row_laundry = current_row
+            current_row += 1
+
+        # 7. Other Income
+        # Try to find "Other Income" in OM specifically
+        other_stab, other_mkt = priority_value(
+            ["other income", "miscellaneous", "misc income", "app fees", "application fees", "late fees", "pet fees", "reimbursement", "rub"],
+            other_income_annual,
+            other_income_annual,
+            is_deduction=False
+        )
+        write_row(current_row, "Other Income", other_stab, other_mkt)
         row_other = current_row
         current_row += 1
+
+        # --- Dynamic Injection: Additional Income Items ---
+        # Inject unmapped rows that appear BEFORE the Income/Expense cutoff
+        summary_blocklist = [
+            "net operating income", "noi",
+            "total operating expenses", "total expenses", "total expense", "total controllable expenses",
+            "effective gross income", "gross scheduled income", "total income", "gross scheduled rental income",
+            "gross potential rent", "market rent", "potential rent",
+            "net rental income",
+            "cash flow", "cash on cash", "debt service",
+            "operating reserve", "replacement reserve",
+            "total", "subtotal", "sub-total", "sub total",
+            "total utilities", "total contract services"
+        ]
+
+        # Preparing EGI Sum parts
+        egi_parts_b = [f"B{row_nri}", f"B{row_other}"]
+        egi_parts_f = [f"F{row_nri}", f"F{row_other}"]
         
-        # 7. EGI
-        write_row(current_row, "Gross Scheduled Income (Effective Gross Income)", f"=B{row_nri}+B{row_other}", f"=F{row_nri}+F{row_other}", is_header=True)
+        if row_garage:
+            egi_parts_b.append(f"B{row_garage}")
+            egi_parts_f.append(f"F{row_garage}")
+        if row_laundry:
+            egi_parts_b.append(f"B{row_laundry}")
+            egi_parts_f.append(f"F{row_laundry}")
+
+        for key, vals in om_lookup.items():
+            if key in consumed_keys:
+                continue
+            
+            # Check if this looks like an Income item (index < cutoff)
+            # If cutoff_index is -1 (not found), this condition is always False (Safe)
+            if vals['index'] >= cutoff_index:
+                continue
+
+            if any(block in key for block in summary_blocklist):
+                continue
+
+            # Write Dynamic Income Row
+            val_stab = abs(vals['stabilized']) if vals['stabilized'] is not None else 0
+            val_mkt = abs(vals['market']) if vals['market'] is not None else 0
+            
+            write_row(current_row, clean_row_name(vals.get('display_name', key.title())), val_stab, val_mkt)
+            
+            # Add to EGI Sum
+            egi_parts_b.append(f"B{current_row}")
+            egi_parts_f.append(f"F{current_row}")
+            
+            consumed_keys.add(key) # Mark as consumed
+            current_row += 1
+        
+        # 8. EGI
+        write_row(current_row, "Gross Scheduled Income (Effective Gross Income)",
+                  "=" + "+".join(egi_parts_b),
+                  "=" + "+".join(egi_parts_f),
+                  is_header=True)
         row_egi = current_row
         current_row += 1
         
@@ -490,46 +727,197 @@ class ExcelService:
         
         # Property Management Fee
         pm_label = f"Property Management Fee ({mgmt_fee_rate:.1%})"
-        write_row(current_row, pm_label, f"=-B{row_egi}*{mgmt_fee_rate}", f"=-F{row_egi}*{mgmt_fee_rate}")
+        pm_stab, pm_mkt = priority_value(
+            ["management", "mgmt", "manager off"],
+            f"=-B{row_egi}*{mgmt_fee_rate}",
+            f"=-F{row_egi}*{mgmt_fee_rate}",
+            is_deduction=True
+        )
+        write_row(current_row, pm_label, pm_stab, pm_mkt)
         row_mgmt = current_row
         current_row += 1
         
         # Controllable Items
-        write_row(current_row, "Payroll / Onsite Manager", -expenses_map["Payroll"], -expenses_map["Payroll"])
+        # Payroll
+        pay_stab, pay_mkt = priority_value(
+            ["payroll", "salary", "salaries", "wages", "personnel", "onsite", "superintendent"],
+            -expenses_map["Payroll"],
+            -expenses_map["Payroll"],
+            is_deduction=True
+        )
+        write_row(current_row, "Payroll / Onsite Manager", pay_stab, pay_mkt)
         row_payroll = current_row # Start sum range
         current_row += 1
-        write_row(current_row, "Repairs & Maintenance", -expenses_map["R&M"], -expenses_map["R&M"])
-        current_row += 1
-        write_row(current_row, "Utilities", -expenses_map["Utilities"], -expenses_map["Utilities"])
-        current_row += 1
-        write_row(current_row, "Contract Services", -expenses_map["Contract"], -expenses_map["Contract"])
-        current_row += 1
-        write_row(current_row, "General Admin / Business Taxes", -expenses_map["Admin"], -expenses_map["Admin"])
-        row_ga = current_row # End sum range
+        
+        # R&M
+        rm_stab, rm_mkt = priority_value(
+            ["repair", "maintenance", "r&m", "turnover", "painting", "cleaning", "supplies", "decorating"],
+            -expenses_map["R&M"],
+            -expenses_map["R&M"],
+            is_deduction=True
+        )
+        write_row(current_row, "Repairs & Maintenance", rm_stab, rm_mkt)
         current_row += 1
         
+        # Utilities
+        util_stab, util_mkt = priority_value(
+            ["utilit", "electric", "water", "sewer", "trash", "gas", "rubbish", "cable"],
+            -expenses_map["Utilities"],
+            -expenses_map["Utilities"],
+            is_deduction=True
+        )
+        write_row(current_row, "Utilities", util_stab, util_mkt)
+        current_row += 1
+        
+        # Contract Services
+        con_stab, con_mkt = priority_value(
+            ["contract", "landscap", "pest", "elevator", "pool", "security", "alarm", "snow", "grounds"],
+            -expenses_map["Contract"],
+            -expenses_map["Contract"],
+            is_deduction=True
+        )
+        write_row(current_row, "Contract Services", con_stab, con_mkt)
+        current_row += 1
+        
+        # Admin - Check for specific break-outs
+        # Business / Other Taxes
+        biz_tax_stab, biz_tax_mkt = get_om_values(["business tax", "license", "gross receipt", "business / other", "other taxes", "franchise tax"])
+        if biz_tax_stab is not None or biz_tax_mkt is not None:
+             write_row(current_row, "Business / other taxes", -abs(biz_tax_stab or 0), -abs(biz_tax_mkt or 0))
+             current_row += 1
+             
+        # Rent Control / Other City Fees
+        rc_stab, rc_mkt = get_om_values(["rent control", "rent registration", "city fee", "rent stabilization"])
+        if rc_stab is not None or rc_mkt is not None:
+             write_row(current_row, "Rent Control / Other City Fees", -abs(rc_stab or 0), -abs(rc_mkt or 0))
+             current_row += 1
+        
+        # General Admin
+        # Only appear if explicitly found in OM (no fallback) to avoid duplication or hallucination
+        ga_stab, ga_mkt = get_om_values(["general", "admin", "office", "professional", "legal", "accounting", "phone", "internet", "dues", "subscription"])
+        
+        if ga_stab is not None or ga_mkt is not None:
+             write_row(current_row, "General Admin", -abs(ga_stab or 0), -abs(ga_mkt or 0))
+             current_row += 1
+        
+        # End sum range for Controllable Expenses
+        row_controllable_end = current_row - 1
+        
         # Total Controllable
-        sum_range_b = f"B{row_mgmt}:B{row_ga}"
-        sum_range_f = f"F{row_mgmt}:F{row_ga}"
+        sum_range_b = f"B{row_mgmt}:B{row_controllable_end}"
+        sum_range_f = f"F{row_mgmt}:F{row_controllable_end}"
         write_row(current_row, "Total Controllable Expenses", f"=SUM({sum_range_b})", f"=SUM({sum_range_f})", is_total=True)
         row_controllable = current_row
         current_row += 1
         
         # Fixed Expenses
-        write_row(current_row, "Real Estate Taxes (Ad Valorem)", -expenses_map["Taxes"], -expenses_map["Taxes"])
+        ret_stab, ret_mkt = priority_value(
+            ["real estate tax", "property tax", "ad valorem"],
+            -expenses_map["Taxes"],
+            -expenses_map["Taxes"],
+            is_deduction=True
+        )
+        write_row(current_row, "Real Estate Taxes (Ad Valorem)", ret_stab, ret_mkt)
         row_taxes = current_row
         current_row += 1
-        write_row(current_row, "Insurance", -expenses_map["Insurance"], -expenses_map["Insurance"])
+        
+        # Assessments
+        assess_stab, assess_mkt = get_om_values(["assessment", "direct charge", "special charge"])
+        row_assess = None
+        if assess_stab is not None or assess_mkt is not None:
+             write_row(current_row, "Assessments", -abs(assess_stab or 0), -abs(assess_mkt or 0))
+             row_assess = current_row
+             current_row += 1
+        
+        # Insurance
+        ins_stab, ins_mkt = priority_value(
+            ["insurance", "hazard", "liability", "workers comp"],
+            -expenses_map["Insurance"],
+            -expenses_map["Insurance"],
+            is_deduction=True
+        )
+        write_row(current_row, "Property Insurance", ins_stab, ins_mkt)
         row_ins = current_row
         current_row += 1
-        write_row(current_row, "Reserves", -expenses_map["Reserves"], -expenses_map["Reserves"])
+
+        # Pre-calculate Reserves to consume keys (prevent duplication in dynamic section)
+        # We don't write the row yet, just consume the values/keys
+        res_stab, res_mkt = priority_value(
+            ["reserve", "replacement", "capital"],
+            -expenses_map["Reserves"],
+            -expenses_map["Reserves"],
+            is_deduction=True
+        )
+
+        # --- Dynamic Injection of Unmapped OM Rows ---
+        # Any row from the OM that wasn't consumed by the standard mapping above
+        # is added here to ensure "no row left behind".
+        
+        # Sub-Total parts initialization
+        sub_total_parts_b = [f"B{row_controllable}", f"B{row_taxes}", f"B{row_ins}"]
+        sub_total_parts_f = [f"F{row_controllable}", f"F{row_taxes}", f"F{row_ins}"]
+        if row_assess:
+            sub_total_parts_b.append(f"B{row_assess}")
+            sub_total_parts_f.append(f"F{row_assess}")
+
+        # Iterate through om_lookup to find unconsumed items (Expenses)
+        # These are items that come AFTER the cutoff (or if cutoff not found)
+        found_dynamic_rows = False
+        for key, vals in om_lookup.items():
+            if key in consumed_keys:
+                continue
+            
+            # If we successfully defined a cutoff, skip items that appear before it
+            # (They should have been caught in Income section, or intentionally skipped)
+            # If cutoff is -1, we include everything here (Safe fallback)
+            if cutoff_index != -1 and vals['index'] < cutoff_index:
+                continue
+
+            # Check blocklist
+            if any(block in key for block in summary_blocklist):
+                continue
+
+            if vals['stabilized'] == 0 and vals['market'] == 0:
+                continue
+
+            # Add Header for Dynamic Section if first time
+            if not found_dynamic_rows:
+                 write_row(current_row, "Additional Line Items", None, None, is_sub_header=True)
+                 current_row += 1
+                 found_dynamic_rows = True
+            
+            # Write the row
+            # Use negative absolute value to ensure deduction, consistent with other expenses
+            val_stab = -abs(vals['stabilized']) if vals['stabilized'] is not None else 0
+            val_mkt = -abs(vals['market']) if vals['market'] is not None else 0
+            
+            write_row(current_row, vals.get('display_name', key.title()), val_stab, val_mkt)
+            
+            # Add to subtotal
+            sub_total_parts_b.append(f"B{current_row}")
+            sub_total_parts_f.append(f"F{current_row}")
+            
+            consumed_keys.add(key)
+            current_row += 1
+        
+        # Sub-Total (Expenses before Reserves)
+        write_row(current_row, "Sub-Total",
+                  "=" + "+".join(sub_total_parts_b),
+                  "=" + "+".join(sub_total_parts_f),
+                  is_total=True)
+        row_subtotal = current_row
+        current_row += 1
+        
+        # Reserves
+        # Values calculated earlier to prevent duplication
+        write_row(current_row, "Reserves", res_stab, res_mkt)
         row_reserves = current_row
         current_row += 1
         
         # Total Operating Expenses
         write_row(current_row, "Total Operating Expenses",
-                  f"=B{row_controllable}+B{row_taxes}+B{row_ins}+B{row_reserves}",
-                  f"=F{row_controllable}+F{row_taxes}+F{row_ins}+F{row_reserves}",
+                  f"=B{row_subtotal}+B{row_reserves}",
+                  f"=F{row_subtotal}+F{row_reserves}",
                   is_total=True)
         row_opex = current_row
         current_row += 1
@@ -542,7 +930,17 @@ class ExcelService:
         
         # --- Valuation ---
         purchase_price = 0.0
-        if analysis_data.property_meta and analysis_data.property_meta.purchase_price:
+        
+        # Priority: OM Proforma Table Value -> Property Meta -> 0
+        found_om_price = False
+        if analysis_data.om_proforma:
+            for table in analysis_data.om_proforma:
+                if table.purchase_price and table.purchase_price > 0:
+                    purchase_price = table.purchase_price
+                    found_om_price = True
+                    break
+        
+        if not found_om_price and analysis_data.property_meta and analysis_data.property_meta.purchase_price:
             purchase_price = analysis_data.property_meta.purchase_price
 
         # Helper for borders
