@@ -922,8 +922,20 @@ async def analyze_deal_package(
             logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
     historical_expenses: List[StandardizedExpense] = []
     
+    # Create lookup for document types by filename
+    filename_to_doc_type = {}
+    for doc_type, doc_list in package.documents.items():
+        for doc_meta in doc_list:
+            filename_to_doc_type[doc_meta.filename] = doc_type
+
     # Parse normalized items (Fill gaps, but don't overwrite OM data unless verified)
     for item in normalized_items:
+        # FILTER: Only allow items from Offering Memorandum for financial aggregation
+        # We skip items from Rent Rolls, T12s, Tax Bills, etc. to ensure strict sourcing from OM
+        source_doc_type = filename_to_doc_type.get(item.source_document)
+        if source_doc_type != DocumentType.OFFERING_MEMORANDUM:
+            continue
+
         # GLOBAL CHECK: Unit Count from Metadata (e.g. from Excel Rent Roll)
         if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
             row_count = item.metadata.get("row_count")
