@@ -1,5 +1,6 @@
 import React from "react";
 import { UnderwritingAnalysis } from "@/lib/types";
+import WidgetTooltip from "./WidgetTooltip";
 
 interface SensitivityAnalysisWidgetProps {
   analysis: UnderwritingAnalysis;
@@ -29,7 +30,17 @@ export default function SensitivityAnalysisWidget({
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6 h-full flex flex-col">
-      <h3 className="text-sm font-semibold text-neutral-900 mb-4">Sensitivity Analysis (IRR)</h3>
+      <h3 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center">
+        Sensitivity Analysis (IRR)
+        <WidgetTooltip
+          title="Sensitivity Analysis (IRR)"
+          description="Shows how the Internal Rate of Return (IRR) changes based on different Exit Cap Rates and Rent Growth scenarios."
+          formulas={[
+            { label: "Scenario Matrix", formula: "IRR calculated for each X/Y combination" },
+            { label: "Color Scale", formula: "Green > 12%, Amber 8-12%, Red < 8%" }
+          ]}
+        />
+      </h3>
       <div className="flex flex-col flex-1">
         <div className="flex justify-between items-end mb-2">
           <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-wide">Exit Cap Rate ↓</div>

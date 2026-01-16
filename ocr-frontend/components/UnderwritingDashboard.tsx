@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
+import WidgetTooltip from "./WidgetTooltip";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
@@ -582,8 +583,8 @@ export default function UnderwritingDashboard({
 
         {/* Investment Returns (Key Metrics) */}
         <div className="lg:col-span-4 flex flex-col gap-4">
-          <div className="bg-neutral-900 rounded-xl shadow-lg p-6 text-white flex flex-col justify-between h-full relative overflow-hidden group">
-            <div className="absolute inset-0 bg-neutral-900 overflow-hidden">
+          <div className="bg-neutral-900 rounded-xl shadow-lg p-6 text-white flex flex-col justify-between h-full relative group">
+            <div className="absolute inset-0 bg-neutral-900 overflow-hidden rounded-xl">
               <div className="absolute -top-24 -right-24 w-80 h-80 bg-orange-500/20 rounded-full blur-3xl pointer-events-none"></div>
               <div className="absolute -bottom-12 -left-12 w-40 h-40 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
               <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff08_1px,transparent_1px),linear-gradient(to_bottom,#ffffff08_1px,transparent_1px)] bg-[size:24px_24px]"></div>
@@ -592,7 +593,19 @@ export default function UnderwritingDashboard({
 
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-sm font-medium text-white">Investment Returns (5-Year)</h3>
+                <h3 className="text-sm font-medium text-white flex items-center">
+                  Investment Returns (5-Year)
+                  <WidgetTooltip
+                    title="Investment Returns"
+                    description="Projected returns over a 5-year hold period based on the Deal Parameters."
+                    formulas={[
+                      { label: "IRR", formula: "Internal Rate of Return on cash flows & sale" },
+                      { label: "MOIC", formula: "(Total Cash Distributions + Net Sale Proceeds) / Initial Equity" },
+                      { label: "Cash-on-Cash", formula: "Annual Pre-Tax Cash Flow / Initial Equity Invested" }
+                    ]}
+                    className="text-white"
+                  />
+                </h3>
                 <span className="p-1.5 rounded bg-white/10 text-neutral-400">
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
@@ -631,7 +644,19 @@ export default function UnderwritingDashboard({
         {/* Left: Parameters */}
         <div className="lg:col-span-4 bg-white rounded-xl border border-neutral-200 shadow-sm p-6 h-full">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="text-sm font-semibold text-neutral-900">Deal Parameters</h3>
+            <h3 className="text-sm font-semibold text-neutral-900 flex items-center">
+              Deal Parameters
+              <WidgetTooltip
+                title="Deal Parameters"
+                description="Adjustable assumptions used to calculate financial projections and returns."
+                formulas={[
+                  { label: "Rent Growth", formula: "Annual % increase in market rent" },
+                  { label: "Vacancy Rate", formula: "% of GPR lost to vacancy" },
+                  { label: "Exit Cap", formula: "Cap rate applied to Year 6 NOI for sale price" },
+                  { label: "Loan Amount", formula: "Total debt principal (affects equity & DSCR)" }
+                ]}
+              />
+            </h3>
             <div className="flex gap-2">
               <button
                 onClick={handleCancel}
