@@ -350,7 +350,7 @@ class ApiClient {
     return this.startAnalysis(documentId, params);
   }
 
-  async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo' | 'om-proforma'): Promise<void> {
+  async downloadExport(analysisData: UnderwritingAnalysis, type: 'excel' | 'memo' | 'om-proforma' | 'rent-roll'): Promise<void> {
     let endpoint = '';
     let filename = '';
 
@@ -366,6 +366,10 @@ class ApiClient {
         case 'om-proforma':
             endpoint = 'export/om-proforma';
             filename = `om_proforma_${analysisData.document_id}.xlsx`;
+            break;
+        case 'rent-roll':
+            endpoint = 'export/rent-roll';
+            filename = `rent_roll_detail_${analysisData.document_id}.xlsx`;
             break;
     }
 

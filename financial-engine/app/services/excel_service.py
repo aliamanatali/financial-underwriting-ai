@@ -216,6 +216,250 @@ class ExcelService:
         virtual_workbook.seek(0)
         return virtual_workbook.read()
 
+    async def create_rent_roll_excel(self, analysis_data: UnderwritingAnalysis) -> bytes:
+        """
+        Creates an Excel file with the Rent Roll detail and summary.
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._create_rent_roll_excel_sync, analysis_data)
+
+    def _create_rent_roll_excel_sync(self, analysis_data: UnderwritingAnalysis) -> bytes:
+        workbook = openpyxl.Workbook()
+        
+        # Remove default sheet
+        default_sheet = workbook.active
+        workbook.remove(default_sheet)
+        
+        # --- Sheet 1: Rent Roll Detail & Summary ---
+        sheet = workbook.create_sheet("Rent Roll")
+        
+        # Styles
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        section_header_fill = PatternFill(start_color="595959", end_color="595959", fill_type="solid")
+        section_header_font = Font(bold=True, color="FFFFFF", size=11)
+        
+        currency_fmt = '_("$"* #,##0_);_("$"* (#,##0);_("$"* "-"??_);_(@_)'
+        percent_format = '0.00%'
+        
+        # --- Part 1: Detailed Rent Roll ---
+        sheet["A1"] = "Detailed Rent Roll"
+        sheet["A1"].font = Font(bold=True, size=14)
+        
+        # Headers
+        headers = [
+            "Unit #", "Unit Size", "Unit Type",
+            "Current Rent", "Stabilized Rent", "Market Rent",
+            "Move-In Date", "Lease Start", "Lease End"
+        ]
+        
+        start_row = 3
+        for col_idx, header in enumerate(headers, 1):
+            cell = sheet.cell(row=start_row, column=col_idx, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+            
+        # Data
+        row_idx = start_row + 1
+        for item in analysis_data.rent_roll:
+            sheet.cell(row=row_idx, column=1, value=item.unit_number)
+            sheet.cell(row=row_idx, column=2, value=item.unit_size)
+            sheet.cell(row=row_idx, column=3, value=item.unit_type)
+            # Removed Tenant Name (Column 4)
+            
+            c = sheet.cell(row=row_idx, column=4, value=item.current_rent)
+            c.number_format = currency_fmt
+            
+            c = sheet.cell(row=row_idx, column=5, value=item.stabilized_rent)
+            c.number_format = currency_fmt
+            
+            c = sheet.cell(row=row_idx, column=6, value=item.market_rent)
+            c.number_format = currency_fmt
+            
+            sheet.cell(row=row_idx, column=7, value=item.move_in_date)
+            sheet.cell(row=row_idx, column=8, value=item.lease_start)
+            sheet.cell(row=row_idx, column=9, value=item.lease_end)
+            
+            row_idx += 1
+            
+        # Column Widths
+        sheet.column_dimensions['A'].width = 12
+        sheet.column_dimensions['B'].width = 12
+        sheet.column_dimensions['C'].width = 15
+        sheet.column_dimensions['D'].width = 15
+        sheet.column_dimensions['E'].width = 15
+        sheet.column_dimensions['F'].width = 15
+        sheet.column_dimensions['G'].width = 15
+        sheet.column_dimensions['H'].width = 15
+        sheet.column_dimensions['I'].width = 15
+
+        # --- Part 2: Summaries (Using Formulas) ---
+        if analysis_data.rent_roll_summary:
+            current_row = row_idx + 3 # Spacer
+            
+            sheet[f"A{current_row}"] = "Rent Roll Summary"
+            sheet[f"A{current_row}"].font = Font(bold=True, size=14)
+            current_row += 2
+
+            # Define data ranges (Adjusted for removed column)
+            # Data starts at row 4 (start_row + 1)
+            # Ends at row_idx - 1
+            last_data_row = row_idx - 1
+            r_unit_no = f"$A$4:$A${last_data_row}"
+            r_size = f"$B$4:$B${last_data_row}"
+            r_type = f"$C$4:$C${last_data_row}"
+            r_curr = f"$D$4:$D${last_data_row}"
+            r_stab = f"$E$4:$E${last_data_row}"
+            r_mkt = f"$F$4:$F${last_data_row}"
+
+            # --- Section 2.1: High Level Metrics ---
+            summary_headers = ["Metric", "Value"]
+            
+            # Header
+            cell = sheet.cell(row=current_row, column=1, value="Metric")
+            cell.fill = section_header_fill
+            cell.font = section_header_font
+            
+            cell = sheet.cell(row=current_row, column=2, value="Value")
+            cell.fill = section_header_fill
+            cell.font = section_header_font
+            
+            current_row += 1
+            
+            # 1. Total Units
+            sheet.cell(row=current_row, column=1, value="Total Units")
+            sheet.cell(row=current_row, column=2, value=f"=COUNTA({r_unit_no})").number_format = "0"
+            row_total_units = current_row
+            current_row += 1
+            
+            # 2. Occupied Units
+            sheet.cell(row=current_row, column=1, value="Occupied Units")
+            sheet.cell(row=current_row, column=2, value=f"=COUNTIF({r_curr}, \">0\")").number_format = "0"
+            row_occupied = current_row
+            current_row += 1
+            
+            # 3. Occupancy Rate
+            sheet.cell(row=current_row, column=1, value="Occupancy Rate")
+            sheet.cell(row=current_row, column=2, value=f"=B{row_occupied}/B{row_total_units}").number_format = percent_format
+            current_row += 1
+            
+            # 4. Avg Unit Size
+            sheet.cell(row=current_row, column=1, value="Avg Unit Size")
+            sheet.cell(row=current_row, column=2, value=f"=AVERAGE({r_size})").number_format = "0"
+            current_row += 1
+            
+            # 5. Total Monthly Rent
+            sheet.cell(row=current_row, column=1, value="Total Monthly Rent")
+            sheet.cell(row=current_row, column=2, value=f"=SUM({r_curr})").number_format = currency_fmt
+            row_monthly_rent = current_row
+            current_row += 1
+            
+            # 6. Total Annual Rent
+            sheet.cell(row=current_row, column=1, value="Total Annual Rent")
+            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}*12").number_format = currency_fmt
+            current_row += 1
+            
+            # 7. Avg Rent per Unit (Occupied)
+            sheet.cell(row=current_row, column=1, value="Avg Rent per Unit (Occupied)")
+            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}/B{row_occupied}").number_format = currency_fmt
+            current_row += 1
+            
+            # 8. Avg Rent per SF (Using Paying Unit Size only to be accurate, but complexity of SUMIFs)
+            # Simplification: Total Rent / Total Occupied SF
+            # Formula: SUM(Current Rent) / SUMIF(Current Rent, >0, Unit Size)
+            sheet.cell(row=current_row, column=1, value="Avg Rent per SF")
+            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}/SUMIF({r_curr}, \">0\", {r_size})").number_format = currency_fmt
+            current_row += 1
+            
+            current_row += 2 # Spacer
+
+            # --- Section 2.2: Unit Mix Detailed Summary ---
+            sheet[f"A{current_row}"] = "Unit Mix Analysis"
+            sheet[f"A{current_row}"].font = Font(bold=True, size=12)
+            current_row += 1
+
+            # Headers for Unit Mix
+            mix_headers = ["Unit Mix", "Unit Count", "% of Total", "Avg Current Rent", "Avg Stabilized Rent", "Avg Market Rent", "Avg Sq Ft"]
+            for col_idx, header in enumerate(mix_headers, 1):
+                cell = sheet.cell(row=current_row, column=col_idx, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+            
+            current_row += 1
+            start_mix_row = current_row
+            
+            # Identify Unique Unit Types for the rows
+            # We still need Python to identify the unique types to generate the rows,
+            # but the values will be formulas.
+            unique_types = sorted(list(set([item.unit_type or "Unknown" for item in analysis_data.rent_roll])))
+            
+            for u_type in unique_types:
+                # We need to escape double quotes in the formula string
+                safe_type = u_type.replace('"', '""')
+                
+                # Unit Mix Name
+                sheet.cell(row=current_row, column=1, value=u_type)
+                
+                # Count: =COUNTIF(Range, "Type")
+                sheet.cell(row=current_row, column=2, value=f"=COUNTIF({r_type}, \"{safe_type}\")").number_format = "0"
+                
+                # % of Total: =B{current}/COUNTA(Range)
+                sheet.cell(row=current_row, column=3, value=f"=B{current_row}/COUNTA({r_unit_no})").number_format = percent_format
+                
+                # Avg Current Rent: =AVERAGEIF(Range, "Type", RentRange)
+                sheet.cell(row=current_row, column=4, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_curr}), 0)").number_format = currency_fmt
+                
+                # Avg Stabilized Rent
+                sheet.cell(row=current_row, column=5, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_stab}), 0)").number_format = currency_fmt
+                
+                # Avg Market Rent
+                sheet.cell(row=current_row, column=6, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_mkt}), 0)").number_format = currency_fmt
+                
+                # Avg Sq Ft
+                sheet.cell(row=current_row, column=7, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_size}), 0)").number_format = "0"
+                
+                current_row += 1
+            
+            # Totals Row (Sum of the mix rows)
+            end_mix_row = current_row - 1
+            sheet.cell(row=current_row, column=1, value="Totals / Averages").font = Font(bold=True)
+            
+            # Total Count
+            sheet.cell(row=current_row, column=2, value=f"=SUM(B{start_mix_row}:B{end_mix_row})").font = Font(bold=True)
+            
+            # Total % (Should be 100%)
+            sheet.cell(row=current_row, column=3, value=f"=SUM(C{start_mix_row}:C{end_mix_row})").number_format = percent_format
+            sheet.cell(row=current_row, column=3).font = Font(bold=True)
+            
+            # Weighted Averages for the total row
+            # Weighted Avg Rent = Sum(Count * AvgRent) / TotalCount
+            # Or simpler: Just re-calculate using the full raw ranges
+            sheet.cell(row=current_row, column=4, value=f"=AVERAGE({r_curr})").number_format = currency_fmt
+            sheet.cell(row=current_row, column=4).font = Font(bold=True)
+            
+            sheet.cell(row=current_row, column=5, value=f"=AVERAGE({r_stab})").number_format = currency_fmt
+            sheet.cell(row=current_row, column=5).font = Font(bold=True)
+            
+            sheet.cell(row=current_row, column=6, value=f"=AVERAGE({r_mkt})").number_format = currency_fmt
+            sheet.cell(row=current_row, column=6).font = Font(bold=True)
+            
+            sheet.cell(row=current_row, column=7, value=f"=AVERAGE({r_size})").number_format = "0"
+            sheet.cell(row=current_row, column=7).font = Font(bold=True)
+
+            # Auto-fit columns
+            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
+                sheet.column_dimensions[col].width = 20
+            sheet.column_dimensions['A'].width = 30
+
+        # Save
+        virtual_workbook = io.BytesIO()
+        workbook.save(virtual_workbook)
+        virtual_workbook.seek(0)
+        return virtual_workbook.read()
+
     async def create_om_proforma_excel(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """
         Creates an Excel file reproducing the OM Proforma tables.

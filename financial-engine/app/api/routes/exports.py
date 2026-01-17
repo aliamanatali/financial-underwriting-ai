@@ -53,6 +53,22 @@ async def export_om_proforma(
         headers={"Content-Disposition": "attachment; filename=om_proforma.xlsx"}
     )
 
+@router.post("/export/rent-roll")
+async def export_rent_roll(
+    analysis_data: UnderwritingAnalysis,
+    excel_service: ExcelService = Depends(get_excel_service),
+):
+    """
+    Generates and returns an Excel file with the detailed Rent Roll and Summary.
+    """
+    excel_data = await excel_service.create_rent_roll_excel(analysis_data)
+
+    return StreamingResponse(
+        iter([excel_data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=rent_roll_detail.xlsx"}
+    )
+
 @router.post("/export/memo")
 async def export_memo(
     analysis_data: UnderwritingAnalysis,
