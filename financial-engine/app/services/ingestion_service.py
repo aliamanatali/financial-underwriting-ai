@@ -62,7 +62,7 @@ class IngestionService:
         logger = logging.getLogger(__name__)
 
         property_meta_prompt = """
-        Extract the property address, year built, purchase price, total units, AND current_loan_balance from the document.
+        Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
         
         CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
         - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
@@ -72,8 +72,12 @@ class IngestionService:
         
         CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
         - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
+
+        CRITICAL INSTRUCTIONS FOR BUILDING SIZE:
+        - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
+        - This represents the total square footage of the building(s).
         
-        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance".
+        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
 
         Example:
         {
@@ -81,7 +85,8 @@ class IngestionService:
             "year_built": 2022,
             "purchase_price": 5000000.0,
             "total_units": 50,
-            "current_loan_balance": 7200000.0
+            "current_loan_balance": 7200000.0,
+            "building_size": 45000
         }
         """
         
@@ -176,7 +181,7 @@ class IngestionService:
 
         # 1. Extract PropertyMeta (SAFE METHOD)
         property_meta_prompt = """
-        Extract the property address, year built, purchase price, total units, AND current_loan_balance from the document.
+        Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
         
         CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
         - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
@@ -187,7 +192,11 @@ class IngestionService:
         CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
         - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
         
-        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance".
+        CRITICAL INSTRUCTIONS FOR BUILDING SIZE:
+        - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
+        - This represents the total square footage of the building(s).
+        
+        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
 
         Example:
         {
@@ -195,7 +204,8 @@ class IngestionService:
             "year_built": 2022,
             "purchase_price": 5000000.0,
             "total_units": 50,
-            "current_loan_balance": 7200000.0
+            "current_loan_balance": 7200000.0,
+            "building_size": 45000
         }
         """
         property_meta_data = self.gemini_client.generate_structured_data(
@@ -285,6 +295,13 @@ class IngestionService:
             "source": "OM / PDF",
             "confidence_score": 0.9,
             "method": "Extracted from property description section"
+        })
+        audit_trail_entries.append({
+            "field_name": "Building Size (Sq Ft)",
+            "extracted_value": property_meta.building_size,
+            "source": "OM / PDF",
+            "confidence_score": 0.9,
+            "method": "Extracted from property description section (NRA/Rentable SF)"
         })
         audit_trail_entries.append({
             "field_name": "Purchase Price",

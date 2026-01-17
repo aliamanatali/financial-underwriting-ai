@@ -258,12 +258,16 @@ class ExcelService:
 
         # 1.5 Sq Ft
         total_sqft = 0
+
+        # Method 1: Use Property Meta "building_size" (Extracted from OM as NRA/Rentable SF) - PRIORITY
+        if analysis_data.property_meta and hasattr(analysis_data.property_meta, 'building_size') and analysis_data.property_meta.building_size > 0:
+             total_sqft = analysis_data.property_meta.building_size
         
-        # Method 1: Sum from individual units (most accurate)
-        if analysis_data.rent_roll:
+        # Method 2: Sum from individual units (Fallback if OM building size missing)
+        elif analysis_data.rent_roll:
              total_sqft = sum((item.unit_size or 0) for item in analysis_data.rent_roll)
 
-        # Method 2: Calculate from summary
+        # Method 3: Calculate from summary (Last resort)
         if total_sqft == 0 and analysis_data.rent_roll_summary:
              # Check if attribute exists (legacy support or if schema changes)
              if hasattr(analysis_data.rent_roll_summary, 'total_square_feet'):
@@ -272,10 +276,6 @@ class ExcelService:
              # Calculate if still 0
              if total_sqft == 0 and analysis_data.rent_roll_summary.avg_unit_size and analysis_data.rent_roll_summary.total_units:
                  total_sqft = analysis_data.rent_roll_summary.avg_unit_size * analysis_data.rent_roll_summary.total_units
-                 
-        # Method 3: Property Meta (check existence safely)
-        if total_sqft == 0 and analysis_data.property_meta and hasattr(analysis_data.property_meta, 'building_size'):
-             total_sqft = getattr(analysis_data.property_meta, 'building_size', 0)
 
         # 2. Income Data
         # Market Rent (Annual)

@@ -85,6 +85,7 @@ class PropertyMeta(BaseModel):
     year_built: Optional[int] = 0
     purchase_price: Optional[float] = 0.0
     total_units: Optional[int] = 0
+    building_size: Optional[int] = 0
     is_renovated: bool = False
     current_loan_balance: Optional[float] = 0.0
 
