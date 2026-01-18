@@ -343,12 +343,12 @@ function UploadPackageContent() {
                   <div
                     className={`upload-zone rounded-lg min-h-[320px] flex flex-col items-center justify-center p-8 text-center cursor-pointer group ${
                       isDragging ? 'bg-neutral-100 border-neutral-400' : ''
-                    } ${isUploading ? 'pointer-events-none opacity-60' : ''}`}
-                    onClick={triggerFileInput}
-                    onDragEnter={handleDragEnter}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+                    } ${isUploading || success ? 'pointer-events-none' : ''} ${success ? 'bg-emerald-50/10 border-emerald-200' : ''}`}
+                    onClick={!success ? triggerFileInput : undefined}
+                    onDragEnter={!success ? handleDragEnter : undefined}
+                    onDragOver={!success ? handleDragOver : undefined}
+                    onDragLeave={!success ? handleDragLeave : undefined}
+                    onDrop={!success ? handleDrop : undefined}
                   >
                     <input
                       ref={fileInputRef}
@@ -356,7 +356,7 @@ function UploadPackageContent() {
                       className="hidden"
                       accept=".zip"
                       onChange={handleFileSelect}
-                      disabled={isUploading}
+                      disabled={isUploading || !!success}
                     />
 
                     {isUploading ? (
@@ -406,6 +406,16 @@ function UploadPackageContent() {
                           </div>
                         )}
                       </div>
+                    ) : success ? (
+                      <div className="space-y-4">
+                        <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+                          <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <h3 className="text-xl font-semibold text-neutral-900">Upload Complete!</h3>
+                        <p className="text-neutral-600">Your deal package is ready for normalization.</p>
+                      </div>
                     ) : (
                       <>
                         <div className="w-16 h-16 bg-neutral-50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 border border-neutral-100">
@@ -436,7 +446,7 @@ function UploadPackageContent() {
 
                         <button
                           type="button"
-                          className="bg-neutral-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+                          className={`bg-neutral-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-2 cursor-pointer ${success ? 'hidden' : ''}`}
                         >
                           <svg
                             xmlns="http://www.w3.org/2000/svg"
@@ -454,7 +464,7 @@ function UploadPackageContent() {
                           Browse Files
                         </button>
 
-                        <span className="text-xs text-neutral-400 font-medium mt-6">
+                        <span className={`text-xs text-neutral-400 font-medium mt-6 ${success ? 'hidden' : ''}`}>
                           ZIP files (No Size Limit)
                         </span>
                       </>
@@ -490,7 +500,7 @@ function UploadPackageContent() {
                             ))}
                           </ul>
                         </div>
-                        <div className="mt-3 pt-3 border-t border-emerald-200">
+                        <div className="mt-3 pt-3 border-t border-emerald-200 flex flex-col gap-3">
                           <button
                             type="button"
                             onClick={handleStartNormalization}
@@ -510,6 +520,25 @@ function UploadPackageContent() {
                               />
                             </svg>
                             Start Normalization
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSuccess(null);
+                              setDealPackage(null);
+                              setUploadProgress({ loaded: 0, total: 0, percentage: 0 });
+                              setProcessingProgress({ percentage: 0, message: "Initializing..." });
+                              if (fileInputRef.current) {
+                                fileInputRef.current.value = "";
+                              }
+                            }}
+                            className="w-full px-4 py-2.5 bg-white text-neutral-700 border border-neutral-300 rounded-lg text-sm font-medium hover:bg-neutral-50 transition-colors shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                          >
+                            <svg className="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                            Discard & Upload New File
                           </button>
                         </div>
                       </div>
