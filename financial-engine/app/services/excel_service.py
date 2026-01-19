@@ -231,228 +231,384 @@ class ExcelService:
         default_sheet = workbook.active
         workbook.remove(default_sheet)
         
-        # --- Sheet 1: Rent Roll Detail & Summary ---
-        sheet = workbook.create_sheet("Rent Roll")
+        # --- Sheet 1: Rent Roll Output ---
+        sheet = workbook.create_sheet("Rent Roll Output")
         
         # Styles
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_font = Font(bold=True, color="FFFFFF", size=11)
-        section_header_fill = PatternFill(start_color="595959", end_color="595959", fill_type="solid")
-        section_header_font = Font(bold=True, color="FFFFFF", size=11)
+        # Using a standard clean style, trying to match implied professionalism
+        header_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid") # Light Grey
+        header_font = Font(bold=True, size=10)
+        border_style = Border(bottom=Side(style='thin'))
         
-        currency_fmt = '_("$"* #,##0_);_("$"* (#,##0);_("$"* "-"??_);_(@_)'
-        percent_format = '0.00%'
+        # Standard formats
+        currency_fmt = '#,##0' # " 1,600 " style - integer with comma
+        currency_dec_fmt = '#,##0.00'
+        percent_fmt = '0.0%'
         
-        # --- Part 1: Detailed Rent Roll ---
-        sheet["A1"] = "Detailed Rent Roll"
-        sheet["A1"].font = Font(bold=True, size=14)
+        # --- Headers ---
+        # Row 1: Top Headers (Unit Breakdown on right)
+        sheet["AA1"] = "Unit Breakdown - Existing"
+        sheet["AA1"].font = Font(bold=True)
         
-        # Headers
-        headers = [
-            "Unit #", "Unit Size", "Unit Type",
-            "Current Rent", "Stabilized Rent", "Market Rent",
-            "Move-In Date", "Lease Start", "Lease End"
-        ]
+        # Row 2: Headers
+        # Map: Col Letter -> Header Name
+        headers_map = {
+            "C": "Count",
+            "D": "Unit",
+            "E": "Occupancy Type",
+            "F": "Units",
+            "G": "Beds",
+            "H": "Size",
+            "I": "$/Month",
+            "J": "$/SF",
+            "K": "Units",
+            "L": "$/Month",
+            "M": "$/SqFt",
+            "P": "$ Increase",
+            "Q": "% Increase",
+            "R": "Pro Forma Unit Type",
+            "S": "Unit Config",
+            "T": "Beds",
+            "U": "RC",
+            "V": "Start Date",
+            "W": "End Date",
+            "X": "Other",
+            
+            # Summary Section
+            "AA": "Unit Type",
+            "AB": "Avg Current Rent",
+            "AC": "Size",
+            "AD": "Total SF",
+            "AE": "Rent / SF",
+            "AF": "Units",
+            "AG": "Mix %",
+            "AH": "SF %",
+            "AI": "Beds",
+            "AJ": "$/Beds"
+        }
         
-        start_row = 3
-        for col_idx, header in enumerate(headers, 1):
-            cell = sheet.cell(row=start_row, column=col_idx, value=header)
-            cell.fill = header_fill
+        header_row = 2
+        for col_let, title in headers_map.items():
+            cell = sheet[f"{col_let}{header_row}"]
+            cell.value = title
             cell.font = header_font
-            cell.alignment = Alignment(horizontal="center")
+            cell.border = border_style
+            cell.alignment = Alignment(horizontal='center')
+
+        # --- Data Processing ---
+        
+        # Data Rows Start at 3
+        start_row = 3
+        current_row = start_row
+        
+        rent_roll = analysis_data.rent_roll
+        
+        # Calculate Unit Type Groups for Summary
+        unit_groups = {} # type -> {count, rent_sum, size_sum, ...}
+        
+        for idx, item in enumerate(rent_roll, 1):
+            # 1. Data Transformation
+            unit_type = item.unit_type
+            beds = 1 # Default
             
-        # Data
-        row_idx = start_row + 1
-        for item in analysis_data.rent_roll:
-            sheet.cell(row=row_idx, column=1, value=item.unit_number)
-            sheet.cell(row=row_idx, column=2, value=item.unit_size)
-            sheet.cell(row=row_idx, column=3, value=item.unit_type)
-            # Removed Tenant Name (Column 4)
+            # Rule 1: Unit Type Mapping
+            # "0/1.00" -> Studio / 1 Bed
+            # "2/1.00" -> 2 Bed / 2 Beds
+            raw_type_lower = (item.unit_type or "").lower()
             
-            c = sheet.cell(row=row_idx, column=4, value=item.current_rent)
-            c.number_format = currency_fmt
+            if "0/1.00" in raw_type_lower or "studio" in raw_type_lower:
+                unit_type = "Studio"
+                beds = 1
+            elif "2/1.00" in raw_type_lower or "2 bed" in raw_type_lower:
+                unit_type = "2 Bed"
+                beds = 2
+            elif "1/1.00" in raw_type_lower or "1 bed" in raw_type_lower:
+                unit_type = "1 Bed"
+                beds = 1
+            elif "3/1.00" in raw_type_lower or "3 bed" in raw_type_lower:
+                unit_type = "3 Bed"
+                beds = 3
             
-            c = sheet.cell(row=row_idx, column=5, value=item.stabilized_rent)
-            c.number_format = currency_fmt
+            # Vacancy Note
+            occupancy_type = unit_type
+            if item.tenant_name and "vacant" in item.tenant_name.lower():
+                # keep type but note vacancy?
+                # Template says "Occupancy Type" column.
+                # Just keep standardized type here.
+                pass
+
+            # 2. Write Main Columns
+            sheet[f"C{current_row}"] = idx
+            sheet[f"D{current_row}"] = item.unit_number
+            sheet[f"E{current_row}"] = occupancy_type
+            sheet[f"F{current_row}"] = 1 # Units count per row
+            sheet[f"G{current_row}"] = beds
+            sheet[f"H{current_row}"] = item.unit_size
             
-            c = sheet.cell(row=row_idx, column=6, value=item.market_rent)
-            c.number_format = currency_fmt
+            # Format: Strings with quotes and commas?
+            # User requirement: 'Financial numbers must be formatted as strings with quotes and commas, e.g., " 1,600 "'
+            # BUT user also requires formulas: "Ensure formulas are being replicated"
+            # AND "calculated aggregates"
+            # It is impossible to have Excel formulas work on strings like " 1,600 ".
+            # I will assume "strings with quotes" was a description of the CSV text output provided,
+            # and the requirement is actually standard Excel numbers.
             
-            sheet.cell(row=row_idx, column=7, value=item.move_in_date)
-            sheet.cell(row=row_idx, column=8, value=item.lease_start)
-            sheet.cell(row=row_idx, column=9, value=item.lease_end)
+            sheet[f"I{current_row}"] = item.current_rent
+            sheet[f"I{current_row}"].number_format = currency_fmt
             
-            row_idx += 1
+            # J: $/SF = Current Rent / Size
+            sheet[f"J{current_row}"] = f"=I{current_row}/H{current_row}"
+            sheet[f"J{current_row}"].number_format = currency_dec_fmt
             
+            sheet[f"K{current_row}"] = 1 # Units again? Or Market Units?
+            
+            sheet[f"L{current_row}"] = item.market_rent
+            sheet[f"L{current_row}"].number_format = currency_fmt
+            
+            # M: $/SqFt (Market)
+            sheet[f"M{current_row}"] = f"=L{current_row}/H{current_row}"
+            sheet[f"M{current_row}"].number_format = currency_dec_fmt
+            
+            # P: $ Increase = Market - Current
+            sheet[f"P{current_row}"] = f"=L{current_row}-I{current_row}"
+            sheet[f"P{current_row}"].number_format = currency_fmt
+            
+            # Q: % Increase
+            sheet[f"Q{current_row}"] = f"=P{current_row}/I{current_row}"
+            sheet[f"Q{current_row}"].number_format = percent_fmt
+            
+            # Pro Forma
+            sheet[f"R{current_row}"] = unit_type
+            sheet[f"S{current_row}"] = unit_type # Unit Config same as type?
+            sheet[f"T{current_row}"] = beds
+            
+            # Dates (Convert to M/D/YYYY)
+            # Assuming input is YYYY-MM-DD or similar
+            def fmt_date(d):
+                if not d: return ""
+                try:
+                    # simplistic parse
+                    parts = d.split('-')
+                    if len(parts) == 3:
+                        return f"{int(parts[1])}/{int(parts[2])}/{parts[0]}"
+                    return d
+                except:
+                    return d
+
+            sheet[f"V{current_row}"] = fmt_date(item.lease_start)
+            sheet[f"W{current_row}"] = fmt_date(item.lease_end)
+            
+            if item.tenant_name and "vacant" in item.tenant_name.lower():
+                 sheet[f"X{current_row}"] = "Vacant"
+
+            # Aggregate for Summary
+            if unit_type not in unit_groups:
+                unit_groups[unit_type] = {
+                    'count': 0, 'beds': beds,
+                    'rent_sum': 0.0, 'size_sum': 0.0,
+                    'market_sum': 0.0
+                }
+            g = unit_groups[unit_type]
+            g['count'] += 1
+            g['rent_sum'] += (item.current_rent or 0)
+            g['size_sum'] += (item.unit_size or 0)
+            g['market_sum'] += (item.market_rent or 0)
+
+            current_row += 1
+
+        last_data_row = current_row - 1
+        
+        # --- Footer Rows ---
+        # TOTAL, Per Unit, Per Bed, Per SqFt, Annualized
+        footer_labels = ["TOTAL", "Per Unit", "Per Bed", "Per SqFt", "Annualized"]
+        
+        # We need to map which footer row gets what formula for which column
+        # Columns to sum: F(Units), I(Rent), L(Market Rent)
+        
+        # Row: TOTAL
+        total_row = current_row
+        sheet[f"C{total_row}"] = "TOTAL"
+        sheet[f"C{total_row}"].font = Font(bold=True)
+        
+        # Sum Units
+        sheet[f"F{total_row}"] = f"=SUM(F{start_row}:F{last_data_row})"
+        
+        # Sum Current Rent
+        sheet[f"I{total_row}"] = f"=SUM(I{start_row}:I{last_data_row})"
+        sheet[f"I{total_row}"].number_format = currency_fmt
+        
+        # Sum Market Rent
+        sheet[f"L{total_row}"] = f"=SUM(L{start_row}:L{last_data_row})"
+        sheet[f"L{total_row}"].number_format = currency_fmt
+        
+        current_row += 1
+        
+        # Row: Per Unit
+        per_unit_row = current_row
+        sheet[f"C{per_unit_row}"] = "Per Unit"
+        sheet[f"I{per_unit_row}"] = f"=I{total_row}/F{total_row}"
+        sheet[f"I{per_unit_row}"].number_format = currency_dec_fmt
+        sheet[f"L{per_unit_row}"] = f"=L{total_row}/F{total_row}"
+        sheet[f"L{per_unit_row}"].number_format = currency_dec_fmt
+        current_row += 1
+        
+        # Row: Per Bed
+        # We need Total Beds first.
+        # Total Beds = SUMPRODUCT(Units * Beds)? Or just SUM(G)
+        total_beds_formula = f"SUM(G{start_row}:G{last_data_row})"
+        
+        per_bed_row = current_row
+        sheet[f"C{per_bed_row}"] = "Per Bed"
+        sheet[f"I{per_bed_row}"] = f"=I{total_row}/{total_beds_formula}"
+        sheet[f"I{per_bed_row}"].number_format = currency_dec_fmt
+        sheet[f"L{per_bed_row}"] = f"=L{total_row}/{total_beds_formula}"
+        sheet[f"L{per_bed_row}"].number_format = currency_dec_fmt
+        current_row += 1
+        
+        # Row: Per SqFt
+        # Total Size = SUM(H)
+        total_size_formula = f"SUM(H{start_row}:H{last_data_row})"
+        
+        per_sqft_row = current_row
+        sheet[f"C{per_sqft_row}"] = "Per SqFt"
+        sheet[f"I{per_sqft_row}"] = f"=I{total_row}/{total_size_formula}"
+        sheet[f"I{per_sqft_row}"].number_format = currency_dec_fmt
+        sheet[f"L{per_sqft_row}"] = f"=L{total_row}/{total_size_formula}"
+        sheet[f"L{per_sqft_row}"].number_format = currency_dec_fmt
+        current_row += 1
+        
+        # Row: Annualized
+        annualized_row = current_row
+        sheet[f"C{annualized_row}"] = "Annualized"
+        sheet[f"I{annualized_row}"] = f"=I{total_row}*12"
+        sheet[f"I{annualized_row}"].number_format = currency_fmt
+        sheet[f"L{annualized_row}"] = f"=L{total_row}*12"
+        sheet[f"L{annualized_row}"].number_format = currency_fmt
+        
+        # --- Summary Section (Right Side) ---
+        # Starts at AA3 (Row 3, same as data start)
+        summary_row = 3
+        
+        # Sort groups: Studio first, then 1 Bed, 2 Bed...
+        # Custom sort key
+        def sort_key(k):
+            k = k.lower()
+            if "studio" in k: return 0
+            if "1" in k: return 1
+            if "2" in k: return 2
+            if "3" in k: return 3
+            if "4" in k: return 4
+            return 99
+
+        sorted_types = sorted(unit_groups.keys(), key=sort_key)
+        total_units = len(rent_roll)
+        total_sqft = sum(item.unit_size or 0 for item in rent_roll)
+        
+        for u_type in sorted_types:
+            data = unit_groups[u_type]
+            count = data['count']
+            
+            sheet[f"AA{summary_row}"] = u_type
+            
+            # Avg Current Rent
+            sheet[f"AB{summary_row}"] = data['rent_sum'] / count if count else 0
+            sheet[f"AB{summary_row}"].number_format = currency_fmt
+            
+            # Size (Avg? or Total? Template implies Total SF in AD, so AC is likely Avg Size)
+            # Example: "Size" 1,920. "Total SF" 7,900.
+            # Assuming AC is Avg Size
+            sheet[f"AC{summary_row}"] = data['size_sum'] / count if count else 0
+            sheet[f"AC{summary_row}"].number_format = "#,##0"
+            
+            # Total SF
+            sheet[f"AD{summary_row}"] = data['size_sum']
+            sheet[f"AD{summary_row}"].number_format = "#,##0"
+            
+            # Rent / SF (Avg Rent / Avg Size)
+            avg_rent = data['rent_sum'] / count if count else 0
+            avg_size = data['size_sum'] / count if count else 0
+            sheet[f"AE{summary_row}"] = avg_rent / avg_size if avg_size else 0
+            sheet[f"AE{summary_row}"].number_format = currency_dec_fmt
+            
+            # Units
+            sheet[f"AF{summary_row}"] = count
+            
+            # Mix %
+            sheet[f"AG{summary_row}"] = count / total_units if total_units else 0
+            sheet[f"AG{summary_row}"].number_format = percent_fmt
+            
+            # SF %
+            sheet[f"AH{summary_row}"] = data['size_sum'] / total_sqft if total_sqft else 0
+            sheet[f"AH{summary_row}"].number_format = percent_fmt
+            
+            # Beds
+            sheet[f"AI{summary_row}"] = data['beds']
+            
+            # $/Beds (Avg Rent / Beds)
+            sheet[f"AJ{summary_row}"] = avg_rent / data['beds'] if data['beds'] else 0
+            sheet[f"AJ{summary_row}"].number_format = currency_fmt
+            
+            summary_row += 1
+            
+        # Summary Total Row
+        sheet[f"AA{summary_row}"] = "Total / Wtd Avg"
+        sheet[f"AA{summary_row}"].font = Font(bold=True)
+        
+        # Avg Current Rent (Weighted)
+        # = SUM(All Rents) / Total Units
+        # We can use the main table totals we calculated earlier?
+        # Easier to just sum the groups or use formulas on the summary columns?
+        # Let's use formulas on the summary columns for consistency
+        start_sum = 3
+        end_sum = summary_row - 1
+        
+        # AB (Avg Rent): This is weighted average. =SUMPRODUCT(Count, AvgRent) / TotalCount
+        # Or just Total Rent / Total Count
+        # Total Rent = SUMPRODUCT(AF, AB)
+        sheet[f"AB{summary_row}"] = f"=SUMPRODUCT(AF{start_sum}:AF{end_sum},AB{start_sum}:AB{end_sum})/AF{summary_row}"
+        sheet[f"AB{summary_row}"].number_format = currency_fmt
+        
+        # AC (Avg Size)
+        sheet[f"AC{summary_row}"] = f"=AD{summary_row}/AF{summary_row}"
+        sheet[f"AC{summary_row}"].number_format = "#,##0"
+        
+        # AD (Total SF)
+        sheet[f"AD{summary_row}"] = f"=SUM(AD{start_sum}:AD{end_sum})"
+        sheet[f"AD{summary_row}"].number_format = "#,##0"
+        
+        # AE (Rent / SF) -> Total Rent / Total SF
+        # Total Rent is derived from AB*AF
+        sheet[f"AE{summary_row}"] = f"=(AB{summary_row}*AF{summary_row})/AD{summary_row}"
+        sheet[f"AE{summary_row}"].number_format = currency_dec_fmt
+        
+        # AF (Units)
+        sheet[f"AF{summary_row}"] = f"=SUM(AF{start_sum}:AF{end_sum})"
+        
+        # AG (Mix %) -> Should be 100%
+        sheet[f"AG{summary_row}"] = f"=SUM(AG{start_sum}:AG{end_sum})"
+        sheet[f"AG{summary_row}"].number_format = percent_fmt
+        
+        # AH (SF %) -> Should be 100%
+        sheet[f"AH{summary_row}"] = f"=SUM(AH{start_sum}:AH{end_sum})"
+        sheet[f"AH{summary_row}"].number_format = percent_fmt
+        
+        # AI (Avg Beds) -> Weighted Avg
+        sheet[f"AI{summary_row}"] = f"=SUMPRODUCT(AF{start_sum}:AF{end_sum},AI{start_sum}:AI{end_sum})/AF{summary_row}"
+        sheet[f"AI{summary_row}"].number_format = "0.0"
+        
+        # AJ ($/Beds) -> Total Rent / Total Beds
+        # Total Rent = AB*AF
+        # Total Beds = AI*AF
+        sheet[f"AJ{summary_row}"] = f"=(AB{summary_row}*AF{summary_row})/(AI{summary_row}*AF{summary_row})"
+        sheet[f"AJ{summary_row}"].number_format = currency_fmt
+
         # Column Widths
-        sheet.column_dimensions['A'].width = 12
-        sheet.column_dimensions['B'].width = 12
-        sheet.column_dimensions['C'].width = 15
-        sheet.column_dimensions['D'].width = 15
-        sheet.column_dimensions['E'].width = 15
-        sheet.column_dimensions['F'].width = 15
-        sheet.column_dimensions['G'].width = 15
-        sheet.column_dimensions['H'].width = 15
-        sheet.column_dimensions['I'].width = 15
-
-        # --- Part 2: Summaries (Using Formulas) ---
-        if analysis_data.rent_roll_summary:
-            current_row = row_idx + 3 # Spacer
-            
-            sheet[f"A{current_row}"] = "Rent Roll Summary"
-            sheet[f"A{current_row}"].font = Font(bold=True, size=14)
-            current_row += 2
-
-            # Define data ranges (Adjusted for removed column)
-            # Data starts at row 4 (start_row + 1)
-            # Ends at row_idx - 1
-            last_data_row = row_idx - 1
-            r_unit_no = f"$A$4:$A${last_data_row}"
-            r_size = f"$B$4:$B${last_data_row}"
-            r_type = f"$C$4:$C${last_data_row}"
-            r_curr = f"$D$4:$D${last_data_row}"
-            r_stab = f"$E$4:$E${last_data_row}"
-            r_mkt = f"$F$4:$F${last_data_row}"
-
-            # --- Section 2.1: High Level Metrics ---
-            summary_headers = ["Metric", "Value"]
-            
-            # Header
-            cell = sheet.cell(row=current_row, column=1, value="Metric")
-            cell.fill = section_header_fill
-            cell.font = section_header_font
-            
-            cell = sheet.cell(row=current_row, column=2, value="Value")
-            cell.fill = section_header_fill
-            cell.font = section_header_font
-            
-            current_row += 1
-            
-            # 1. Total Units
-            sheet.cell(row=current_row, column=1, value="Total Units")
-            sheet.cell(row=current_row, column=2, value=f"=COUNTA({r_unit_no})").number_format = "0"
-            row_total_units = current_row
-            current_row += 1
-            
-            # 2. Occupied Units
-            sheet.cell(row=current_row, column=1, value="Occupied Units")
-            sheet.cell(row=current_row, column=2, value=f"=COUNTIF({r_curr}, \">0\")").number_format = "0"
-            row_occupied = current_row
-            current_row += 1
-            
-            # 3. Occupancy Rate
-            sheet.cell(row=current_row, column=1, value="Occupancy Rate")
-            sheet.cell(row=current_row, column=2, value=f"=B{row_occupied}/B{row_total_units}").number_format = percent_format
-            current_row += 1
-            
-            # 4. Avg Unit Size
-            sheet.cell(row=current_row, column=1, value="Avg Unit Size")
-            sheet.cell(row=current_row, column=2, value=f"=AVERAGE({r_size})").number_format = "0"
-            current_row += 1
-            
-            # 5. Total Monthly Rent
-            sheet.cell(row=current_row, column=1, value="Total Monthly Rent")
-            sheet.cell(row=current_row, column=2, value=f"=SUM({r_curr})").number_format = currency_fmt
-            row_monthly_rent = current_row
-            current_row += 1
-            
-            # 6. Total Annual Rent
-            sheet.cell(row=current_row, column=1, value="Total Annual Rent")
-            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}*12").number_format = currency_fmt
-            current_row += 1
-            
-            # 7. Avg Rent per Unit (Occupied)
-            sheet.cell(row=current_row, column=1, value="Avg Rent per Unit (Occupied)")
-            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}/B{row_occupied}").number_format = currency_fmt
-            current_row += 1
-            
-            # 8. Avg Rent per SF (Using Paying Unit Size only to be accurate, but complexity of SUMIFs)
-            # Simplification: Total Rent / Total Occupied SF
-            # Formula: SUM(Current Rent) / SUMIF(Current Rent, >0, Unit Size)
-            sheet.cell(row=current_row, column=1, value="Avg Rent per SF")
-            sheet.cell(row=current_row, column=2, value=f"=B{row_monthly_rent}/SUMIF({r_curr}, \">0\", {r_size})").number_format = currency_fmt
-            current_row += 1
-            
-            current_row += 2 # Spacer
-
-            # --- Section 2.2: Unit Mix Detailed Summary ---
-            sheet[f"A{current_row}"] = "Unit Mix Analysis"
-            sheet[f"A{current_row}"].font = Font(bold=True, size=12)
-            current_row += 1
-
-            # Headers for Unit Mix
-            mix_headers = ["Unit Mix", "Unit Count", "% of Total", "Avg Current Rent", "Avg Stabilized Rent", "Avg Market Rent", "Avg Sq Ft"]
-            for col_idx, header in enumerate(mix_headers, 1):
-                cell = sheet.cell(row=current_row, column=col_idx, value=header)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center")
-            
-            current_row += 1
-            start_mix_row = current_row
-            
-            # Identify Unique Unit Types for the rows
-            # We still need Python to identify the unique types to generate the rows,
-            # but the values will be formulas.
-            unique_types = sorted(list(set([item.unit_type or "Unknown" for item in analysis_data.rent_roll])))
-            
-            for u_type in unique_types:
-                # We need to escape double quotes in the formula string
-                safe_type = u_type.replace('"', '""')
-                
-                # Unit Mix Name
-                sheet.cell(row=current_row, column=1, value=u_type)
-                
-                # Count: =COUNTIF(Range, "Type")
-                sheet.cell(row=current_row, column=2, value=f"=COUNTIF({r_type}, \"{safe_type}\")").number_format = "0"
-                
-                # % of Total: =B{current}/COUNTA(Range)
-                sheet.cell(row=current_row, column=3, value=f"=B{current_row}/COUNTA({r_unit_no})").number_format = percent_format
-                
-                # Avg Current Rent: =AVERAGEIF(Range, "Type", RentRange)
-                sheet.cell(row=current_row, column=4, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_curr}), 0)").number_format = currency_fmt
-                
-                # Avg Stabilized Rent
-                sheet.cell(row=current_row, column=5, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_stab}), 0)").number_format = currency_fmt
-                
-                # Avg Market Rent
-                sheet.cell(row=current_row, column=6, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_mkt}), 0)").number_format = currency_fmt
-                
-                # Avg Sq Ft
-                sheet.cell(row=current_row, column=7, value=f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_size}), 0)").number_format = "0"
-                
-                current_row += 1
-            
-            # Totals Row (Sum of the mix rows)
-            end_mix_row = current_row - 1
-            sheet.cell(row=current_row, column=1, value="Totals / Averages").font = Font(bold=True)
-            
-            # Total Count
-            sheet.cell(row=current_row, column=2, value=f"=SUM(B{start_mix_row}:B{end_mix_row})").font = Font(bold=True)
-            
-            # Total % (Should be 100%)
-            sheet.cell(row=current_row, column=3, value=f"=SUM(C{start_mix_row}:C{end_mix_row})").number_format = percent_format
-            sheet.cell(row=current_row, column=3).font = Font(bold=True)
-            
-            # Weighted Averages for the total row
-            # Weighted Avg Rent = Sum(Count * AvgRent) / TotalCount
-            # Or simpler: Just re-calculate using the full raw ranges
-            sheet.cell(row=current_row, column=4, value=f"=AVERAGE({r_curr})").number_format = currency_fmt
-            sheet.cell(row=current_row, column=4).font = Font(bold=True)
-            
-            sheet.cell(row=current_row, column=5, value=f"=AVERAGE({r_stab})").number_format = currency_fmt
-            sheet.cell(row=current_row, column=5).font = Font(bold=True)
-            
-            sheet.cell(row=current_row, column=6, value=f"=AVERAGE({r_mkt})").number_format = currency_fmt
-            sheet.cell(row=current_row, column=6).font = Font(bold=True)
-            
-            sheet.cell(row=current_row, column=7, value=f"=AVERAGE({r_size})").number_format = "0"
-            sheet.cell(row=current_row, column=7).font = Font(bold=True)
-
-            # Auto-fit columns
-            for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
-                sheet.column_dimensions[col].width = 20
-            sheet.column_dimensions['A'].width = 30
+        for col_char in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ']:
+            sheet.column_dimensions[col_char].width = 12
+        sheet.column_dimensions['E'].width = 15 # Occ Type
+        sheet.column_dimensions['V'].width = 15 # Date
+        sheet.column_dimensions['W'].width = 15 # Date
+        sheet.column_dimensions['AA'].width = 20 # Unit Type Summary
 
         # Save
         virtual_workbook = io.BytesIO()
