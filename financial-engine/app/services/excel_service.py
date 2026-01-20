@@ -674,71 +674,201 @@ class ExcelService:
         sheet.column_dimensions['U'].width = 15 # Date
         sheet.column_dimensions['AA'].width = 20 # Unit Type Summary
 
-        # Save
-        virtual_workbook = io.BytesIO()
-        workbook.save(virtual_workbook)
-        virtual_workbook.seek(0)
-        return virtual_workbook.read()
+        # --- Unit Breakdown - Stabilized (Updated Request) ---
+        # Starts at AL (Column 38)
+        
+        # 1. Headers
+        stab_start_col = "AL"
+        sheet[f"{stab_start_col}1"] = "Unit Breakdown - Stabilized"
+        sheet[f"{stab_start_col}1"].font = Font(bold=True)
+        
+        # Columns based on image
+        stab_headers = [
+            "Unit Type",
+            "Pro Forma Rent",
+            "Size",
+            "Total SF",
+            "Rent / SF",
+            "Units",
+            "Mix %",
+            "SF %",
+            "Beds",
+            "$/Beds",
+            "Single",
+            "Double",
+            "Single $",
+            "Double $",
+            "Unit Config"
+        ]
+        
+        # Map: AL -> AZ
+        stab_cols = ["AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV", "AW", "AX", "AY", "AZ"]
+        
+        for col, title in zip(stab_cols, stab_headers):
+            c = sheet[f"{col}2"]
+            c.value = title
+            c.font = header_font
+            c.border = border_style
+            c.alignment = Alignment(horizontal='center', wrap_text=True)
             
-        # Summary Total Row
-        sheet[f"AA{summary_row}"] = "Total / Wtd Avg"
-        sheet[f"AA{summary_row}"].font = Font(bold=True)
+        # 3. Data Rows
+        stab_row = 3
+        # We reuse sorted_types from previous summary
         
-        # Avg Current Rent (Weighted)
-        # = SUM(All Rents) / Total Units
-        # We can use the main table totals we calculated earlier?
-        # Easier to just sum the groups or use formulas on the summary columns?
-        # Let's use formulas on the summary columns for consistency
-        start_sum = 3
-        end_sum = summary_row - 1
+        # Ranges for formulas
+        r_market_rent = f"$L${start_row}:$L${last_data_row}"
+        r_total_units_cell = f"$F${total_row}"
+        # We need sum of total SF for SF % calculation
+        r_grand_total_sf_cell = f"$AD${summary_row}" # This is the "Total SF" in the Summary table at AA
         
-        # AB (Avg Rent): This is weighted average. =SUMPRODUCT(Count, AvgRent) / TotalCount
-        # Or just Total Rent / Total Count
-        # Total Rent = SUMPRODUCT(AF, AB)
-        sheet[f"AB{summary_row}"] = f"=SUMPRODUCT(AF{start_sum}:AF{end_sum},AB{start_sum}:AB{end_sum})/AF{summary_row}"
-        sheet[f"AB{summary_row}"].number_format = currency_fmt
+        # Wait, AD column in summary table is calculated using SUMIF.
+        # But we need the GRAND TOTAL SF.
+        # In the summary table (AA), row `summary_row` is the TOTAL line.
+        # The Total SF is at AD{summary_row}.
+        r_total_sf_val = f"$AD${summary_row}"
         
-        # AC (Avg Size)
-        sheet[f"AC{summary_row}"] = f"=AD{summary_row}/AF{summary_row}"
-        sheet[f"AC{summary_row}"].number_format = "#,##0"
-        
-        # AD (Total SF)
-        sheet[f"AD{summary_row}"] = f"=SUM(AD{start_sum}:AD{end_sum})"
-        sheet[f"AD{summary_row}"].number_format = "#,##0"
-        
-        # AE (Rent / SF) -> Total Rent / Total SF
-        # Total Rent is derived from AB*AF
-        sheet[f"AE{summary_row}"] = f"=(AB{summary_row}*AF{summary_row})/AD{summary_row}"
-        sheet[f"AE{summary_row}"].number_format = currency_dec_fmt
-        
-        # AF (Units)
-        sheet[f"AF{summary_row}"] = f"=SUM(AF{start_sum}:AF{end_sum})"
-        
-        # AG (Mix %) -> Should be 100%
-        sheet[f"AG{summary_row}"] = f"=SUM(AG{start_sum}:AG{end_sum})"
-        sheet[f"AG{summary_row}"].number_format = percent_fmt
-        
-        # AH (SF %) -> Should be 100%
-        sheet[f"AH{summary_row}"] = f"=SUM(AH{start_sum}:AH{end_sum})"
-        sheet[f"AH{summary_row}"].number_format = percent_fmt
-        
-        # AI (Avg Beds) -> Weighted Avg
-        sheet[f"AI{summary_row}"] = f"=SUMPRODUCT(AF{start_sum}:AF{end_sum},AI{start_sum}:AI{end_sum})/AF{summary_row}"
-        sheet[f"AI{summary_row}"].number_format = "0.0"
-        
-        # AJ ($/Beds) -> Total Rent / Total Beds
-        # Total Rent = AB*AF
-        # Total Beds = AI*AF
-        sheet[f"AJ{summary_row}"] = f"=(AB{summary_row}*AF{summary_row})/(AI{summary_row}*AF{summary_row})"
-        sheet[f"AJ{summary_row}"].number_format = currency_fmt
+        for u_type in sorted_types:
+            safe_type = u_type.replace('"', '""')
+            
+            # Common style
+            def set_stab(col, val, fmt=None, align='right'):
+                c = sheet[f"{col}{stab_row}"]
+                c.value = val
+                if fmt: c.number_format = fmt
+                if align: c.alignment = Alignment(horizontal=align)
+                c.border = summary_border
 
-        # Column Widths
-        for col_char in ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ']:
-            sheet.column_dimensions[col_char].width = 12
-        sheet.column_dimensions['E'].width = 15 # Occ Type
-        sheet.column_dimensions['V'].width = 15 # Date
-        sheet.column_dimensions['W'].width = 15 # Date
-        sheet.column_dimensions['AA'].width = 20 # Unit Type Summary
+            # AL: Unit Type
+            set_stab("AL", u_type, align='left')
+            
+            # AM: Pro Forma Rent (Market Rent Avg)
+            set_stab("AM", f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_market_rent}),0)", currency_fmt)
+            
+            # AN: Size (Avg SF)
+            set_stab("AN", f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_size}),0)", "#,##0")
+            
+            # AO: Total SF = Sum Size
+            set_stab("AO", f"=SUMIF({r_type}, \"{safe_type}\", {r_size})", "#,##0")
+            
+            # AP: Rent / SF = Rent / Size
+            set_stab("AP", f"=IFERROR(AM{stab_row}/AN{stab_row},0)", currency_dec_fmt)
+            
+            # AQ: Units
+            set_stab("AQ", f"=COUNTIF({r_type}, \"{safe_type}\")", "#,##0", align='center')
+            
+            # AR: Mix % = Units / Total Units
+            set_stab("AR", f"=IFERROR(AQ{stab_row}/{r_total_units_cell},0)", percent_fmt)
+            
+            # AS: SF % = Total SF / Grand Total SF
+            # We can use SUM(AO range) but we are building it row by row.
+            # We can reference the total from the other summary table or calculate sum at bottom.
+            # Using bottom sum reference is circular if we build top down? No.
+            # But we can't reference bottom yet.
+            # Let's use the total from the existing summary table (AA) -> AD{summary_row}
+            set_stab("AS", f"=IFERROR(AO{stab_row}/{r_total_sf_val},0)", percent_fmt)
+            
+            # AT: Beds (Avg)
+            set_stab("AT", f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_beds}),0)", "0.0", align='center')
+            
+            # AU: $/Beds = Rent / Beds
+            set_stab("AU", f"=IFERROR(AM{stab_row}/AT{stab_row},0)", currency_fmt)
+            
+            # AV-AZ: Student housing specifics (Dummy Data Logic)
+            # Assumption: All beds are "Single" for simplicity in dummy data
+            # Single Count = Beds
+            set_stab("AV", f"=AT{stab_row}", "0", align='center') # Single = Beds
+            set_stab("AW", "-", align='center') # Double (Assume 0)
+            
+            # Single $ = Rent / Singles (which is same as $/Bed)
+            set_stab("AX", f"=AU{stab_row}", currency_fmt) # Single $
+            set_stab("AY", "-", align='center') # Double $
+            
+            # Unit Config Text
+            set_stab("AZ", f"=AT{stab_row} & \" Single\"", align='center') # e.g. "2 Single"
+            
+            stab_row += 1
+
+        # 4. Total Row
+        def set_stab_total(col, val, fmt=None, align='right'):
+            c = sheet[f"{col}{stab_row}"]
+            c.value = val
+            if fmt: c.number_format = fmt
+            if align: c.alignment = Alignment(horizontal=align)
+            c.font = footer_font
+            c.border = footer_border
+
+        set_stab_total("AL", "Total / Wtd Avg", align='left')
+        
+        start_s = 3
+        end_s = stab_row - 1
+        
+        # AQ: Units Total
+        set_stab_total("AQ", f"=SUM(AQ{start_s}:AQ{end_s})", "#,##0", align='center')
+        
+        # AM: Wtd Avg Rent
+        set_stab_total("AM", f"=IFERROR(SUMPRODUCT(AQ{start_s}:AQ{end_s},AM{start_s}:AM{end_s})/AQ{stab_row},0)", currency_fmt)
+        
+        # AN: Wtd Avg Size
+        set_stab_total("AN", f"=IFERROR(SUMPRODUCT(AQ{start_s}:AQ{end_s},AN{start_s}:AN{end_s})/AQ{stab_row},0)", "#,##0")
+        
+        # AO: Total SF
+        set_stab_total("AO", f"=SUM(AO{start_s}:AO{end_s})", "#,##0")
+        
+        # AP: Wtd Avg Rent/SF (Total Rent / Total SF)
+        # Total Rent = Units * Rent = AQ * AM (approx) -> Better: SumProduct(Units, Rent)
+        # Total SF = AO
+        set_stab_total("AP", f"=IFERROR((AM{stab_row}*AQ{stab_row})/AO{stab_row},0)", currency_dec_fmt)
+        
+        # AR: Mix % Total (100%)
+        set_stab_total("AR", f"=SUM(AR{start_s}:AR{end_s})", percent_fmt)
+        
+        # AS: SF % Total (100%)
+        set_stab_total("AS", f"=SUM(AS{start_s}:AS{end_s})", percent_fmt)
+        
+        # AT: Avg Beds
+        set_stab_total("AT", f"=IFERROR(SUMPRODUCT(AQ{start_s}:AQ{end_s},AT{start_s}:AT{end_s})/AQ{stab_row},0)", "0.0", align='center')
+        
+        # AU: $/Beds (Avg)
+        set_stab_total("AU", f"=IFERROR(AM{stab_row}/AT{stab_row},0)", currency_fmt)
+        
+        # AV: Single Total (Avg)
+        set_stab_total("AV", f"=AT{stab_row}", "0.0", align='center')
+        
+        # AW: Double Total
+        set_stab_total("AW", "-", align='center')
+        
+        # AX: Single $ (Avg)
+        set_stab_total("AX", f"=AU{stab_row}", currency_fmt)
+        
+        # AY: Double $
+        set_stab_total("AY", "-", align='center')
+        
+        # AZ
+        set_stab_total("AZ", "-", align='center')
+
+        # 5. Explanatory Text for Dummy Data
+        stab_row += 2
+        sheet[f"AL{stab_row}"] = "Assumptions & Notes:"
+        sheet[f"AL{stab_row}"].font = Font(bold=True)
+        
+        stab_row += 1
+        notes = [
+            "1. Pro Forma Rent refers to the Market Rent (potential rent at current market rates).",
+            "2. Student Housing Configuration (Single/Double, Unit Config) is estimated.",
+            "3. Assumption: All beds are treated as 'Single' occupancy for this projection.",
+            "4. Single $ is calculated as Pro Forma Rent / Beds.",
+            "5. Actual unit configurations may vary based on leasing strategy."
+        ]
+        
+        for note in notes:
+            sheet[f"AL{stab_row}"] = note
+            stab_row += 1
+
+        # Column Widths for new table
+        for col in stab_cols:
+             sheet.column_dimensions[col].width = 12
+        sheet.column_dimensions['AL'].width = 20
+        sheet.column_dimensions['AZ'].width = 20
 
         # Save
         virtual_workbook = io.BytesIO()
