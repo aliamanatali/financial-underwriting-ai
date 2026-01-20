@@ -220,11 +220,11 @@ export default function RentRollWidget({
     items.forEach(item => {
       let key = item.unit_type || "Unknown";
       
-      // Check if unit is vacant (explicitly or 0 rent)
-      // const isVacant = (item.tenant_name && item.tenant_name.toLowerCase() === "vacant") || (item.current_rent || 0) === 0;
-      // if (isVacant) {
-      //   key = `${key} - Vacant`;
-      // }
+     // Check if unit is vacant (explicitly or 0 rent)
+      const isVacant = (item.tenant_name && item.tenant_name.toLowerCase() === "vacant") || (item.current_rent || 0) === 0;
+      if (isVacant) {
+        key = `${key} - Vacant`;
+      }
       
       if (!groups[key]) {
         groups[key] = { count: 0, payingCount: 0, totalCurrentRent: 0, totalStabilizedRent: 0, totalMarketRent: 0, totalSqFt: 0 };

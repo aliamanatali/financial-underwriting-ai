@@ -180,10 +180,10 @@ class FinancialService:
         for item in analysis.rent_roll:
             u_type = item.unit_type or "Unknown"
             # Normalize to remove "- Vacant" suffix if present (case insensitive)
-            if u_type.lower().endswith(" - vacant"):
-                u_type = u_type[:-9].strip()  # Remove " - Vacant" (9 chars)
-            elif u_type.lower().endswith("-vacant"):
-                u_type = u_type[:-7].strip()
+            # if u_type.lower().endswith(" - vacant"):
+            #     u_type = u_type[:-9].strip()  # Remove " - Vacant" (9 chars)
+            # elif u_type.lower().endswith("-vacant"):
+            #     u_type = u_type[:-7].strip()
 
             if u_type not in unit_groups:
                 unit_groups[u_type] = []

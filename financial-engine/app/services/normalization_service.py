@@ -171,17 +171,17 @@ class NormalizationService:
                 item["move_in_date"] = ""
 
             # Ensure all required fields are present with some default if possible
-            u_type = item.get("unit_type", "Unknown")
-            # Normalize to remove "- Vacant" suffix if present (case insensitive) during ingestion
-            if u_type and isinstance(u_type, str):
-                if u_type.lower().endswith(" - vacant"):
-                    u_type = u_type[:-9].strip()
-                elif u_type.lower().endswith("-vacant"):
-                    u_type = u_type[:-7].strip()
+            # u_type = item.get("unit_type", "Unknown")
+            # # Normalize to remove "- Vacant" suffix if present (case insensitive) during ingestion
+            # if u_type and isinstance(u_type, str):
+            #     if u_type.lower().endswith(" - vacant"):
+            #         u_type = u_type[:-9].strip()
+            #     elif u_type.lower().endswith("-vacant"):
+            #         u_type = u_type[:-7].strip()
 
             rent_roll_item_data = {
                 "unit_number": item.get("unit_number", "N/A"),
-                "unit_type": u_type,
+                "unit_type": item.get("unit_type", "Unknown"),
                 "unit_size": int(item.get("unit_size", 0)),
                 "tenant_name": item.get("tenant_name", "Unknown"),
                 "current_rent": item.get("current_rent", 0.0),
