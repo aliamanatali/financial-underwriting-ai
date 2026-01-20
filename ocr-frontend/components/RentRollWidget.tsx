@@ -328,26 +328,26 @@ export default function RentRollWidget({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
-              <th className="px-4 py-3">Unit #</th>
-              <th className="px-4 py-3 text-right">Unit Size</th>
-              <th className="px-4 py-3">Unit Type</th>
-              <th className="px-4 py-3 text-right">Current Rent</th>
-              <th className="px-4 py-3 text-right">Stabilized Rent</th>
-              <th className="px-4 py-3 text-right">Market Rent</th>
-              <th className="px-4 py-3 text-center">Move-In Date</th>
-              <th className="px-4 py-3 text-center">Lease Start</th>
-              <th className="px-4 py-3 text-center">Lease End</th>
-              {isEditing && <th className="px-4 py-3 text-center">Action</th>}
-            </tr>
-          </thead>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
+                <th className="px-4 py-3">Unit #</th>
+                <th className="px-4 py-3 text-right">Unit Size</th>
+                <th className="px-4 py-3">Unit Type</th>
+                <th className="px-4 py-3 text-right">Current Rent</th>
+                <th className="px-4 py-3 text-right">Stabilized Rent</th>
+                <th className="px-4 py-3 text-right">Market Rent</th>
+                <th className="px-4 py-3 text-center">Move-In Date</th>
+                <th className="px-4 py-3 text-center">Lease Start</th>
+                <th className="px-4 py-3 text-center">Lease End</th>
+                {isEditing && <th className="px-4 py-3 text-center">Action</th>}
+              </tr>
+            </thead>
             <tbody className="divide-y divide-neutral-100">
               <SortableContext
                 items={items.map((item) => item.id)}
@@ -373,8 +373,7 @@ export default function RentRollWidget({
                 </tr>
               )}
             </tbody>
-          </DndContext>
-          <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
+            <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
              {/* Header Row */}
              <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
                <td className="px-4 py-3 text-center">Total Units</td>
@@ -421,7 +420,8 @@ export default function RentRollWidget({
                <td colSpan={isEditing ? 4 : 3}></td>
              </tr>
           </tfoot>
-        </table>
+          </table>
+        </DndContext>
       </div>
      </div>
 
