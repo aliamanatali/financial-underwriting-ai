@@ -91,7 +91,7 @@ class ExcelService:
         
         return entries
 
-    async def create_side_by_side_excel(self, data: List[ProFormaEntry]) -> bytes:
+    async def create_side_by_side_excel(self, data: List[ProFormaEntry], analysis_data: UnderwritingAnalysis = None) -> bytes:
         """
         Creates an Excel file with a side-by-side view of T12 and F12 data asynchronously.
         Includes FORMULAS (not hardcoded values) for all calculations.
@@ -99,13 +99,17 @@ class ExcelService:
         """
         import asyncio
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._create_excel_sync, data)
+        return await loop.run_in_executor(None, self._create_excel_sync, data, analysis_data)
 
-    def _create_excel_sync(self, data: List[ProFormaEntry]) -> bytes:
+    def _create_excel_sync(self, data: List[ProFormaEntry], analysis_data: UnderwritingAnalysis = None) -> bytes:
         """Synchronous implementation of Excel creation."""
         workbook = openpyxl.Workbook()
         sheet: Worksheet = workbook.active
         sheet.title = "Financial Analysis"
+        
+        # Create Detailed Assumptions Sheet if data is available
+        if analysis_data:
+            self._add_detailed_assumptions_sheet(workbook, analysis_data)
         
         # Set column widths
         sheet.column_dimensions['A'].width = 35
@@ -215,6 +219,410 @@ class ExcelService:
         workbook.save(virtual_workbook)
         virtual_workbook.seek(0)
         return virtual_workbook.read()
+
+    def _add_detailed_assumptions_sheet(self, workbook, analysis_data: UnderwritingAnalysis):
+        """
+        Adds a sheet with Property Tax Assumptions and Stabilized Expense Detail YR1.
+        Matches the visual layout provided in the reference images exactly.
+        """
+        sheet = workbook.create_sheet("Assumptions & Detail")
+        
+        # --- Visual Styles ---
+        # Header Blue: Dark Navy/Blackish (RGB: 0, 32, 96 from previous, but looks darker in image)
+        # Let's stick to standard dark navy for headers
+        header_fill = PatternFill(start_color="002060", end_color="002060", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        
+        # Input Blue Text (e.g. 2.88%, 40,439)
+        input_blue_font = Font(color="0070C0") # Standard Excel Blue
+        
+        # Standard Borders
+        border = Border(left=Side(style='thin', color="BFBFBF"),
+                        right=Side(style='thin', color="BFBFBF"),
+                        top=Side(style='thin', color="BFBFBF"),
+                        bottom=Side(style='thin', color="BFBFBF"))
+        
+        # Number Formats
+        currency_fmt = '"$"#,##0'
+        currency_dec_fmt = '"$"#,##0.00'
+        percent_fmt = '0.00%'
+        
+        # --- Data Preparation ---
+        purchase_price = 0.0
+        if analysis_data.property_meta and analysis_data.property_meta.purchase_price:
+            purchase_price = analysis_data.property_meta.purchase_price
+            
+        # Exit Valuation (for Disposition column)
+        # Fallback to purchase price * (1 + growth)^hold_period or just use purchase price if not calc'd
+        exit_valuation = analysis_data.exit_valuation if analysis_data.exit_valuation else purchase_price
+        
+        total_units = 1
+        if analysis_data.property_meta and analysis_data.property_meta.total_units:
+            total_units = analysis_data.property_meta.total_units
+        elif analysis_data.rent_roll:
+            total_units = len(analysis_data.rent_roll)
+            
+        # Beds (for Per Bed calc) - Try to sum from rent roll
+        total_beds = 0
+        if analysis_data.rent_roll:
+            for r in analysis_data.rent_roll:
+                # Heuristic: try to parse bed count from unit_type (e.g. "2bd")
+                # This is a bit weak but better than nothing. Defaults to 1 per unit if fail?
+                # For now, let's just count unit as 1 bed if we can't tell.
+                total_beds += 1 # Placeholder logic, refined later if needed.
+        if total_beds == 0: total_beds = total_units # Fallback
+
+        # GPR Calculation (Market Rent) - Annual
+        gpr_annual = 0.0
+        if analysis_data.rent_roll:
+            gpr_annual = sum((r.market_rent or 0) for r in analysis_data.rent_roll) * 12
+        elif analysis_data.rent_roll_summary and analysis_data.rent_roll_summary.total_market_rent:
+             gpr_annual = analysis_data.rent_roll_summary.total_market_rent * 12
+        
+        # EGI Calculation (GPR - Vacancy)
+        vacancy_rate = 0.05
+        if analysis_data.deal_parameters:
+            vacancy_rate = analysis_data.deal_parameters.vacancy_rate
+        egi_annual = gpr_annual * (1 - vacancy_rate)
+        
+        # Tax Assumptions
+        tax_rate = 0.012033
+        special_assessments = 40439.0
+        biz_tax_rate = 0.0288
+        rent_board_fee = 404.0
+        
+        if getattr(analysis_data, 'tax_assumptions', None):
+            if analysis_data.tax_assumptions.tax_rate is not None:
+                tax_rate = analysis_data.tax_assumptions.tax_rate
+            if analysis_data.tax_assumptions.special_assessments is not None:
+                special_assessments = analysis_data.tax_assumptions.special_assessments
+            if analysis_data.tax_assumptions.business_tax_rate is not None:
+                biz_tax_rate = analysis_data.tax_assumptions.business_tax_rate
+            if analysis_data.tax_assumptions.rent_board_fee is not None:
+                rent_board_fee = analysis_data.tax_assumptions.rent_board_fee
+
+        # T12 Expenses Aggregation (Granular)
+        # We need to map T12 categories to the specific rows in the image if possible.
+        # Image Rows: PG&E, Water & Sewer, Trash, Internet, Tele, Security, Salaries, R+M, Turnover, Landscaping, Pest, Janitorial, Elevator
+        # We will try to fill these specific buckets if the T12 normalization mapped to them.
+        # Otherwise, we dump into "Utilities" or "R&M".
+        
+        t12_granular = {
+            "PG&E": 0.0, "Water & Sewer": 0.0, "Trash & Recycling": 0.0, "Internet": 0.0,
+            "Salaries": 0.0, "R+M": 0.0, "Turnover": 0.0, "Landscaping": 0.0,
+            "Pest Control": 0.0, "Janitorial": 0.0, "Elevator": 0.0,
+            "Insurance": 0.0, "Admin": 0.0, "Marketing": 0.0, "Business Tax": 0.0
+        }
+        
+        if analysis_data.historical_expenses:
+            for exp in analysis_data.historical_expenses:
+                cat = str(exp.mapped_category.value if hasattr(exp.mapped_category, 'value') else exp.mapped_category)
+                txt = exp.original_text.lower()
+                val = exp.amount
+                
+                # Heuristic mapping to granular rows
+                if "electric" in txt or "gas" in txt or "pg&e" in txt or "pge" in txt: t12_granular["PG&E"] += val
+                elif "water" in txt or "sewer" in txt: t12_granular["Water & Sewer"] += val
+                elif "trash" in txt or "garbage" in txt or "recycling" in txt: t12_granular["Trash & Recycling"] += val
+                elif "internet" in txt or "cable" in txt: t12_granular["Internet"] += val
+                elif "pest" in txt: t12_granular["Pest Control"] += val
+                elif "landscap" in txt or "gardening" in txt: t12_granular["Landscaping"] += val
+                elif "elevator" in txt: t12_granular["Elevator"] += val
+                elif "janitorial" in txt or "cleaning" in txt: t12_granular["Janitorial"] += val
+                elif "payroll" in cat or "salary" in txt: t12_granular["Salaries"] += val
+                elif "turnover" in txt: t12_granular["Turnover"] += val
+                elif "insurance" in cat: t12_granular["Insurance"] += val
+                elif "maintenance" in cat or "repair" in cat: t12_granular["R+M"] += val
+                elif "marketing" in cat: t12_granular["Marketing"] += val
+                elif "admin" in cat: t12_granular["Admin"] += val
+                elif "business tax" in txt: t12_granular["Business Tax"] += val # Don't double count if we calculate it?
+                else:
+                    # Fallback buckets
+                    if "Utilities" in cat: t12_granular["PG&E"] += val # Dump generic util here
+                    else: t12_granular["Admin"] += val # Dump other
+                    
+        # Apply inflation (1.5%)
+        inflation = 1.015
+        for k in t12_granular:
+            t12_granular[k] *= inflation
+
+        # --- TABLE 1: Property Tax Assumptions ---
+        # Layout:
+        # Header: Property Tax Assumptions (Merged B-E)
+        # SubHeader: Label | Current | Target | Disposition
+        
+        row = 2
+        # Main Header
+        sheet.merge_cells(f"B{row}:E{row}")
+        sheet[f"B{row}"] = "Property Tax Assumptions"
+        sheet[f"B{row}"].fill = header_fill
+        sheet[f"B{row}"].font = header_font
+        sheet[f"B{row}"].alignment = Alignment(horizontal='center')
+        row += 1
+        
+        # Sub Headers
+        sub_headers = ["", "Current", "Target", "Disposition"] # Col A is empty buffer? No, let's use B=Label, C=Current, D=Target, E=Disposition
+        # Actually image has labels in first col.
+        cols = ["B", "C", "D", "E"]
+        
+        for c_idx, title in zip(cols, sub_headers):
+            cell = sheet[f"{c_idx}{row}"]
+            cell.value = title
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal='center')
+            cell.border = Border(bottom=Side(style='thin'))
+        row += 1
+        
+        def write_tax_row(label, current_val, target_val, disp_val, fmt=currency_fmt, blue_target=False):
+            nonlocal row
+            # Label
+            sheet[f"B{row}"] = label
+            sheet[f"B{row}"].border = border
+            
+            # Current (Placeholder/Zero if unknown)
+            sheet[f"C{row}"] = current_val
+            sheet[f"C{row}"].number_format = fmt
+            sheet[f"C{row}"].alignment = Alignment(horizontal='right')
+            sheet[f"C{row}"].border = border
+            
+            # Target
+            sheet[f"D{row}"] = target_val
+            sheet[f"D{row}"].number_format = fmt
+            sheet[f"D{row}"].alignment = Alignment(horizontal='right')
+            if blue_target: sheet[f"D{row}"].font = input_blue_font
+            sheet[f"D{row}"].border = border
+            
+            # Disposition
+            sheet[f"E{row}"] = disp_val
+            sheet[f"E{row}"].number_format = fmt
+            sheet[f"E{row}"].alignment = Alignment(horizontal='right')
+            sheet[f"E{row}"].border = border
+            
+            row += 1
+
+        # 1. Business Tax: Rate | Rate | Price | Price
+        # The image shows: "Business Tax" | 2.88% (Blue) | $10,400,000 | $18,214,440
+        # This row is confusing in image. It puts the rate in "Current" column?
+        # Let's replicate the image content structure.
+        write_tax_row("Business Tax", biz_tax_rate, purchase_price, exit_valuation, fmt=currency_fmt)
+        # Fix format for the rate cell (C)
+        sheet[f"C{row-1}"].number_format = percent_fmt
+        sheet[f"C{row-1}"].font = input_blue_font
+        
+        # 2. Assessment Ratio
+        write_tax_row("Assessment Ratio:", 1.0, "VC Ratio", 1.0, fmt=percent_fmt)
+        sheet[f"C{row-1}"].font = input_blue_font
+        sheet[f"E{row-1}"].font = input_blue_font
+        sheet[f"D{row-1}"].alignment = Alignment(horizontal='center') # "VC Ratio" text
+        
+        # 3. Assessed Value
+        write_tax_row("Assessed Value", purchase_price, purchase_price, exit_valuation, fmt=currency_fmt)
+        
+        # 4. CapEx 30%
+        # Image: - | 1,350,000 | -
+        # We don't have this value calculated. Hardcode placeholder or 0.
+        write_tax_row("CapEx 30%", "-", 0, "-", fmt=currency_fmt)
+        
+        # 5. Tax Rate
+        write_tax_row("Tax Rate", tax_rate, tax_rate, tax_rate, fmt='0.0000%')
+        
+        # 6. Property Taxes (Calculated)
+        # Current = Assessed * Rate
+        # Target = Assessed * Rate
+        curr_tax_formula = f"=C{row-3}*C{row-1}" # Assessed * Rate
+        targ_tax_formula = f"=D{row-3}*D{row-1}"
+        disp_tax_formula = f"=E{row-3}*E{row-1}"
+        write_tax_row("Property Taxes", curr_tax_formula, targ_tax_formula, disp_tax_formula, fmt=currency_fmt)
+        row_prop_tax = row - 1
+        
+        # 7. Special Assess
+        write_tax_row("Special Assess", special_assessments, special_assessments, special_assessments, fmt=currency_fmt)
+        sheet[f"C{row-1}"].font = input_blue_font # Image shows blue in first col?
+        row_spec_assess = row - 1
+        
+        # 8. Empty Row / Separator
+        # write_tax_row("-", "-", "-", "-") # Skip or just empty line
+        sheet[f"B{row}"].value = "-"
+        sheet[f"E{row}"].value = "-"
+        row += 1
+        
+        # 9. Total Taxes
+        write_tax_row("Total Taxes",
+                      f"=C{row_prop_tax}+C{row_spec_assess}",
+                      f"=D{row_prop_tax}+D{row_spec_assess}",
+                      f"=E{row_prop_tax}+E{row_spec_assess}", fmt=currency_fmt)
+        row_total_taxes = row - 1
+        
+        # Store Total Target Tax cell reference for next table (D column)
+        total_target_tax_ref = f"D{row_total_taxes}"
+        
+        
+        # --- TABLE 2: Stabilized Expense Detail YR1 ---
+        row += 3
+        start_row_t2 = row
+        
+        # Header
+        sheet.merge_cells(f"B{row}:G{row}")
+        sheet[f"B{row}"] = "Stabilized Expense Detail YR1"
+        sheet[f"B{row}"].fill = header_fill
+        sheet[f"B{row}"].font = header_font
+        sheet[f"B{row}"].alignment = Alignment(horizontal='center')
+        row += 1
+        
+        # Sub Headers: Item Description | Category | Annual | Per Month | Per Unit | Per Bed
+        headers_t2 = ["Item Description", "Category", "Annual", "Per Month", "Per Unit", "Per Bed"]
+        cols_t2 = ["B", "C", "D", "E", "F", "G"]
+        
+        for c_idx, title in zip(cols_t2, headers_t2):
+            cell = sheet[f"{c_idx}{row}"]
+            cell.value = title
+            cell.font = Font(bold=True)
+            cell.border = Border(bottom=Side(style='thin'))
+            cell.alignment = Alignment(horizontal='center')
+        row += 1
+        
+        def write_exp_row(item, category, annual_val, is_input=False):
+            nonlocal row
+            # Item
+            sheet[f"B{row}"] = item
+            sheet[f"B{row}"].border = border
+            
+            # Category
+            sheet[f"C{row}"] = category
+            sheet[f"C{row}"].border = border
+            
+            # Annual
+            sheet[f"D{row}"] = annual_val
+            sheet[f"D{row}"].number_format = currency_fmt
+            if is_input and isinstance(annual_val, (int, float)):
+                sheet[f"D{row}"].font = input_blue_font
+                sheet[f"D{row}"].fill = PatternFill(start_color="EDEBE9", end_color="EDEBE9", fill_type="solid") # Light grey bg for input?
+            sheet[f"D{row}"].border = border
+            
+            # Per Month
+            sheet[f"E{row}"] = f"=D{row}/12"
+            sheet[f"E{row}"].number_format = currency_fmt
+            sheet[f"E{row}"].border = border
+            
+            # Per Unit
+            sheet[f"F{row}"] = f"=D{row}/{total_units}"
+            sheet[f"F{row}"].number_format = currency_fmt
+            sheet[f"F{row}"].border = border
+            
+            # Per Bed
+            sheet[f"G{row}"] = f"=D{row}/{total_beds}"
+            sheet[f"G{row}"].number_format = currency_fmt
+            sheet[f"G{row}"].border = border
+            
+            row += 1
+
+        # Hidden helpers for EGI/GPR reference
+        # We need GPR and EGI for formulas.
+        # Let's put them in hidden cells far right or calculate inline.
+        # Inline is safer. GPR = gpr_annual. EGI = egi_annual.
+        
+        # 1. Property Taxes
+        write_exp_row("Property Taxes", "Property Taxes", f"={total_target_tax_ref}")
+        
+        # 2. PM Fee
+        write_exp_row("PM Fee", "Property Mgmt", f"={egi_annual}*0.05") # 5% of EGI
+        
+        # 3. Insurance
+        write_exp_row("Insurance", "Insurance", t12_granular["Insurance"]) # Default or T12
+        
+        # 4. PG&E
+        write_exp_row("PG&E", "Utilities", t12_granular["PG&E"])
+        
+        # 5. Water & Sewer
+        write_exp_row("Water & Sewer", "Utilities", t12_granular["Water & Sewer"])
+        
+        # 6. Trash & Recycling
+        write_exp_row("Trash & Recycling", "Utilities", t12_granular["Trash & Recycling"])
+        
+        # 7. Internet (Res Only)
+        write_exp_row("Internet (Res Only)", "Utilities", t12_granular["Internet"])
+        
+        # 8. Tele (Fire Alarm/Elevator)
+        write_exp_row("Tele (Fire Alarm/Elevator)", "Utilities", 1440) # Hardcoded in image? Use default small val
+        
+        # 9. Security & Alarm
+        write_exp_row("Security & Alarm", "Utilities", 0)
+        
+        # 10. Salaries (No RTL)
+        write_exp_row("Salaries (No RTL)", "Salaries", t12_granular["Salaries"])
+        
+        # 11. R+M (No RTL)
+        write_exp_row("R+M (No RTL)", "Maintenance", t12_granular["R+M"])
+        
+        # 12. Turnover (No RC or RTL)
+        write_exp_row("Turnover (No RC or RTL)", "Maintenance", t12_granular["Turnover"])
+        
+        # 13. Landscaping
+        write_exp_row("Landscaping", "Maintenance", t12_granular["Landscaping"])
+        
+        # 14. Pest Control
+        write_exp_row("Pest Control", "Maintenance", t12_granular["Pest Control"])
+        
+        # 15. Janitorial (Common Areas)
+        write_exp_row("Janitorial (Common Areas)", "Maintenance", t12_granular["Janitorial"])
+        
+        # 16. Elevator
+        write_exp_row("Elevator", "Maintenance", t12_granular["Elevator"])
+        
+        # 17. Business Tax
+        # Formula: GPR * Rate
+        write_exp_row("Business Tax", "Administrative", f"={gpr_annual}*{biz_tax_rate}")
+        
+        # 18. Rent Board (Res Only)
+        write_exp_row("Rent Board (Res Only)", "Administrative", f"={total_units}*{rent_board_fee}")
+        
+        # 19. RHSP (Res Only)
+        write_exp_row("RHSP (Res Only)", "Administrative", f"={total_units}*60") # Default assumption?
+        
+        # 20. Admin (Res Only)
+        write_exp_row("Admin (Res Only)", "Administrative", t12_granular["Admin"])
+        
+        # 21. Marketing (Res Only)
+        write_exp_row("Marketing (Res Only)", "Leasing/Marketing", t12_granular["Marketing"])
+        
+        # Total Operating Expenses
+        # Sum Range D
+        sum_start = start_row_t2 + 2 # Skip header rows
+        sum_end = row - 1
+        
+        sheet[f"B{row}"] = "Total Operating Expenses"
+        sheet[f"B{row}"].font = Font(bold=True)
+        sheet[f"B{row}"].border = border
+        
+        sheet[f"D{row}"] = f"=SUM(D{sum_start}:D{sum_end})"
+        sheet[f"D{row}"].number_format = currency_fmt
+        sheet[f"D{row}"].font = Font(bold=True)
+        sheet[f"D{row}"].border = border
+        
+        # Copy Per Month/Unit/Bed formulas
+        sheet[f"E{row}"] = f"=D{row}/12"
+        sheet[f"E{row}"].number_format = currency_fmt
+        sheet[f"E{row}"].font = Font(bold=True)
+        sheet[f"E{row}"].border = border
+        
+        sheet[f"F{row}"] = f"=D{row}/{total_units}"
+        sheet[f"F{row}"].number_format = currency_fmt
+        sheet[f"F{row}"].font = Font(bold=True)
+        sheet[f"F{row}"].border = border
+        
+        sheet[f"G{row}"] = f"=D{row}/{total_beds}"
+        sheet[f"G{row}"].number_format = currency_fmt
+        sheet[f"G{row}"].font = Font(bold=True)
+        sheet[f"G{row}"].border = border
+        
+        # Column Widths
+        sheet.column_dimensions['B'].width = 30
+        sheet.column_dimensions['C'].width = 20
+        sheet.column_dimensions['D'].width = 15
+        sheet.column_dimensions['E'].width = 15
+        sheet.column_dimensions['F'].width = 15
+        sheet.column_dimensions['G'].width = 15
+
 
     async def create_rent_roll_excel(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """

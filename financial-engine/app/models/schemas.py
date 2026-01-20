@@ -286,6 +286,12 @@ class OMProformaTable(BaseModel):
     cap_rate: Optional[float] = 0.0
     grm: Optional[float] = 0.0
 
+class OMTaxAssumptions(BaseModel):
+    tax_rate: Optional[float] = None # e.g. 0.012033
+    special_assessments: Optional[float] = None # e.g. 40439.0
+    business_tax_rate: Optional[float] = None # e.g. 0.0288
+    rent_board_fee: Optional[float] = None # e.g. 404.0 (per unit)
+
 # --- 3. Main Analysis Model ---
 class UnderwritingAnalysis(BaseModel):
     document_id: str
@@ -351,3 +357,4 @@ class UnderwritingAnalysis(BaseModel):
     
     # OM Proforma Extraction
     om_proforma: Optional[List[OMProformaTable]] = []
+    tax_assumptions: Optional[OMTaxAssumptions] = None

@@ -29,7 +29,7 @@ async def export_excel(
     - Professional formatting and styling
     """
     pro_forma_entries = excel_service.generate_side_by_side_view(analysis_data)
-    excel_data = await excel_service.create_side_by_side_excel(pro_forma_entries)
+    excel_data = await excel_service.create_side_by_side_excel(pro_forma_entries, analysis_data)
 
     return StreamingResponse(
         iter([excel_data]),
