@@ -2,7 +2,7 @@ import json
 from typing import Dict
 from typing import List
 from app.services.gemini_client import GeminiClient
-from app.models.schemas import PropertyMeta, OMProformaTable, OMProformaRow
+from app.models.schemas import PropertyMeta, OMProformaTable, OMProformaRow, OMTaxAssumptions
 
 class OMScraperService:
     def __init__(self, gemini_client: GeminiClient = None):
@@ -60,6 +60,36 @@ class OMScraperService:
         except Exception as e:
             print(f"Error extracting OM Proforma: {e}")
             return []
+
+    def extract_tax_assumptions(self, raw_text: str) -> OMTaxAssumptions:
+        """
+        Extracts specific tax assumptions from the OM text.
+        """
+        prompt = """
+        Analyze the Offering Memorandum text and extract the following tax and fee assumptions:
+        1. Tax Rate (as a decimal, e.g., 1.2% -> 0.012)
+        2. Special Assessments (annual amount in dollars)
+        3. Business Tax Rate (as a decimal, e.g., 2.88% -> 0.0288) - often applied to Gross Rent
+        4. Rent Board Fee (amount per unit per year)
+
+        Look for terms like "Ad Valorem", "Tax Rate", "Special Assessment", "Direct Charges", "Business Tax", "License Tax", "Rent Board", "Registration Fee".
+        
+        Return a JSON object with keys: "tax_rate", "special_assessments", "business_tax_rate", "rent_board_fee".
+        If a value is not found, return null.
+        """
+        
+        try:
+            tax_data = self.gemini_client.generate_structured_data(
+                f"{prompt}\n\nDOCUMENT TEXT SAMPLE:\n{raw_text[:30000]}",
+                expect_list=False,
+                pydantic_schema=OMTaxAssumptions
+            )
+            if isinstance(tax_data, dict):
+                return OMTaxAssumptions(**tax_data)
+            return OMTaxAssumptions()
+        except Exception as e:
+            print(f"Error extracting OM Tax Assumptions: {e}")
+            return OMTaxAssumptions()
 
     def extract_om_details(self, file_path: str) -> PropertyMeta:
         """

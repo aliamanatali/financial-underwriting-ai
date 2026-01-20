@@ -278,6 +278,11 @@ class IngestionService:
         else:
             logging.warning("Failed to extract OM Proforma data from both text and vision methods.")
 
+        # 5.6 Extract Tax Assumptions
+        tax_assumptions = self.om_scraper_service.extract_tax_assumptions(raw_text)
+        if tax_assumptions:
+             logging.info(f"Extracted Tax Assumptions: {tax_assumptions}")
+
         # 6. Build comprehensive Audit Trail
         audit_trail_entries = []
         
@@ -358,7 +363,8 @@ class IngestionService:
             rent_roll_summary=rent_roll_summary,
             historical_expenses=historical_expenses,
             audit_trail=audit_trail_entries,  # Pass the comprehensive audit trail
-            om_proforma=om_proforma
+            om_proforma=om_proforma,
+            tax_assumptions=tax_assumptions
         )
         
         # 8. Get income from P&L and compare (add warning if mismatch)
