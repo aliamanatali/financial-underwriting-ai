@@ -3,6 +3,25 @@
 import React, { useState, useEffect } from "react";
 import { RentRollItem, RentRollSummary, UnderwritingAnalysis } from "@/lib/types";
 import { apiClient } from "@/lib/api";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+type DraggableRentRollItem = RentRollItem & { id: string };
 
 interface RentRollWidgetProps {
   rentRoll: RentRollItem[];
@@ -18,13 +37,39 @@ export default function RentRollWidget({
   onUpdate,
 }: RentRollWidgetProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [items, setItems] = useState<RentRollItem[]>(rentRoll);
+  // Initialize with IDs
+  const [items, setItems] = useState<DraggableRentRollItem[]>(
+    rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` }))
+  );
+
+  useEffect(() => {
+    setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
+  }, [rentRoll]);
+
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
-  useEffect(() => {
-    setItems(rentRoll);
-  }, [rentRoll]);
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setItems((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+
 
   const handleItemChange = (index: number, field: keyof RentRollItem, value: any) => {
     const newItems = [...items];
@@ -38,7 +83,10 @@ export default function RentRollWidget({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await apiClient.updateManualOverrides(packageId, { rent_roll: items });
+      // Remove 'id' before saving
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const cleanItems = items.map(({ id, ...rest }) => rest);
+      await apiClient.updateManualOverrides(packageId, { rent_roll: cleanItems });
       setIsEditing(false);
       if (onUpdate) {
         onUpdate();
@@ -76,7 +124,7 @@ export default function RentRollWidget({
   };
 
   const handleCancel = () => {
-    setItems(rentRoll);
+    setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
     setIsEditing(false);
   };
 
@@ -84,6 +132,7 @@ export default function RentRollWidget({
     setItems([
       ...items,
       {
+        id: `new-${Date.now()}`,
         unit_number: `Unit ${items.length + 1}`,
         unit_size: 0,
         unit_type: "1BR",
@@ -97,6 +146,7 @@ export default function RentRollWidget({
       },
     ]);
   };
+
 
   const removeItem = (index: number) => {
     const newItems = [...items];
@@ -293,125 +343,37 @@ export default function RentRollWidget({
               {isEditing && <th className="px-4 py-3 text-center">Action</th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-100">
-            {items.map((item, idx) => (
-              <tr key={idx} className="group hover:bg-neutral-50/50 transition-colors">
-                <td className="px-4 py-2.5 font-medium text-neutral-900">
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={item.unit_number}
-                      onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
-                      className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.unit_number}
-                </td>
-                <td className="px-4 py-2.5 text-right text-neutral-600">
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={item.unit_size}
-                      onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
-                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.unit_size || "-"}
-                </td>
-                <td className="px-4 py-2.5 text-neutral-600">
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={item.unit_type}
-                      onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
-                      className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.unit_type}
-                </td>
-                <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={item.current_rent}
-                      onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
-                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : formatCurrency(item.current_rent)}
-                </td>
-                <td className="px-4 py-2.5 text-right text-neutral-600">
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={item.stabilized_rent}
-                      onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
-                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : formatCurrency(item.stabilized_rent || 0)}
-                </td>
-                <td className="px-4 py-2.5 text-right text-neutral-600">
-                  {isEditing ? (
-                    <input
-                      type="number"
-                      value={item.market_rent}
-                      onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
-                      className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : formatCurrency(item.market_rent || 0)}
-                </td>
-                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={item.move_in_date || ""}
-                      placeholder="MM/DD/YY"
-                      onChange={(e) => handleItemChange(idx, "move_in_date", e.target.value)}
-                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.move_in_date || "-"}
-                </td>
-                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={item.lease_start || ""}
-                      placeholder="MM/DD/YY"
-                      onChange={(e) => handleItemChange(idx, "lease_start", e.target.value)}
-                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.lease_start || "-"}
-                </td>
-                <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={item.lease_end || ""}
-                      placeholder="MM/DD/YY"
-                      onChange={(e) => handleItemChange(idx, "lease_end", e.target.value)}
-                      className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                    />
-                  ) : item.lease_end || "-"}
-                </td>
-                {isEditing && (
-                  <td className="px-4 py-2.5 text-center">
-                    <button
-                      onClick={() => removeItem(idx)}
-                      className="text-neutral-400 hover:text-rose-500 transition-colors p-1"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M18 6 6 18"></path>
-                        <path d="m6 6 12 12"></path>
-                      </svg>
-                    </button>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <tbody className="divide-y divide-neutral-100">
+              <SortableContext
+                items={items.map((item) => item.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {items.map((item, idx) => (
+                  <SortableRow
+                    key={item.id}
+                    item={item}
+                    idx={idx}
+                    isEditing={isEditing}
+                    handleItemChange={handleItemChange}
+                    formatCurrency={formatCurrency}
+                    removeItem={removeItem}
+                  />
+                ))}
+              </SortableContext>
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
+                    No rent roll data available.
                   </td>
-                )}
-              </tr>
-            ))}
-            {items.length === 0 && (
-              <tr>
-                <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
-                  No rent roll data available.
-                </td>
-              </tr>
-            )}
-          </tbody>
+                </tr>
+              )}
+            </tbody>
+          </DndContext>
           <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
              {/* Header Row */}
              <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
@@ -513,5 +475,190 @@ export default function RentRollWidget({
         </div>
       </div>
     </>
+  );
+}
+
+function SortableRow({
+  item,
+  idx,
+  isEditing,
+  handleItemChange,
+  formatCurrency,
+  removeItem,
+}: {
+  item: RentRollItem;
+  idx: number;
+  isEditing: boolean;
+  handleItemChange: (index: number, field: keyof RentRollItem, value: any) => void;
+  formatCurrency: (val: number) => string;
+  removeItem: (index: number) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: (item as any).id || item.unit_number });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    position: isDragging ? "relative" : undefined,
+  } as React.CSSProperties;
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`group hover:bg-neutral-50/50 transition-colors ${isDragging ? "bg-neutral-50 shadow-md" : "bg-white"
+        }`}
+    >
+      <td className="px-4 py-2.5 font-medium text-neutral-900">
+        <div className="flex items-center gap-2">
+           {isEditing && (
+            <div
+              {...attributes}
+              {...listeners}
+              className="cursor-grab hover:text-neutral-900 text-neutral-400 p-1"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="9" cy="12" r="1"></circle>
+                <circle cx="9" cy="5" r="1"></circle>
+                <circle cx="9" cy="19" r="1"></circle>
+                <circle cx="15" cy="12" r="1"></circle>
+                <circle cx="15" cy="5" r="1"></circle>
+                <circle cx="15" cy="19" r="1"></circle>
+              </svg>
+            </div>
+           )}
+          {isEditing ? (
+            <input
+              type="text"
+              value={item.unit_number}
+              onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            />
+          ) : (
+            item.unit_number
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-2.5 text-right text-neutral-600">
+        {isEditing ? (
+          <input
+            type="number"
+            value={item.unit_size}
+            onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
+            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          item.unit_size || "-"
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-neutral-600">
+        {isEditing ? (
+          <input
+            type="text"
+            value={item.unit_type}
+            onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
+            className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          item.unit_type
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
+        {isEditing ? (
+          <input
+            type="number"
+            value={item.current_rent}
+            onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
+            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          formatCurrency(item.current_rent)
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right text-neutral-600">
+        {isEditing ? (
+          <input
+            type="number"
+            value={item.stabilized_rent}
+            onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
+            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          formatCurrency(item.stabilized_rent || 0)
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right text-neutral-600">
+        {isEditing ? (
+          <input
+            type="number"
+            value={item.market_rent}
+            onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
+            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          formatCurrency(item.market_rent || 0)
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+        {isEditing ? (
+          <input
+            type="text"
+            value={item.move_in_date || ""}
+            placeholder="MM/DD/YY"
+            onChange={(e) => handleItemChange(idx, "move_in_date", e.target.value)}
+            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          item.move_in_date || "-"
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+        {isEditing ? (
+          <input
+            type="text"
+            value={item.lease_start || ""}
+            placeholder="MM/DD/YY"
+            onChange={(e) => handleItemChange(idx, "lease_start", e.target.value)}
+            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          item.lease_start || "-"
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+        {isEditing ? (
+          <input
+            type="text"
+            value={item.lease_end || ""}
+            placeholder="MM/DD/YY"
+            onChange={(e) => handleItemChange(idx, "lease_end", e.target.value)}
+            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+          />
+        ) : (
+          item.lease_end || "-"
+        )}
+      </td>
+      {isEditing && (
+        <td className="px-4 py-2.5 text-center">
+          <button
+            onClick={() => removeItem(idx)}
+            className="text-neutral-400 hover:text-rose-500 transition-colors p-1"
+            title="Remove Unit"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6 6 18"></path>
+              <path d="m6 6 12 12"></path>
+            </svg>
+          </button>
+        </td>
+      )}
+    </tr>
   );
 }
