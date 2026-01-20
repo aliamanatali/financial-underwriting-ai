@@ -738,6 +738,7 @@ class ExcelService:
 
     def _create_rent_roll_excel_sync(self, analysis_data: UnderwritingAnalysis) -> bytes:
         workbook = openpyxl.Workbook()
+        assumptions_log = []
         
         # Remove default sheet
         default_sheet = workbook.active
