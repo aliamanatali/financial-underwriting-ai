@@ -107,6 +107,24 @@ class ExplainabilityService:
     def _add_explanation(self, key: str, meta: ExplainabilityMetadata):
         self.explanations[key] = meta
 
+    def _get_source(self, field_name: str, default_source: str) -> str:
+        """
+        Helper to find the source of a field from the audit trail.
+        Returns the specific document or method if found, otherwise the default.
+        """
+        if not self.analysis.audit_trail:
+            return default_source
+            
+        # Search audit trail for the field
+        # We look for partial matches or exact matches on field_name
+        for log in self.analysis.audit_trail:
+            if isinstance(log, dict) and log.get('field_name') == field_name:
+                source = log.get('source', 'Unknown')
+                method = log.get('method', 'Extraction')
+                return f"{source} ({method})"
+                
+        return default_source
+
     # --- Revenue Implementations ---
 
     def _explain_gpr(self):
@@ -743,15 +761,44 @@ class ExplainabilityService:
         # Dynamic primary risks based on deal characteristics
         primary_risks = self._identify_primary_risks()
             
+        # Dynamic Source Resolution
+        multifamily_source = self._get_source("Total Units", "Offering Memorandum (Unit Count)")
+        
+        # Check if address came from a specific doc
+        address_source = self._get_source("Property Address", "Offering Memorandum")
+        campus_source = f"Google Maps Analysis ({address_source})"
+        
+        # Rent Roll Analysis Sources
+        rent_roll_source = "Rent Roll"
+        if self.analysis.rent_roll:
+            # Check if we have an audit log for rent roll ingestion?
+            # Usually rent roll is a whole file, so we default to "Rent Roll"
+            pass
+            
         checklist = InvestmentChecklist(
             is_multifamily="Yes" if total_units >= 5 else "No (1-4 Units)",
+            is_multifamily_source=multifamily_source,
+            
             near_campus=near_campus,
+            near_campus_source=campus_source,
+            
             business_plan=f"Capture ${ltl:,.0f} Loss-to-Lease" if ltl > 0 else "Stabilized Asset Hold",
+            business_plan_source="Rent Roll vs Market Rent Analysis",
+            
             rents_below_market=rents_status,
+            rents_below_market_source="Rent Roll vs Market Rent Analysis",
+            
             is_mismanaged=mismanaged_status,
+            is_mismanaged_source="Expense Ratio Analysis (T12/Pro Forma)",
+            
             diligence_issues=diligence_note,
+            diligence_issues_source=f"Property Vintage (Year Built: {year_built})",
+            
             primary_risks=primary_risks,
-            price_per_unit_analysis=f"${price_per_unit:,.0f}/unit"
+            primary_risks_source="Risk Assessment Model (DSCR, LTV, Age)",
+            
+            price_per_unit_analysis=f"${price_per_unit:,.0f}/unit",
+            price_per_unit_source=f"Calculated from Purchase Price & {multifamily_source}"
         )
 
         self.analysis.conclusion = Conclusion(

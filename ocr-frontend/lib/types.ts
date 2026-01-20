@@ -239,13 +239,28 @@ export interface DecisionImpact {
 
 export interface InvestmentChecklist {
     is_multifamily: string;
+    is_multifamily_source?: string;
+    
     near_campus: string;
+    near_campus_source?: string;
+    
     business_plan: string;
+    business_plan_source?: string;
+    
     rents_below_market: string;
+    rents_below_market_source?: string;
+    
     is_mismanaged: string;
+    is_mismanaged_source?: string;
+    
     diligence_issues: string;
+    diligence_issues_source?: string;
+    
     primary_risks: string;
+    primary_risks_source?: string;
+    
     price_per_unit_analysis: string;
+    price_per_unit_source?: string;
 }
 
 export interface Conclusion {
