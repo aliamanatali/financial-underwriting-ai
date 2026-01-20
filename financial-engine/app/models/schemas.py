@@ -193,13 +193,28 @@ class DecisionImpact(BaseModel):
 
 class InvestmentChecklist(BaseModel):
     is_multifamily: str = "Unknown"
+    is_multifamily_source: Optional[str] = None
+    
     near_campus: str = "Unknown"
+    near_campus_source: Optional[str] = None
+    
     business_plan: str = "Unknown"
+    business_plan_source: Optional[str] = None
+    
     rents_below_market: str = "Unknown"
+    rents_below_market_source: Optional[str] = None
+    
     is_mismanaged: str = "Unknown"
+    is_mismanaged_source: Optional[str] = None
+    
     diligence_issues: str = "Unknown"
+    diligence_issues_source: Optional[str] = None
+    
     primary_risks: str = "Unknown"
+    primary_risks_source: Optional[str] = None
+    
     price_per_unit_analysis: str = "Unknown"
+    price_per_unit_source: Optional[str] = None
 
 class UnitTypeSummary(BaseModel):
     unit_type: str
