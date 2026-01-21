@@ -263,6 +263,17 @@ export interface InvestmentChecklist {
     price_per_unit_source?: string;
 }
 
+export interface UnitTypeConfig {
+    unit_type: string;
+    bed_count: number;
+    occupancy_type: "Single" | "Double"; // Default "Single"
+    unit_config_label: string; // e.g. "Single"
+}
+
+export interface StudentHousingConfig {
+    unit_type_configs: UnitTypeConfig[];
+}
+
 export interface Conclusion {
   summary: string;
   key_decisions: DecisionImpact[];
@@ -301,6 +312,7 @@ export interface UnderwritingAnalysis {
   conclusion?: Conclusion;
   analyst_commentary?: string;
   om_proforma?: OMProformaTable[];
+  student_housing_config?: StudentHousingConfig;
 }
 
 export interface OMProformaRow {

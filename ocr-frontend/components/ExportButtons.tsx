@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import LoadingSpinner from "./LoadingSpinner";
+import RentRollExportModal from "./RentRollExportModal";
 
 import { UnderwritingAnalysis } from "@/lib/types";
 import { apiClient } from "@/lib/api";
@@ -14,9 +15,16 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
   const [isExporting, setIsExporting] = useState<"excel" | "memo" | "om-proforma" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
 
-  const handleExport = async (type: "excel" | "memo" | "om-proforma") => {
-    setIsExporting(type);
+  const handleExport = async (type: "excel" | "memo" | "om-proforma" | "rent-roll") => {
+    // If it's rent-roll export, open the modal instead of direct export
+    if (type === "rent-roll") {
+        setIsRentRollModalOpen(true);
+        return;
+    }
+
+    setIsExporting(type as "excel" | "memo" | "om-proforma");
     setError(null);
     setSuccess(null);
 
@@ -51,6 +59,12 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
 
   return (
     <div className="space-y-6 font-sans">
+      <RentRollExportModal
+        isOpen={isRentRollModalOpen}
+        onClose={() => setIsRentRollModalOpen(false)}
+        analysis={analysis}
+      />
+
       {error && (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-sm flex items-center">
           <svg className="w-5 h-5 mr-2 text-rose-500" fill="currentColor" viewBox="0 0 20 20">
@@ -69,12 +83,12 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Excel Export */}
         <button
           onClick={() => handleExport("excel")}
           disabled={isExporting !== null}
-          className={`group flex items-center justify-center gap-4 px-8 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
+          className={`group flex items-center justify-center gap-4 px-6 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
             isExporting === "excel"
               ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
               : "bg-white border-slate-200 text-slate-700 hover:border-emerald-500 hover:text-emerald-700 hover:bg-emerald-50/50"
@@ -83,28 +97,44 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
           {isExporting === "excel" ? (
             <>
               <LoadingSpinner size="sm" />
-              Generating Excel Models...
+              Excel...
             </>
           ) : (
             <>
-              <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 group-hover:scale-110 transition-transform">
-                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600 group-hover:bg-emerald-200 group-hover:scale-110 transition-transform">
+                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                  </svg>
               </div>
               <div className="text-left">
-                  <div className="text-lg font-bold">Download Excel Models</div>
-                  <div className="text-xs text-slate-500 font-normal mt-1">Analysis & OM Data (.xlsx)</div>
+                  <div className="text-sm font-bold">Analysis Model</div>
+                  <div className="text-[10px] text-slate-500 font-normal mt-0.5">T12 & Pro Forma</div>
               </div>
             </>
           )}
+        </button>
+
+        {/* Rent Roll Export (With Modal) */}
+        <button
+          onClick={() => handleExport("rent-roll")}
+          className={`group flex items-center justify-center gap-4 px-6 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md bg-white border-slate-200 text-slate-700 hover:border-blue-500 hover:text-blue-700 hover:bg-blue-50/50`}
+        >
+          <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 group-hover:bg-blue-200 group-hover:scale-110 transition-transform">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+          </div>
+          <div className="text-left">
+              <div className="text-sm font-bold">Rent Roll</div>
+              <div className="text-[10px] text-slate-500 font-normal mt-0.5">Edit & Export</div>
+          </div>
         </button>
 
         {/* Memo Export */}
         <button
           onClick={() => handleExport("memo")}
           disabled={isExporting !== null}
-          className={`group flex items-center justify-center gap-4 px-8 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
+          className={`group flex items-center justify-center gap-4 px-6 py-6 rounded-xl font-semibold transition-all border shadow-sm hover:shadow-md ${
             isExporting === "memo"
               ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
               : "bg-white border-slate-200 text-slate-700 hover:border-[#FF5E00] hover:text-[#FF5E00] hover:bg-[#FFF5F0]/50"
@@ -113,18 +143,18 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
           {isExporting === "memo" ? (
             <>
               <LoadingSpinner size="sm" />
-              Generating Memo...
+              Memo...
             </>
           ) : (
             <>
-               <div className="w-12 h-12 bg-[#FFE5D9] rounded-lg flex items-center justify-center text-[#FF5E00] group-hover:bg-[#FFCBB3] group-hover:scale-110 transition-transform">
-                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+               <div className="w-10 h-10 bg-[#FFE5D9] rounded-lg flex items-center justify-center text-[#FF5E00] group-hover:bg-[#FFCBB3] group-hover:scale-110 transition-transform">
+                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                  </svg>
               </div>
               <div className="text-left">
-                  <div className="text-lg font-bold">Download Investment Memo</div>
-                  <div className="text-xs text-slate-500 font-normal mt-1">Executive summary & analysis (.docx)</div>
+                  <div className="text-sm font-bold">Investment Memo</div>
+                  <div className="text-[10px] text-slate-500 font-normal mt-0.5">Word Document</div>
               </div>
             </>
           )}
