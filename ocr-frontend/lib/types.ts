@@ -266,8 +266,14 @@ export interface InvestmentChecklist {
 export interface UnitTypeConfig {
     unit_type: string;
     bed_count: number;
-    occupancy_type: "Single" | "Double"; // Default "Single"
+    occupancy_type: "Single" | "Double" | "Mixed"; // Default "Single"
     unit_config_label: string; // e.g. "Single"
+
+    // Advanced Configuration
+    beds_single?: number;
+    beds_double?: number;
+    market_rent_single?: number;
+    market_rent_double?: number;
 }
 
 export interface StudentHousingConfig {

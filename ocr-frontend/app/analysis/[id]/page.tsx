@@ -484,7 +484,13 @@ export default function AnalysisResultPage() {
 
             {activeTab === "export" && (
               <div className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-                <ExportButtons analysis={analysis} />
+                <ExportButtons
+                  analysis={analysis}
+                  onAnalysisUpdate={(newAnalysis) => {
+                    console.log("Updating analysis state in parent page", newAnalysis);
+                    setAnalysis(newAnalysis);
+                  }}
+                />
               </div>
             )}
           </div>

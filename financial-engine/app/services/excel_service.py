@@ -1299,52 +1299,96 @@ class ExcelService:
             # Let's use the total from the existing summary table (AA) -> AD{summary_row}
             set_stab("AS", f"=IFERROR(AO{stab_row}/{r_total_sf_val},0)", percent_fmt)
             
-            # AT: Beds (Avg)
-            set_stab("AT", f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_beds}),0)", "0.0", align='center')
+            # Advanced Config Logic
+            
+            # 1. Get explicit values from config if present
+            beds_s = 0
+            beds_d = 0
+            price_s = 0.0
+            price_d = 0.0
+            
+            # Find the config object again (we did this in loop but variables are local?)
+            # Re-find to be safe or use what we found above
+            conf_obj = None
+            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+                for c in analysis_data.student_housing_config.unit_type_configs:
+                    if c.unit_type == u_type:
+                        conf_obj = c
+                        break
+            
+            # Get basic occupancy/label regardless
+            occupancy = conf_obj.occupancy_type if conf_obj else "Single"
+            label = conf_obj.unit_config_label if conf_obj else "Single"
+
+            if conf_obj:
+                # Use explicit overrides if available, otherwise infer
+                beds_s = conf_obj.beds_single if conf_obj.beds_single is not None else 0
+                beds_d = conf_obj.beds_double if conf_obj.beds_double is not None else 0
+                price_s = conf_obj.market_rent_single if conf_obj.market_rent_single is not None else 0.0
+                price_d = conf_obj.market_rent_double if conf_obj.market_rent_double is not None else 0.0
+                
+                # Fallback Inference if advanced config is empty (0) but basic config exists
+                if beds_s == 0 and beds_d == 0:
+                    if occupancy == "Single":
+                        beds_s = conf_obj.bed_count
+                    elif occupancy == "Double":
+                        beds_d = conf_obj.bed_count
+            
+            # AT: Beds (Correct Logic: Sum of Single + Double from Config if available)
+            if beds_s > 0 or beds_d > 0:
+                # Use calculated total from config
+                set_stab("AT", beds_s + beds_d, "0", align='center')
+            else:
+                # Fallback to legacy average if no config
+                set_stab("AT", f"=IFERROR(AVERAGEIF({r_type}, \"{safe_type}\", {r_beds}),0)", "0.0", align='center')
             
             # AU: $/Beds = Rent / Beds
             set_stab("AU", f"=IFERROR(AM{stab_row}/AT{stab_row},0)", currency_fmt)
-            
-            # AV-AZ: Student housing specifics (Dynamic Config per Unit Type)
-            # Find matching config for this unit type
-            occupancy = "Single"
-            label = "Single"
-            
-            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
-                for conf in analysis_data.student_housing_config.unit_type_configs:
-                    if conf.unit_type == u_type:
-                        occupancy = conf.occupancy_type
-                        label = conf.unit_config_label
-                        break
 
-            if occupancy == "Single":
-                # Single Count = Beds
-                set_stab("AV", f"=AT{stab_row}", "0", align='center') # Single = Beds
-                set_stab("AW", "-", align='center') # Double (Assume 0)
-                
-                # Single $ = Rent / Singles (which is same as $/Bed)
-                set_stab("AX", f"=AU{stab_row}", currency_fmt) # Single $
-                set_stab("AY", "-", align='center') # Double $
-                
-                # Unit Config Text
-                set_stab("AZ", f"=AT{stab_row} & \" {label}\"", align='center') # e.g. "2 Single"
+            # 2. Write Columns
+            
+            # AV: Single Count
+            if beds_s > 0:
+                set_stab("AV", beds_s, "0", align='center')
             else:
-                # Double Occupancy Logic
-                # Assumption: Bed Count is total beds.
-                # If "Double", it means the room is shared.
-                # Usually "Double" implies 2 beds per room? Or occupancy is double?
-                # Student housing logic varies.
-                # For "Double" config:
-                # Single = 0, Double = Beds (if we assume all beds are in double rooms)
+                set_stab("AV", "-", align='center')
                 
-                set_stab("AV", "-", align='center') # Single = 0
-                set_stab("AW", f"=AT{stab_row}", "0", align='center') # Double = Beds
+            # AW: Double Count
+            if beds_d > 0:
+                set_stab("AW", beds_d, "0", align='center')
+            else:
+                set_stab("AW", "-", align='center')
                 
-                set_stab("AX", "-", align='center') # Single $
-                # Double $ = Rent / Doubles (Rent per bed in double room)
-                set_stab("AY", f"=AU{stab_row}", currency_fmt) # Double $
+            # AX: Single $
+            if price_s > 0:
+                set_stab("AX", price_s, currency_fmt)
+            elif beds_s > 0:
+                # Fallback: Use Average $/Bed (AU)
+                set_stab("AX", f"=AU{stab_row}", currency_fmt)
+            else:
+                set_stab("AX", "-", align='center')
                 
-                set_stab("AZ", f"=AT{stab_row} & \" {label}\"", align='center') # e.g. "2 Double"
+            # AY: Double $
+            if price_d > 0:
+                 set_stab("AY", price_d, currency_fmt)
+            elif beds_d > 0:
+                 # Fallback: Use Average $/Bed (AU)
+                 set_stab("AY", f"=AU{stab_row}", currency_fmt)
+            else:
+                 set_stab("AY", "-", align='center')
+                 
+            # AZ: Unit Config Text
+            # Construct string: "X Single, Y Double" or just "X Single"
+            parts = []
+            if beds_s > 0: parts.append(f"{beds_s} Single")
+            if beds_d > 0: parts.append(f"{beds_d} Double")
+            
+            config_str = ", ".join(parts)
+            if not config_str:
+                 # Fallback to old label logic if nothing
+                 config_str = f"{conf_obj.bed_count if conf_obj else 0} {label}"
+                 
+            set_stab("AZ", config_str, align='center')
             
             stab_row += 1
 

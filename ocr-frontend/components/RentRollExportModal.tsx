@@ -6,12 +6,14 @@ interface RentRollExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   analysis: UnderwritingAnalysis;
+  onAnalysisUpdate?: (newAnalysis: UnderwritingAnalysis) => void;
 }
 
 export default function RentRollExportModal({
   isOpen,
   onClose,
   analysis,
+  onAnalysisUpdate,
 }: RentRollExportModalProps) {
   const [rentRoll, setRentRoll] = useState<RentRollItem[]>(analysis.rent_roll || []);
   const [isExporting, setIsExporting] = useState(false);
@@ -26,48 +28,52 @@ export default function RentRollExportModal({
     if (isOpen) {
         const items = analysis.rent_roll || [];
         setRentRoll(items);
-        // We don't initialize config here, we do it in a separate effect that watches rentRoll
-        // but we need to ensure we don't overwrite if it was already set?
-        // Actually, for a fresh modal open, we want fresh config based on fresh rent roll.
-        // But if we are re-opening? The state is local to this component, so it resets on unmount/remount?
-        // Yes, if parent conditionally renders it. If hidden via CSS, state persists.
-        // Assuming conditionally rendered or reset via key.
+        
+        // Initialize Config: Merge Saved Config with Current Rent Roll
+        // This ensures we keep saved settings but also account for any new unit types
+        let initialConfig: StudentHousingConfig = { unit_type_configs: [] };
+        
+        if (analysis.student_housing_config && analysis.student_housing_config.unit_type_configs.length > 0) {
+            initialConfig = analysis.student_housing_config;
+        }
+
+        const uniqueTypes = Array.from(new Set(items.map(i => i.unit_type || "Unknown"))).sort();
+        
+        const mergedConfigs: UnitTypeConfig[] = uniqueTypes.map(type => {
+            // 1. Try to find in saved config
+            const existing = initialConfig.unit_type_configs.find(c => c.unit_type === type);
+            if (existing) return existing;
+
+            // 2. Otherwise create default
+            let beds = 1;
+            // Smarter regex: Look for number followed by bd/br/bed, or studio
+            const match = type.match(/(\d+)\s*(?:bd|br|bed|bedroom)/i);
+            
+            if (match) {
+                beds = parseInt(match[1]);
+            } else if (type.toLowerCase().includes("studio")) {
+                beds = 1;
+            } else {
+                // Fallback: If simply "2" or "3", accept it?
+                const startMatch = type.match(/^(\d+)/);
+                if (startMatch) beds = parseInt(startMatch[1]);
+            }
+
+            return {
+                unit_type: type,
+                bed_count: beds,
+                occupancy_type: "Single",
+                unit_config_label: "Single",
+                beds_single: beds,
+                beds_double: 0,
+                market_rent_single: 0,
+                market_rent_double: 0
+            };
+        });
+
+        setConfig({ unit_type_configs: mergedConfigs });
     }
-  }, [isOpen, analysis.rent_roll]);
-
-  // Sync Config with Rent Roll State
-  useEffect(() => {
-      syncConfigWithRentRoll(rentRoll);
-  }, [rentRoll]);
-
-  // Helper to sync configs while preserving existing settings
-  const syncConfigWithRentRoll = (items: RentRollItem[]) => {
-      const uniqueTypes = Array.from(new Set(items.map(i => i.unit_type || "Unknown"))).sort();
-      
-      setConfig(prevConfig => {
-          const existingConfigs = prevConfig.unit_type_configs;
-          const newConfigs: UnitTypeConfig[] = uniqueTypes.map(type => {
-              // Check if we already have a config for this type
-              const existing = existingConfigs.find(c => c.unit_type === type);
-              if (existing) return existing;
-
-              // Otherwise create default
-              let beds = 1;
-              const match = type.match(/(\d+)/);
-              if (match) beds = parseInt(match[1]);
-              if (type.toLowerCase().includes("studio")) beds = 1;
-
-              return {
-                  unit_type: type,
-                  bed_count: beds,
-                  occupancy_type: "Single",
-                  unit_config_label: "Single"
-              };
-          });
-          
-          return { unit_type_configs: newConfigs };
-      });
-  };
+  }, [isOpen, analysis]);
 
   const handleItemChange = (index: number, field: keyof RentRollItem, value: any) => {
     const newItems = [...rentRoll];
@@ -80,10 +86,39 @@ export default function RentRollExportModal({
 
   const handleConfigChange = (index: number, field: keyof UnitTypeConfig, value: any) => {
       const newConfigs = [...config.unit_type_configs];
-      newConfigs[index] = {
-          ...newConfigs[index],
-          [field]: value
-      };
+      const currentItem = newConfigs[index];
+      let newItem = { ...currentItem, [field]: value };
+
+      // UX Improvement: Auto-update label if it matches the occupancy type
+      if (field === "occupancy_type") {
+          // If label was same as old occupancy (default), update it to new occupancy
+          if (currentItem.unit_config_label === currentItem.occupancy_type) {
+              newItem.unit_config_label = value;
+          }
+
+          // Intelligent Preset for Mixed/Single/Double Logic
+          if (value === "Single") {
+              newItem.beds_single = currentItem.bed_count;
+              newItem.beds_double = 0;
+          } else if (value === "Double") {
+              newItem.beds_single = 0;
+              newItem.beds_double = currentItem.bed_count;
+          }
+          // For "Mixed", we leave values as-is (or init to 0 if undefined) to let user customize
+          if (!newItem.beds_single) newItem.beds_single = 0;
+          if (!newItem.beds_double) newItem.beds_double = 0;
+      }
+      
+      // UX Improvement: If bed count changes, auto-update sub-counts if strictly Single or Double
+      if (field === "bed_count") {
+          if (newItem.occupancy_type === "Single") {
+              newItem.beds_single = value;
+          } else if (newItem.occupancy_type === "Double") {
+              newItem.beds_double = value;
+          }
+      }
+
+      newConfigs[index] = newItem;
       setConfig({ unit_type_configs: newConfigs });
   };
 
@@ -97,11 +132,21 @@ export default function RentRollExportModal({
         student_housing_config: config,
       };
 
+      // 1. Save the updated configuration to the backend first
+      // This ensures persistence for future sessions
+      await apiClient.updateAnalysis(analysis.document_id, exportPayload);
+
+      // 1b. Update parent state if callback provided
+      if (onAnalysisUpdate) {
+          onAnalysisUpdate(exportPayload);
+      }
+
+      // 2. Proceed with download
       await apiClient.downloadExport(exportPayload, "rent-roll");
       onClose();
     } catch (error) {
-      console.error("Export failed:", error);
-      alert("Failed to export Rent Roll.");
+      console.error("Export/Save failed:", error);
+      alert("Failed to save configuration or export Rent Roll.");
     } finally {
       setIsExporting(false);
     }
@@ -216,7 +261,7 @@ export default function RentRollExportModal({
             {/* Configuration Section - Dynamic Table */}
             <div className="bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
                 <div className="px-6 py-4 border-b border-neutral-200 bg-neutral-50/50">
-                    <h3 className="text-lg font-bold text-neutral-900">2. Student Housing Assumptions</h3>
+                    <h3 className="text-lg font-bold text-neutral-900">2. Unit Configurations</h3>
                     <p className="text-sm text-neutral-500">Configure assumptions for each Unit Type found in the Rent Roll</p>
                 </div>
                 
@@ -224,52 +269,126 @@ export default function RentRollExportModal({
                     <table className="w-full text-sm text-left">
                         <thead className="bg-neutral-100 text-neutral-600 text-xs uppercase font-semibold">
                             <tr>
-                                <th className="px-6 py-3">Unit Type</th>
-                                <th className="px-6 py-3">Bed Count</th>
-                                <th className="px-6 py-3">Occupancy Type</th>
-                                <th className="px-6 py-3">Unit Config Label</th>
+                                <th className="px-6 py-3 w-[15%]">Unit Type</th>
+                                <th className="px-6 py-3 w-[10%]">Bed Count</th>
+                                <th className="px-6 py-3 w-[15%]">Config Type</th>
+                                <th className="px-6 py-3 w-[15%]">Config Label</th>
+                                <th className="px-6 py-3 w-[45%]">Detailed Breakdown (Count & Market Rent)</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-neutral-100">
                             {config.unit_type_configs.map((conf, idx) => (
                                 <tr key={idx} className="hover:bg-neutral-50 transition-colors">
-                                    <td className="px-6 py-3 font-medium text-neutral-900">
+                                    <td className="px-6 py-4 font-medium text-neutral-900 align-top">
                                         {conf.unit_type}
                                     </td>
-                                    <td className="px-6 py-3">
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            max="10"
-                                            value={conf.bed_count}
-                                            onChange={(e) => handleConfigChange(idx, "bed_count", parseInt(e.target.value) || 0)}
-                                            className="w-20 border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
-                                        />
+                                    <td className="px-6 py-4 align-top">
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Total Beds</span>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                max="10"
+                                                value={conf.bed_count}
+                                                onChange={(e) => handleConfigChange(idx, "bed_count", parseInt(e.target.value) || 0)}
+                                                className="w-20 border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                                            />
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-3">
-                                        <select
-                                            value={conf.occupancy_type}
-                                            onChange={(e) => handleConfigChange(idx, "occupancy_type", e.target.value)}
-                                            className="border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none bg-white"
-                                        >
-                                            <option value="Single">Single</option>
-                                            <option value="Double">Double</option>
-                                        </select>
+                                    <td className="px-6 py-4 align-top">
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Occupancy</span>
+                                            <select
+                                                value={conf.occupancy_type}
+                                                onChange={(e) => handleConfigChange(idx, "occupancy_type", e.target.value)}
+                                                className="border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none bg-white w-full"
+                                            >
+                                                <option value="Single">Single</option>
+                                                <option value="Double">Double</option>
+                                                <option value="Mixed">Mixed</option>
+                                            </select>
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-3">
-                                        <input
-                                            type="text"
-                                            value={conf.unit_config_label}
-                                            onChange={(e) => handleConfigChange(idx, "unit_config_label", e.target.value)}
-                                            className="w-full border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
-                                            placeholder="e.g. Single"
-                                        />
+                                    <td className="px-6 py-4 align-top">
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Label</span>
+                                            <input
+                                                type="text"
+                                                value={conf.unit_config_label}
+                                                onChange={(e) => handleConfigChange(idx, "unit_config_label", e.target.value)}
+                                                className="w-full border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                                                placeholder="e.g. Single"
+                                            />
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 align-top">
+                                        <div className="grid grid-cols-2 gap-4 bg-neutral-50 p-3 rounded-md border border-neutral-200">
+                                            {/* Single Config */}
+                                            <div className="space-y-2">
+                                                <div className="text-xs font-semibold text-neutral-700 border-b border-neutral-200 pb-1 mb-2">Single</div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs text-neutral-500 w-12">Count:</span>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        value={conf.beds_single || 0}
+                                                        onChange={(e) => handleConfigChange(idx, "beds_single", parseInt(e.target.value) || 0)}
+                                                        disabled={conf.occupancy_type === "Double"}
+                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs text-neutral-500 w-12">Price:</span>
+                                                    <div className="relative w-full">
+                                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">$</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={conf.market_rent_single || 0}
+                                                            onChange={(e) => handleConfigChange(idx, "market_rent_single", parseFloat(e.target.value) || 0)}
+                                                            disabled={conf.occupancy_type === "Double"}
+                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Double Config */}
+                                            <div className="space-y-2">
+                                                <div className="text-xs font-semibold text-neutral-700 border-b border-neutral-200 pb-1 mb-2">Double</div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs text-neutral-500 w-12">Count:</span>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        value={conf.beds_double || 0}
+                                                        onChange={(e) => handleConfigChange(idx, "beds_double", parseInt(e.target.value) || 0)}
+                                                        disabled={conf.occupancy_type === "Single"}
+                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs text-neutral-500 w-12">Price:</span>
+                                                    <div className="relative w-full">
+                                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">$</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={conf.market_rent_double || 0}
+                                                            onChange={(e) => handleConfigChange(idx, "market_rent_double", parseFloat(e.target.value) || 0)}
+                                                            disabled={conf.occupancy_type === "Single"}
+                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
                             {config.unit_type_configs.length === 0 && (
                                 <tr>
-                                    <td colSpan={4} className="px-6 py-8 text-center text-neutral-500">
+                                    <td colSpan={5} className="px-6 py-8 text-center text-neutral-500">
                                         No unit types found. Add data to the Rent Roll table above.
                                     </td>
                                 </tr>
@@ -281,9 +400,8 @@ export default function RentRollExportModal({
                 <div className="bg-blue-50/50 p-4 text-blue-800 text-xs border-t border-blue-100 flex gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                     <p>
-                        <strong>Bed Count:</strong> Used to calculate rent per bed. 
-                        <strong>Occupancy Type:</strong> "Single" assumes beds = units (1:1). "Double" splits rent differently.
-                        <strong>Label:</strong> Appended to bed count in export (e.g., "2 Single").
+                        <strong>Mixed Occupancy:</strong> Use "Mixed" to define a split of Single and Double beds within one unit type.
+                        Ensure the total bed count matches your split (e.g., 3 Beds = 1 Single + 2 Double).
                     </p>
                 </div>
             </div>

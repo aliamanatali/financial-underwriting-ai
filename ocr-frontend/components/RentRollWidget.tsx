@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { RentRollItem, RentRollSummary, UnderwritingAnalysis } from "@/lib/types";
+import { RentRollItem, RentRollSummary, UnderwritingAnalysis, StudentHousingConfig } from "@/lib/types";
 import { apiClient } from "@/lib/api";
 import {
   DndContext,
@@ -28,6 +28,7 @@ interface RentRollWidgetProps {
   summary?: RentRollSummary;
   packageId: string;
   onUpdate?: () => void;
+  studentHousingConfig?: StudentHousingConfig;
 }
 
 export default function RentRollWidget({
@@ -35,6 +36,7 @@ export default function RentRollWidget({
   summary,
   packageId,
   onUpdate,
+  studentHousingConfig,
 }: RentRollWidgetProps) {
   const [isEditing, setIsEditing] = useState(false);
   // Initialize with IDs
@@ -108,6 +110,7 @@ export default function RentRollWidget({
         document_id: packageId, // Use packageId as doc id for filename
         rent_roll: items,
         rent_roll_summary: displaySummary,
+        student_housing_config: studentHousingConfig,
         // Fill other required fields with safe defaults if needed by the backend schema validation
         pass_fail_status: "PASS",
         property_meta: { address: "Export", year_built: 0, purchase_price: 0, total_units: items.length },

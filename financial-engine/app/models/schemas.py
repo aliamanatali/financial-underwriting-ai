@@ -310,8 +310,14 @@ class OMTaxAssumptions(BaseModel):
 class UnitTypeConfig(BaseModel):
     unit_type: str
     bed_count: int
-    occupancy_type: str = "Single" # "Single" or "Double"
+    occupancy_type: str = "Single" # "Single", "Double", or "Mixed"
     unit_config_label: str = "Single"
+    
+    # Advanced Configuration
+    beds_single: Optional[int] = 0
+    beds_double: Optional[int] = 0
+    market_rent_single: Optional[float] = 0.0
+    market_rent_double: Optional[float] = 0.0
 
 class StudentHousingConfig(BaseModel):
     unit_type_configs: List[UnitTypeConfig] = []

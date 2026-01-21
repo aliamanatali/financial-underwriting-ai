@@ -165,6 +165,18 @@ class ApiClient {
     return this.handleResponse<UnderwritingAnalysis>(response);
   }
 
+  async updateAnalysis(documentId: string, analysisData: UnderwritingAnalysis): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(analysisData),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
   async getDealPackages(limit: number = 5, offset: number = 0): Promise<{
     packages: DealPackage[];
     total: number;

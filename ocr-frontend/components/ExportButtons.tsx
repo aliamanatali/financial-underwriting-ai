@@ -9,9 +9,10 @@ import { apiClient } from "@/lib/api";
 
 interface ExportButtonsProps {
   analysis: UnderwritingAnalysis;
+  onAnalysisUpdate?: (newAnalysis: UnderwritingAnalysis) => void;
 }
 
-export default function ExportButtons({ analysis }: ExportButtonsProps) {
+export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButtonsProps) {
   const [isExporting, setIsExporting] = useState<"excel" | "memo" | "om-proforma" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -63,6 +64,7 @@ export default function ExportButtons({ analysis }: ExportButtonsProps) {
         isOpen={isRentRollModalOpen}
         onClose={() => setIsRentRollModalOpen(false)}
         analysis={analysis}
+        onAnalysisUpdate={onAnalysisUpdate}
       />
 
       {error && (

@@ -216,5 +216,29 @@ async def perform_analysis(
     except Exception as e:
         logger.error(f"Failed to save audit logs to file: {str(e)}")
 
+@router.patch("/analysis/{document_id}")
+async def update_analysis(
+    document_id: str,
+    analysis_data: UnderwritingAnalysis,
+    storage_service: Any = Depends(lambda: storage_service) # Use singleton directly
+):
+    """
+    Updates an existing analysis record.
+    Used for saving manual edits, configuration changes (e.g. Rent Roll config),
+    or overrides before export.
+    """
+    logger.info(f"Updating analysis for document: {document_id}")
+    
+    # Verify it exists first (optional, but good practice)
+    # existing = await storage_service.get_analysis_result(document_id)
+    # if not existing:
+    #     raise HTTPException(status_code=404, detail="Analysis not found")
+
+    # Save to storage
+    analysis_dict = analysis_data.model_dump()
+    await storage_service.save_analysis_result(document_id, analysis_dict)
+    
+    logger.info(f"Analysis updated successfully for {document_id}")
+    return {"status": "success", "message": "Analysis updated"}
     # Return a dictionary created from the model, ensuring correct field names
     return analysis

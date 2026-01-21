@@ -1153,6 +1153,18 @@ async def analyze_deal_package(
         property_meta.purchase_price = params.purchase_price_override
         logger.info(f"Applied transient override for Purchase Price: {property_meta.purchase_price}")
     
+    # Check for existing analysis to preserve persistent configurations (like student housing config)
+    existing_analysis_dict = await storage_service.get_analysis_result(package_id)
+    existing_student_config = None
+    if existing_analysis_dict and "student_housing_config" in existing_analysis_dict:
+        try:
+            # Parse it to ensure validity
+            from app.models.schemas import StudentHousingConfig
+            if existing_analysis_dict["student_housing_config"]:
+                existing_student_config = StudentHousingConfig(**existing_analysis_dict["student_housing_config"])
+        except Exception as e:
+            logger.warning(f"Failed to restore student housing config: {e}")
+
     # Create analysis object
     analysis = UnderwritingAnalysis(
         document_id=package_id,
@@ -1172,7 +1184,8 @@ async def analyze_deal_package(
         historical_noi=0.0,
         historical_total_expenses=0.0,
         historical_cap_rate=0.0,
-        om_proforma=package.om_proforma_data
+        om_proforma=package.om_proforma_data,
+        student_housing_config=existing_student_config
     )
     
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")

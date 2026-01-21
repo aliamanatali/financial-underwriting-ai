@@ -473,6 +473,7 @@ export default function UnderwritingDashboard({
         rentRoll={analysis.rent_roll || []}
         summary={analysis.rent_roll_summary}
         packageId={analysis.document_id}
+        studentHousingConfig={analysis.student_housing_config}
         onUpdate={() => onReanalyze && onReanalyze(editParams)}
       />
 
