@@ -290,7 +290,8 @@ class ExcelService:
                 elif "/" in u_type:
                     match_slash = re.search(r'^(\d+)\s*/', u_type)
                     if match_slash:
-                        total_beds += int(match_slash.group(1))
+                        val = int(match_slash.group(1))
+                        total_beds += val if val > 0 else 1 # Treat 0 beds (Studio) as 1 bed
                         found_bed = True
                 
                 # Fallback: Default to 1 bed if not found
@@ -852,20 +853,38 @@ class ExcelService:
             
             # Heuristic for Beds: Try to extract a number from unit type if possible
             beds = 1 # Default fallback
-            try:
-                # Simple heuristic: Look for first digit.
-                # "2/1.00" -> 2. "Studio" -> 0 (maybe? usually studio is 0 or 1 bed equivalent)
-                # If we want to avoid "hardcoding rules", we can't do much.
-                # However, we need a number for the Beds column (G) and summary calculations.
-                # Let's try to parse the first digit found.
-                import re
-                match = re.search(r'\d+', unit_type)
-                if match:
-                    beds = int(match.group())
-                elif "studio" in unit_type.lower():
-                    beds = 1 # Common assumption if no number found
-            except:
-                pass
+            
+            # Check for user config override
+            config_found = False
+            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+                for conf in analysis_data.student_housing_config.unit_type_configs:
+                    if conf.unit_type == unit_type:
+                        beds = conf.bed_count
+                        config_found = True
+                        break
+            
+            if not config_found:
+                try:
+                    import re
+                    # Heuristic 1: Bed/Bath format "0/1.00", "2/1"
+                    match_slash = re.search(r'^(\d+)\s*/', unit_type)
+                    if match_slash:
+                        val = int(match_slash.group(1))
+                        beds = val if val > 0 else 1 # Treat 0 beds (Studio) as 1 bed
+                    else:
+                        # Heuristic 2: "2bd", "2 br"
+                        match_bd = re.search(r'(\d+)\s*(?:bd|br|bed)', unit_type.lower())
+                        if match_bd:
+                            beds = int(match_bd.group(1))
+                        elif "studio" in unit_type.lower():
+                            beds = 1
+                        else:
+                            # Fallback: Look for first digit
+                            match = re.search(r'\d+', unit_type)
+                            if match:
+                                beds = int(match.group())
+                except:
+                    pass
 
             # 2. Write Main Columns
             def set_cell(col, val, fmt=None, align='right'):
