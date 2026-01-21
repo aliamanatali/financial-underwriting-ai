@@ -10,18 +10,20 @@ import { apiClient } from "@/lib/api";
 interface ExportButtonsProps {
   analysis: UnderwritingAnalysis;
   onAnalysisUpdate?: (newAnalysis: UnderwritingAnalysis) => void;
+  onOpenRentRollModal?: () => void;
 }
 
-export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButtonsProps) {
+export default function ExportButtons({ analysis, onAnalysisUpdate, onOpenRentRollModal }: ExportButtonsProps) {
   const [isExporting, setIsExporting] = useState<"excel" | "memo" | "om-proforma" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
 
   const handleExport = async (type: "excel" | "memo" | "om-proforma" | "rent-roll") => {
     // If it's rent-roll export, open the modal instead of direct export
     if (type === "rent-roll") {
-        setIsRentRollModalOpen(true);
+        if (onOpenRentRollModal) {
+            onOpenRentRollModal();
+        }
         return;
     }
 
@@ -60,13 +62,6 @@ export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButt
 
   return (
     <div className="space-y-6 font-sans">
-      <RentRollExportModal
-        isOpen={isRentRollModalOpen}
-        onClose={() => setIsRentRollModalOpen(false)}
-        analysis={analysis}
-        onAnalysisUpdate={onAnalysisUpdate}
-      />
-
       {error && (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-sm flex items-center">
           <svg className="w-5 h-5 mr-2 text-rose-500" fill="currentColor" viewBox="0 0 20 20">

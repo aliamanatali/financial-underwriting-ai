@@ -15,7 +15,6 @@ export default function RentRollExportModal({
   analysis,
   onAnalysisUpdate,
 }: RentRollExportModalProps) {
-  const [rentRoll, setRentRoll] = useState<RentRollItem[]>(analysis.rent_roll || []);
   const [isExporting, setIsExporting] = useState(false);
   
   // Config State: List of configs per unit type
@@ -27,7 +26,6 @@ export default function RentRollExportModal({
   useEffect(() => {
     if (isOpen) {
         const items = analysis.rent_roll || [];
-        setRentRoll(items);
         
         // Initialize Config: Merge Saved Config with Current Rent Roll
         // This ensures we keep saved settings but also account for any new unit types
@@ -75,15 +73,6 @@ export default function RentRollExportModal({
     }
   }, [isOpen, analysis]);
 
-  const handleItemChange = (index: number, field: keyof RentRollItem, value: any) => {
-    const newItems = [...rentRoll];
-    newItems[index] = {
-      ...newItems[index],
-      [field]: ["current_rent", "market_rent", "stabilized_rent", "unit_size"].includes(field) ? parseFloat(value) || 0 : value,
-    };
-    setRentRoll(newItems);
-  };
-
   const handleConfigChange = (index: number, field: keyof UnitTypeConfig, value: any) => {
       const newConfigs = [...config.unit_type_configs];
       const currentItem = newConfigs[index];
@@ -128,7 +117,7 @@ export default function RentRollExportModal({
       // Create a temporary analysis object with overrides
       const exportPayload = {
         ...analysis,
-        rent_roll: rentRoll,
+        // rent_roll: rentRoll, // We are not editing rent roll in this modal anymore
         student_housing_config: config,
       };
 
@@ -171,97 +160,10 @@ export default function RentRollExportModal({
         {/* Content */}
         <div className="flex-1 overflow-auto p-6 bg-neutral-50/30 space-y-6">
             
-            {/* Rent Roll Table Section */}
-            <div className="bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
-                <div className="px-6 py-4 border-b border-neutral-200 bg-neutral-50/50">
-                    <h3 className="text-lg font-bold text-neutral-900">1. Edit Rent Roll</h3>
-                    <p className="text-sm text-neutral-500">Modify unit details before export</p>
-                </div>
-                <div className="overflow-x-auto max-h-[40vh]">
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-neutral-100 text-neutral-600 text-xs uppercase font-semibold sticky top-0 z-10 shadow-sm">
-                    <tr>
-                        <th className="px-4 py-3">Unit #</th>
-                        <th className="px-4 py-3">Unit Type</th>
-                        <th className="px-4 py-3 text-right">Size (SF)</th>
-                        <th className="px-4 py-3 text-right">Current Rent</th>
-                        <th className="px-4 py-3 text-right">Market Rent</th>
-                        <th className="px-4 py-3">Lease Start</th>
-                        <th className="px-4 py-3">Lease End</th>
-                    </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-100">
-                    {rentRoll.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-neutral-50 transition-colors">
-                        <td className="px-4 py-2">
-                            <input
-                            type="text"
-                            value={item.unit_number}
-                            onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
-                            className="w-full bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="text"
-                            value={item.unit_type}
-                            onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
-                            className="w-full bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="number"
-                            value={item.unit_size}
-                            onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
-                            className="w-full text-right bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="number"
-                            value={item.current_rent}
-                            onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
-                            className="w-full text-right bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="number"
-                            value={item.market_rent}
-                            onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
-                            className="w-full text-right bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="text"
-                            value={item.lease_start || ""}
-                            placeholder="YYYY-MM-DD"
-                            onChange={(e) => handleItemChange(idx, "lease_start", e.target.value)}
-                            className="w-full bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        <td className="px-4 py-2">
-                            <input
-                            type="text"
-                            value={item.lease_end || ""}
-                            placeholder="YYYY-MM-DD"
-                            onChange={(e) => handleItemChange(idx, "lease_end", e.target.value)}
-                            className="w-full bg-transparent border border-transparent hover:border-neutral-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1 outline-none"
-                            />
-                        </td>
-                        </tr>
-                    ))}
-                    </tbody>
-                </table>
-                </div>
-            </div>
-
             {/* Configuration Section - Dynamic Table */}
             <div className="bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
                 <div className="px-6 py-4 border-b border-neutral-200 bg-neutral-50/50">
-                    <h3 className="text-lg font-bold text-neutral-900">2. Unit Configurations</h3>
+                    <h3 className="text-lg font-bold text-neutral-900">Unit Configurations</h3>
                     <p className="text-sm text-neutral-500">Configure assumptions for each Unit Type found in the Rent Roll</p>
                 </div>
                 

@@ -9,6 +9,7 @@ import WidgetTooltip from "./WidgetTooltip";
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
   onReanalyze?: (params: DealParameters) => void;
+  onOpenRentRollModal?: () => void;
 }
 
 const METRIC_DEFINITIONS: Record<string, string> = {
@@ -125,6 +126,7 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
 export default function UnderwritingDashboard({
   analysis,
   onReanalyze,
+  onOpenRentRollModal,
 }: UnderwritingDashboardProps) {
   const [isEditingPropertyDetails, setIsEditingPropertyDetails] = useState(false);
   const [isCommentaryExpanded, setIsCommentaryExpanded] = useState(true);
@@ -475,6 +477,7 @@ export default function UnderwritingDashboard({
         packageId={analysis.document_id}
         studentHousingConfig={analysis.student_housing_config}
         onUpdate={() => onReanalyze && onReanalyze(editParams)}
+        onOpenConfig={onOpenRentRollModal}
       />
 
       {/* AI Underwriting Section */}

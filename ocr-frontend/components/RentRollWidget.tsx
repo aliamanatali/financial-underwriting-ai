@@ -29,6 +29,7 @@ interface RentRollWidgetProps {
   packageId: string;
   onUpdate?: () => void;
   studentHousingConfig?: StudentHousingConfig;
+  onOpenConfig?: () => void;
 }
 
 export default function RentRollWidget({
@@ -37,6 +38,7 @@ export default function RentRollWidget({
   packageId,
   onUpdate,
   studentHousingConfig,
+  onOpenConfig,
 }: RentRollWidgetProps) {
   const [isEditing, setIsEditing] = useState(false);
   // Initialize with IDs
@@ -102,6 +104,14 @@ export default function RentRollWidget({
   };
 
   const handleExport = async () => {
+    // Check if configuration is missing
+    const hasConfig = studentHousingConfig && studentHousingConfig.unit_type_configs.length > 0;
+    
+    if (!hasConfig && onOpenConfig) {
+        onOpenConfig();
+        return;
+    }
+
     setIsExporting(true);
     try {
       // Construct a temporary analysis object with the CURRENT state of the rent roll

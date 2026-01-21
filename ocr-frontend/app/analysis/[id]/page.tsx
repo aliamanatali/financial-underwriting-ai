@@ -7,6 +7,7 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
+import RentRollExportModal from "@/components/RentRollExportModal";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 
@@ -79,6 +80,7 @@ export default function AnalysisResultPage() {
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
   const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
@@ -472,9 +474,10 @@ export default function AnalysisResultPage() {
         <main className="flex-1 overflow-y-auto p-6 lg:p-8 no-scrollbar">
           <div className="max-w-7xl mx-auto flex flex-col gap-6">
             {activeTab === "dashboard" && (
-              <UnderwritingDashboard 
-                analysis={analysis} 
+              <UnderwritingDashboard
+                analysis={analysis}
                 onReanalyze={handleReanalyze}
+                onOpenRentRollModal={() => setIsRentRollModalOpen(true)}
               />
             )}
 
@@ -490,12 +493,23 @@ export default function AnalysisResultPage() {
                     console.log("Updating analysis state in parent page", newAnalysis);
                     setAnalysis(newAnalysis);
                   }}
+                  onOpenRentRollModal={() => setIsRentRollModalOpen(true)}
                 />
               </div>
             )}
           </div>
         </main>
       </div>
+
+      <RentRollExportModal
+        isOpen={isRentRollModalOpen}
+        onClose={() => setIsRentRollModalOpen(false)}
+        analysis={analysis}
+        onAnalysisUpdate={(newAnalysis) => {
+            console.log("Updating analysis state from global modal", newAnalysis);
+            setAnalysis(newAnalysis);
+        }}
+      />
 
       <style jsx global>{`
         .no-scrollbar::-webkit-scrollbar {
