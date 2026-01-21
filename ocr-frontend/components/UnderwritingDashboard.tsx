@@ -51,9 +51,9 @@ function SourceTooltip({ source }: { source?: string }) {
   if (!source) return null;
 
   return (
-    <div className="absolute z-50 bottom-full left-0 mb-2 hidden group-hover/source:block w-64 p-2 bg-slate-900 text-white text-xs rounded shadow-lg text-left font-normal leading-snug pointer-events-none">
+    <div className="absolute z-50 bottom-full right-0 mb-2 hidden group-hover/source:block w-64 p-2 bg-slate-900 text-white text-xs rounded shadow-lg text-left font-normal leading-snug pointer-events-none">
       <span className="font-semibold text-slate-300">Source:</span> {source}
-      <div className="absolute top-full left-4 -mt-1 border-4 border-transparent border-t-slate-900" />
+      <div className="absolute top-full right-4 -mt-1 border-4 border-transparent border-t-slate-900" />
     </div>
   );
 }
@@ -529,39 +529,39 @@ export default function UnderwritingDashboard({
                 {analysis.conclusion?.investment_checklist && (
                   <>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="text-xs text-neutral-600">Is the property a multifamily investment?</span>
                       <div className="relative group/source inline-block">
-                        <span className="text-xs text-neutral-600 cursor-help border-b border-dotted border-neutral-300">Is the property a multifamily investment?</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.is_multifamily}</span>
                         <SourceTooltip source={analysis.conclusion.investment_checklist.is_multifamily_source} />
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap">{analysis.conclusion.investment_checklist.is_multifamily}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="text-xs text-neutral-600">Is it within 6 blocks of campus?</span>
                       <div className="relative group/source inline-block">
-                        <span className="text-xs text-neutral-600 cursor-help border-b border-dotted border-neutral-300">Is it within 6 blocks of campus?</span>
-                         <SourceTooltip source={analysis.conclusion.investment_checklist.near_campus_source} />
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-600 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.near_campus}</span>
+                        <SourceTooltip source={analysis.conclusion.investment_checklist.near_campus_source} />
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-600 whitespace-nowrap">{analysis.conclusion.investment_checklist.near_campus}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="text-xs text-neutral-600">Are existing rents below market?</span>
                       <div className="relative group/source inline-block">
-                        <span className="text-xs text-neutral-600 cursor-help border-b border-dotted border-neutral-300">Are existing rents below market?</span>
-                         <SourceTooltip source={analysis.conclusion.investment_checklist.rents_below_market_source} />
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.rents_below_market}</span>
+                        <SourceTooltip source={analysis.conclusion.investment_checklist.rents_below_market_source} />
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 whitespace-nowrap">{analysis.conclusion.investment_checklist.rents_below_market}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="text-xs text-neutral-600">Is it poorly run/mismanaged?</span>
                       <div className="relative group/source inline-block">
-                        <span className="text-xs text-neutral-600 cursor-help border-b border-dotted border-neutral-300">Is it poorly run/mismanaged?</span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.is_mismanaged}</span>
                         <SourceTooltip source={analysis.conclusion.investment_checklist.is_mismanaged_source} />
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap">{analysis.conclusion.investment_checklist.is_mismanaged}</span>
                     </div>
                     <div className="flex items-start justify-between gap-4">
+                      <span className="text-xs text-neutral-600">Diligence items remaining?</span>
                       <div className="relative group/source inline-block">
-                        <span className="text-xs text-neutral-600 cursor-help border-b border-dotted border-neutral-300">Diligence items remaining?</span>
-                         <SourceTooltip source={analysis.conclusion.investment_checklist.diligence_issues_source} />
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.diligence_issues}</span>
+                        <SourceTooltip source={analysis.conclusion.investment_checklist.diligence_issues_source} />
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap">{analysis.conclusion.investment_checklist.diligence_issues}</span>
                     </div>
                   </>
                 )}
@@ -579,19 +579,19 @@ export default function UnderwritingDashboard({
               <h3 className="text-xs font-semibold text-neutral-900 pb-2 border-b border-neutral-100">Business Plan & Risks</h3>
               <div className="space-y-3">
                 {analysis.conclusion?.investment_checklist?.business_plan && (
-                  <div>
-                    <span className="text-[10px] text-neutral-400 uppercase tracking-wide font-medium flex items-center gap-1 cursor-help group/source relative w-fit">
+                  <div className="group/source relative">
+                    <span className="text-[10px] text-neutral-400 uppercase tracking-wide font-medium flex items-center gap-1 w-fit">
                         Strategy
-                        <SourceTooltip source={analysis.conclusion.investment_checklist.business_plan_source} />
                     </span>
-                    <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
+                    <p className="text-xs text-neutral-700 mt-1 leading-relaxed cursor-help inline-block">
                       {analysis.conclusion.investment_checklist.business_plan}
                     </p>
+                    <SourceTooltip source={analysis.conclusion.investment_checklist.business_plan_source} />
                   </div>
                 )}
                 {analysis.conclusion?.investment_checklist?.primary_risks && (
-                  <div>
-                    <span className="text-[10px] text-neutral-400 uppercase tracking-wide font-medium flex items-center gap-1 cursor-help group/source relative w-fit">
+                  <div className="group/source relative">
+                    <span className="text-[10px] text-neutral-400 uppercase tracking-wide font-medium flex items-center gap-1 w-fit">
                         Primary Risks
                         <SourceTooltip source={analysis.conclusion.investment_checklist.primary_risks_source} />
                     </span>
