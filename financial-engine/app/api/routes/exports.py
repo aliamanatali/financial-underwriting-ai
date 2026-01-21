@@ -61,6 +61,10 @@ async def export_rent_roll(
     """
     Generates and returns an Excel file with the detailed Rent Roll and Summary.
     """
+    print(f"DEBUG: Export Rent Roll called. Config: {analysis_data.student_housing_config}")
+    if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+        for c in analysis_data.student_housing_config.unit_type_configs:
+            print(f"DEBUG Config Item: {c.unit_type} -> {c.occupancy_type} / {c.unit_config_label}")
     excel_data = await excel_service.create_rent_roll_excel(analysis_data)
 
     return StreamingResponse(

@@ -307,6 +307,15 @@ class OMTaxAssumptions(BaseModel):
     business_tax_rate: Optional[float] = None # e.g. 0.0288
     rent_board_fee: Optional[float] = None # e.g. 404.0 (per unit)
 
+class UnitTypeConfig(BaseModel):
+    unit_type: str
+    bed_count: int
+    occupancy_type: str = "Single" # "Single" or "Double"
+    unit_config_label: str = "Single"
+
+class StudentHousingConfig(BaseModel):
+    unit_type_configs: List[UnitTypeConfig] = []
+
 # --- 3. Main Analysis Model ---
 class UnderwritingAnalysis(BaseModel):
     document_id: str
@@ -373,3 +382,4 @@ class UnderwritingAnalysis(BaseModel):
     # OM Proforma Extraction
     om_proforma: Optional[List[OMProformaTable]] = []
     tax_assumptions: Optional[OMTaxAssumptions] = None
+    student_housing_config: Optional[StudentHousingConfig] = None

@@ -851,7 +851,7 @@ class ExcelService:
             unit_type = item.unit_type or "Unknown"
             unique_unit_types.add(unit_type)
             
-            # Heuristic for Beds: Try to extract a number from unit type if possible
+            # Determine Beds: Priority = Config > Heuristic > Default
             beds = 1 # Default fallback
             
             # Check for user config override
@@ -1305,18 +1305,46 @@ class ExcelService:
             # AU: $/Beds = Rent / Beds
             set_stab("AU", f"=IFERROR(AM{stab_row}/AT{stab_row},0)", currency_fmt)
             
-            # AV-AZ: Student housing specifics (Dummy Data Logic)
-            # Assumption: All beds are "Single" for simplicity in dummy data
-            # Single Count = Beds
-            set_stab("AV", f"=AT{stab_row}", "0", align='center') # Single = Beds
-            set_stab("AW", "-", align='center') # Double (Assume 0)
+            # AV-AZ: Student housing specifics (Dynamic Config per Unit Type)
+            # Find matching config for this unit type
+            occupancy = "Single"
+            label = "Single"
             
-            # Single $ = Rent / Singles (which is same as $/Bed)
-            set_stab("AX", f"=AU{stab_row}", currency_fmt) # Single $
-            set_stab("AY", "-", align='center') # Double $
-            
-            # Unit Config Text
-            set_stab("AZ", f"=AT{stab_row} & \" Single\"", align='center') # e.g. "2 Single"
+            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+                for conf in analysis_data.student_housing_config.unit_type_configs:
+                    if conf.unit_type == u_type:
+                        occupancy = conf.occupancy_type
+                        label = conf.unit_config_label
+                        break
+
+            if occupancy == "Single":
+                # Single Count = Beds
+                set_stab("AV", f"=AT{stab_row}", "0", align='center') # Single = Beds
+                set_stab("AW", "-", align='center') # Double (Assume 0)
+                
+                # Single $ = Rent / Singles (which is same as $/Bed)
+                set_stab("AX", f"=AU{stab_row}", currency_fmt) # Single $
+                set_stab("AY", "-", align='center') # Double $
+                
+                # Unit Config Text
+                set_stab("AZ", f"=AT{stab_row} & \" {label}\"", align='center') # e.g. "2 Single"
+            else:
+                # Double Occupancy Logic
+                # Assumption: Bed Count is total beds.
+                # If "Double", it means the room is shared.
+                # Usually "Double" implies 2 beds per room? Or occupancy is double?
+                # Student housing logic varies.
+                # For "Double" config:
+                # Single = 0, Double = Beds (if we assume all beds are in double rooms)
+                
+                set_stab("AV", "-", align='center') # Single = 0
+                set_stab("AW", f"=AT{stab_row}", "0", align='center') # Double = Beds
+                
+                set_stab("AX", "-", align='center') # Single $
+                # Double $ = Rent / Doubles (Rent per bed in double room)
+                set_stab("AY", f"=AU{stab_row}", currency_fmt) # Double $
+                
+                set_stab("AZ", f"=AT{stab_row} & \" {label}\"", align='center') # e.g. "2 Double"
             
             stab_row += 1
 
@@ -1384,11 +1412,12 @@ class ExcelService:
         sheet[f"AL{stab_row}"].font = Font(bold=True)
         
         stab_row += 1
+        
         notes = [
             "1. Pro Forma Rent refers to the Market Rent (potential rent at current market rates).",
-            "2. Student Housing Configuration (Single/Double, Unit Config) is estimated.",
-            "3. Assumption: All beds are treated as 'Single' occupancy for this projection.",
-            "4. Single $ is calculated as Pro Forma Rent / Beds.",
+            "2. Student Housing Configuration (Single/Double, Unit Config) is derived from user-defined export settings per unit type.",
+            "3. 'Single' occupancy treats all beds as single occupancy revenue.",
+            "4. 'Double' occupancy treats all beds as double occupancy revenue.",
             "5. Actual unit configurations may vary based on leasing strategy."
         ]
         
