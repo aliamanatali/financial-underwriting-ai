@@ -1,9 +1,14 @@
 from fastapi import FastAPI
+import logging
 import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import json
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Valiance Financial Engine",
@@ -57,6 +62,3 @@ app.include_router(progress.router, prefix="/api/v1", tags=["Progress"])
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "ok"}
-import logging
-
-logging.basicConfig(level=logging.INFO)
