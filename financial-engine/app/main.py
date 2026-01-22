@@ -19,12 +19,24 @@ except json.JSONDecodeError:
     # Fallback to default if JSON parsing fails
     origins = ["http://localhost:3000"]
 
+# Always include production URLs if not already present
+production_urls = [
+    "https://financial-underwriting-ai.onrender.com",
+    "https://financial-underwriting-financial-engine.onrender.com"
+]
+for url in production_urls:
+    if url not in origins:
+        origins.append(url)
+
+logger.info(f"CORS enabled for origins: {origins}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Increase the file upload limit
