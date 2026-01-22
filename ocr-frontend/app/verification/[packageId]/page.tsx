@@ -604,87 +604,6 @@ export default function VerificationPage() {
             ) : (
               // Data Tables by Section
               <>
-                {/* Analyst Commentary Section */}
-                <section className="bg-white border border-neutral-200 rounded-xl shadow-sm overflow-hidden">
-                  <button
-                    onClick={() => setCommentaryExpanded(!commentaryExpanded)}
-                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-neutral-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-50 border border-red-100">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
-                          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
-                          <polyline points="14 2 14 8 20 8"></polyline>
-                          <line x1="16" y1="13" x2="8" y2="13"></line>
-                          <line x1="16" y1="17" x2="8" y2="17"></line>
-                          <line x1="10" y1="9" x2="8" y2="9"></line>
-                        </svg>
-                      </div>
-                      <div className="text-left">
-                        <h3 className="text-base font-semibold text-neutral-900">Analyst Commentary</h3>
-                        <p className="text-xs text-neutral-500 mt-0.5">Investment decision and detailed analysis</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold bg-red-50 text-red-700 border border-red-100">
-                        REJECTED
-                      </span>
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className={`text-neutral-400 transition-transform duration-200 ${commentaryExpanded ? 'rotate-180' : ''}`}
-                      >
-                        <path d="m6 9 6 6 6-6"></path>
-                      </svg>
-                    </div>
-                  </button>
-                  
-                  {commentaryExpanded && (
-                    <div className="px-6 pb-6 border-t border-neutral-100">
-                      <div className="prose prose-sm max-w-none mt-4">
-                        <div className="bg-neutral-50 rounded-lg p-5 border border-neutral-200">
-                          <p className="text-sm text-neutral-700 leading-relaxed mb-4">
-                            After a comprehensive review of the investment opportunity at <strong>Correct (1)</strong>, we have decided to <strong className="text-red-700">reject</strong> this deal. The property fails to meet our core investment criteria on several fundamental levels. Primarily, with only <strong>10 units</strong>, it falls significantly below our minimum required scale of 15-80 units. More critically, the financial performance is untenable, evidenced by a deeply negative Net Operating Income (NOI), a DSCR of <strong>-16.53</strong>, and an unsustainable expense ratio of <strong>2695.5%</strong>. These metrics indicate a severely distressed asset that is not operationally viable and cannot service any level of debt.
-                          </p>
-                          
-                          <p className="text-sm text-neutral-700 leading-relaxed mb-4">
-                            In addition to the financial shortcomings, our physical due diligence raised material concerns. The structural report for this 1980s-vintage building flagged the need for significant near-term capital expenditure. Specific risks identified include a <strong>roof nearing the end of its useful life</strong> and the requirement for <strong>seismic retrofitting</strong> to meet current safety standards. These necessary upgrades represent a substantial capital outlay that is not adequately factored into the proposed acquisition and would further erode any potential for positive returns in the near future.
-                          </p>
-                          
-                          <p className="text-sm text-neutral-700 leading-relaxed mb-0">
-                            While we acknowledge the potential upside in rental income, as indicated by the <strong>$12,000 loss-to-lease</strong>, this opportunity is insufficient to outweigh the property&apos;s overwhelming flaws. The potential revenue gain from bringing rents to market would be immediately consumed by the operational deficit and required capital improvements. The combination of failing our scale requirements, severe financial underperformance, and significant deferred maintenance makes this an unacceptable risk for our portfolio.
-                          </p>
-                        </div>
-                        
-                        <div className="mt-4 grid grid-cols-3 gap-3">
-                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
-                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Units</div>
-                            <div className="text-lg font-semibold text-neutral-900">10</div>
-                            <div className="text-xs text-red-600 mt-1">Below minimum (15-80)</div>
-                          </div>
-                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
-                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">DSCR</div>
-                            <div className="text-lg font-semibold text-neutral-900">-16.53</div>
-                            <div className="text-xs text-red-600 mt-1">Cannot service debt</div>
-                          </div>
-                          <div className="bg-white rounded-lg p-4 border border-neutral-200">
-                            <div className="text-xs font-medium text-neutral-500 uppercase tracking-wider mb-1">Expense Ratio</div>
-                            <div className="text-lg font-semibold text-neutral-900">2695.5%</div>
-                            <div className="text-xs text-red-600 mt-1">Severely distressed</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </section>
-
                 {Object.entries(groupedItems).map(([section, items]) => (
                   <section key={section}>
                     <div className="flex items-center gap-3 mb-4">
@@ -826,7 +745,7 @@ export default function VerificationPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                  <span className="text-xs text-neutral-600">Low Confidence (&lt;85%)</span>
+                  <span className="text-xs text-neutral-600">Low Confidence ({`<85%`})</span>
                 </div>
               </div>
             </div>
