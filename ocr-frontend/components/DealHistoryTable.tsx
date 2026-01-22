@@ -57,8 +57,11 @@ export default function DealHistoryTable() {
   }, [openMenuId]);
 
   const handleRowClick = (pkg: DealPackage) => {
-    // Always go to analysis page
-    router.push(`/analysis/${pkg.package_id}`);
+    if (pkg.normalization_status === "pending") {
+      router.push(`/processing/${pkg.package_id}`);
+    } else {
+      router.push(`/analysis/${pkg.package_id}`);
+    }
   };
 
   const handleRename = async (e: React.MouseEvent, packageId: string) => {
