@@ -22,29 +22,33 @@ export default function RentRollExportModal({
     unit_type_configs: []
   });
 
-  // Initialize on open
+  // Initialize on analysis change or mount
   useEffect(() => {
-    if (isOpen) {
-        const items = analysis.rent_roll || [];
-        
-        // Initialize Config: Merge Saved Config with Current Rent Roll
-        // This ensures we keep saved settings but also account for any new unit types
-        let initialConfig: StudentHousingConfig = { unit_type_configs: [] };
-        
-        if (analysis.student_housing_config && analysis.student_housing_config.unit_type_configs.length > 0) {
-            initialConfig = analysis.student_housing_config;
-        }
+    const items = analysis.rent_roll || [];
+    
+    // We want to preserve current edits if possible, but also respect saved config from analysis
+    // and account for new unit types from the rent roll.
+    
+    // 1. Get Saved Config from Analysis (Backend State)
+    let savedConfig: StudentHousingConfig = { unit_type_configs: [] };
+    if (analysis.student_housing_config && analysis.student_housing_config.unit_type_configs.length > 0) {
+        savedConfig = analysis.student_housing_config;
+    }
 
-        const uniqueTypes = Array.from(new Set(items.map(i => i.unit_type || "Unknown"))).sort();
-        
+    const uniqueTypes = Array.from(new Set(items.map(i => i.unit_type || "Unknown"))).sort();
+    
+    setConfig(currentConfig => {
         const mergedConfigs: UnitTypeConfig[] = uniqueTypes.map(type => {
-            // 1. Try to find in saved config
-            const existing = initialConfig.unit_type_configs.find(c => c.unit_type === type);
-            if (existing) return existing;
+            // Priority 1: Keep current local edits if they exist (User edited in modal but didn't save yet)
+            const local = currentConfig.unit_type_configs.find(c => c.unit_type === type);
+            if (local) return local;
 
-            // 2. Otherwise create default
+            // Priority 2: Use saved config from backend
+            const saved = savedConfig.unit_type_configs.find(c => c.unit_type === type);
+            if (saved) return saved;
+
+            // Priority 3: Create default for new/unknown types
             let beds = 1;
-            // Smarter regex: Look for number followed by bd/br/bed, or studio
             const match = type.match(/(\d+)\s*(?:bd|br|bed|bedroom)/i);
             
             if (match) {
@@ -52,7 +56,6 @@ export default function RentRollExportModal({
             } else if (type.toLowerCase().includes("studio")) {
                 beds = 1;
             } else {
-                // Fallback: If simply "2" or "3", accept it?
                 const startMatch = type.match(/^(\d+)/);
                 if (startMatch) beds = parseInt(startMatch[1]);
             }
@@ -68,12 +71,28 @@ export default function RentRollExportModal({
                 market_rent_double: 0
             };
         });
+        
+        return { unit_type_configs: mergedConfigs };
+    });
+  }, [analysis]); // Run when analysis changes (e.g. rent roll update)
 
-        setConfig({ unit_type_configs: mergedConfigs });
+  const saveConfiguration = async (currentConfig?: StudentHousingConfig) => {
+    const cfg = currentConfig || config;
+    try {
+      const exportPayload = {
+        ...analysis,
+        student_housing_config: cfg,
+      };
+      await apiClient.updateAnalysis(analysis.document_id, exportPayload);
+      if (onAnalysisUpdate) {
+        onAnalysisUpdate(exportPayload);
+      }
+    } catch (error) {
+      console.error("Auto-save failed:", error);
     }
-  }, [isOpen, analysis]);
+  };
 
-  const handleConfigChange = (index: number, field: keyof UnitTypeConfig, value: any) => {
+  const handleConfigChange = (index: number, field: keyof UnitTypeConfig, value: any, shouldSave = false) => {
       const newConfigs = [...config.unit_type_configs];
       const currentItem = newConfigs[index];
       let newItem = { ...currentItem, [field]: value };
@@ -108,7 +127,12 @@ export default function RentRollExportModal({
       }
 
       newConfigs[index] = newItem;
-      setConfig({ unit_type_configs: newConfigs });
+      const newConfigWrapper = { unit_type_configs: newConfigs };
+      setConfig(newConfigWrapper);
+
+      if (shouldSave) {
+        saveConfiguration(newConfigWrapper);
+      }
   };
 
   const handleExport = async () => {
@@ -135,7 +159,7 @@ export default function RentRollExportModal({
       onClose();
     } catch (error) {
       console.error("Export/Save failed:", error);
-      alert("Failed to save configuration or export Rent Roll.");
+      alert("Unable to save settings or download the Rent Roll.");
     } finally {
       setIsExporting(false);
     }
@@ -144,13 +168,16 @@ export default function RentRollExportModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 ${!isOpen ? 'hidden' : ''}`}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex justify-between items-center bg-neutral-50">
           <div>
-            <h2 className="text-xl font-bold text-neutral-900">Export Rent Roll</h2>
-            <p className="text-sm text-neutral-500">Review data and configure export settings</p>
+            <h2 className="text-xl font-bold text-neutral-900">Rent Roll Export Settings</h2>
+            <div className="space-y-1">
+              <p className="text-sm text-neutral-500">Configure unit types, bed counts, and market rents before exporting.</p>
+              <p className="text-xs text-neutral-400">These settings will be used to populate the Unit Mix Summary table in the export.</p>
+            </div>
           </div>
           <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -163,8 +190,8 @@ export default function RentRollExportModal({
             {/* Configuration Section - Dynamic Table */}
             <div className="bg-white border border-neutral-200 rounded-lg shadow-sm overflow-hidden flex flex-col">
                 <div className="px-6 py-4 border-b border-neutral-200 bg-neutral-50/50">
-                    <h3 className="text-lg font-bold text-neutral-900">Unit Configurations</h3>
-                    <p className="text-sm text-neutral-500">Configure assumptions for each Unit Type found in the Rent Roll</p>
+                    <h3 className="text-lg font-bold text-neutral-900">Unit Type Configuration</h3>
+                    <p className="text-sm text-neutral-500">Verify and adjust the bed count, occupancy type, and market rent for each unit plan.</p>
                 </div>
                 
                 <div className="overflow-x-auto">
@@ -173,9 +200,9 @@ export default function RentRollExportModal({
                             <tr>
                                 <th className="px-6 py-3 w-[15%]">Unit Type</th>
                                 <th className="px-6 py-3 w-[10%]">Bed Count</th>
-                                <th className="px-6 py-3 w-[15%]">Config Type</th>
-                                <th className="px-6 py-3 w-[15%]">Config Label</th>
-                                <th className="px-6 py-3 w-[45%]">Detailed Breakdown (Count & Market Rent)</th>
+                                <th className="px-6 py-3 w-[15%]">Occupancy Type</th>
+                                <th className="px-6 py-3 w-[15%]">Unit Label</th>
+                                <th className="px-6 py-3 w-[45%]">Market Rent & Bed Config</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-neutral-100">
@@ -186,13 +213,12 @@ export default function RentRollExportModal({
                                     </td>
                                     <td className="px-6 py-4 align-top">
                                         <div className="flex flex-col gap-1">
-                                            <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Total Beds</span>
+                                            <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Beds / Unit</span>
                                             <input
-                                                type="number"
-                                                min="0"
-                                                max="10"
+                                                type="text"
                                                 value={conf.bed_count}
                                                 onChange={(e) => handleConfigChange(idx, "bed_count", parseInt(e.target.value) || 0)}
+                                                onBlur={() => saveConfiguration()}
                                                 className="w-20 border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
                                             />
                                         </div>
@@ -202,7 +228,7 @@ export default function RentRollExportModal({
                                             <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Occupancy</span>
                                             <select
                                                 value={conf.occupancy_type}
-                                                onChange={(e) => handleConfigChange(idx, "occupancy_type", e.target.value)}
+                                                onChange={(e) => handleConfigChange(idx, "occupancy_type", e.target.value, true)}
                                                 className="border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none bg-white w-full"
                                             >
                                                 <option value="Single">Single</option>
@@ -218,6 +244,7 @@ export default function RentRollExportModal({
                                                 type="text"
                                                 value={conf.unit_config_label}
                                                 onChange={(e) => handleConfigChange(idx, "unit_config_label", e.target.value)}
+                                                onBlur={() => saveConfiguration()}
                                                 className="w-full border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
                                                 placeholder="e.g. Single"
                                             />
@@ -229,25 +256,25 @@ export default function RentRollExportModal({
                                             <div className="space-y-2">
                                                 <div className="text-xs font-semibold text-neutral-700 border-b border-neutral-200 pb-1 mb-2">Single</div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-xs text-neutral-500 w-12">Count:</span>
+                                                    <span className="text-xs text-neutral-500 w-12">Beds:</span>
                                                     <input
-                                                        type="number"
-                                                        min="0"
+                                                        type="text"
                                                         value={conf.beds_single || 0}
                                                         onChange={(e) => handleConfigChange(idx, "beds_single", parseInt(e.target.value) || 0)}
+                                                        onBlur={() => saveConfiguration()}
                                                         disabled={conf.occupancy_type === "Double"}
                                                         className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                     />
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-xs text-neutral-500 w-12">Price:</span>
+                                                    <span className="text-xs text-neutral-500 w-12">Rent:</span>
                                                     <div className="relative w-full">
                                                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">$</span>
                                                         <input
-                                                            type="number"
-                                                            min="0"
+                                                            type="text"
                                                             value={conf.market_rent_single || 0}
                                                             onChange={(e) => handleConfigChange(idx, "market_rent_single", parseFloat(e.target.value) || 0)}
+                                                            onBlur={() => saveConfiguration()}
                                                             disabled={conf.occupancy_type === "Double"}
                                                             className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                         />
@@ -259,25 +286,25 @@ export default function RentRollExportModal({
                                             <div className="space-y-2">
                                                 <div className="text-xs font-semibold text-neutral-700 border-b border-neutral-200 pb-1 mb-2">Double</div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-xs text-neutral-500 w-12">Count:</span>
+                                                    <span className="text-xs text-neutral-500 w-12">Beds:</span>
                                                     <input
-                                                        type="number"
-                                                        min="0"
+                                                        type="text"
                                                         value={conf.beds_double || 0}
                                                         onChange={(e) => handleConfigChange(idx, "beds_double", parseInt(e.target.value) || 0)}
+                                                        onBlur={() => saveConfiguration()}
                                                         disabled={conf.occupancy_type === "Single"}
                                                         className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                     />
                                                 </div>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-xs text-neutral-500 w-12">Price:</span>
+                                                    <span className="text-xs text-neutral-500 w-12">Rent:</span>
                                                     <div className="relative w-full">
                                                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">$</span>
                                                         <input
-                                                            type="number"
-                                                            min="0"
+                                                            type="text"
                                                             value={conf.market_rent_double || 0}
                                                             onChange={(e) => handleConfigChange(idx, "market_rent_double", parseFloat(e.target.value) || 0)}
+                                                            onBlur={() => saveConfiguration()}
                                                             disabled={conf.occupancy_type === "Single"}
                                                             className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                         />
@@ -291,7 +318,7 @@ export default function RentRollExportModal({
                             {config.unit_type_configs.length === 0 && (
                                 <tr>
                                     <td colSpan={5} className="px-6 py-8 text-center text-neutral-500">
-                                        No unit types found. Add data to the Rent Roll table above.
+                                        No unit types detected in the current analysis.
                                     </td>
                                 </tr>
                             )}
@@ -302,8 +329,8 @@ export default function RentRollExportModal({
                 <div className="bg-blue-50/50 p-4 text-blue-800 text-xs border-t border-blue-100 flex gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                     <p>
-                        <strong>Mixed Occupancy:</strong> Use "Mixed" to define a split of Single and Double beds within one unit type.
-                        Ensure the total bed count matches your split (e.g., 3 Beds = 1 Single + 2 Double).
+                        <strong>Mixed Occupancy:</strong> Select "Mixed" to allocate beds between Single and Double occupancy.
+                        Total beds must match the Unit Bed Count.
                     </p>
                 </div>
             </div>
@@ -329,12 +356,12 @@ export default function RentRollExportModal({
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Exporting...
+                Downloading...
                 </>
             ) : (
                 <>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                Export Excel
+                Download Rent Roll
                 </>
             )}
           </button>

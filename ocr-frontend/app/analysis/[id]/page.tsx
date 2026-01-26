@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { UnderwritingAnalysis, FinancialAnalysisProgress, DealParameters } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
@@ -73,6 +73,7 @@ const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, s
 export default function AnalysisResultPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id as string;
   const [analysis, setAnalysis] = useState<UnderwritingAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -81,6 +82,19 @@ export default function AnalysisResultPage() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    const openModal = searchParams.get("openRentRollModal");
+
+    if (tab === "export") {
+      setActiveTab("export");
+    }
+
+    if (openModal === "true") {
+      setIsRentRollModalOpen(true);
+    }
+  }, [searchParams]);
   
   const eventSourceRef = useRef<EventSource | null>(null);
   const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;

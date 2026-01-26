@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { RentRollItem, RentRollSummary, UnderwritingAnalysis, StudentHousingConfig } from "@/lib/types";
 import { apiClient } from "@/lib/api";
 import WarningModal from "./WarningModal";
@@ -94,6 +95,7 @@ export default function RentRollWidget({
     setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
   }, [rentRoll]);
 
+  const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
@@ -198,43 +200,9 @@ export default function RentRollWidget({
     }
   };
 
-  const handleExport = async () => {
-    // Check if configuration is missing
-    const hasConfig = studentHousingConfig && studentHousingConfig.unit_type_configs.length > 0;
-    
-    if (!hasConfig && onOpenConfig) {
-        onOpenConfig();
-        return;
-    }
-
-    setIsExporting(true);
-    try {
-      // Construct a temporary analysis object with the CURRENT state of the rent roll
-      // This ensures edited values (even if not saved to backend yet) are exported
-      const exportData: Partial<UnderwritingAnalysis> = {
-        document_id: packageId, // Use packageId as doc id for filename
-        rent_roll: items.map(item => ({
-          ...item,
-          unit_size: parseFloat(String(item.unit_size)) || 0,
-          current_rent: parseFloat(String(item.current_rent)) || 0,
-          stabilized_rent: parseFloat(String(item.stabilized_rent)) || 0,
-          market_rent: parseFloat(String(item.market_rent)) || 0,
-        })),
-        rent_roll_summary: displaySummary,
-        student_housing_config: studentHousingConfig,
-        // Fill other required fields with safe defaults if needed by the backend schema validation
-        pass_fail_status: "PASS",
-        property_meta: { address: "Export", year_built: 0, purchase_price: 0, total_units: items.length },
-        historical_expenses: [],
-      };
-
-      await apiClient.downloadExport(exportData as UnderwritingAnalysis, 'rent-roll');
-    } catch (error) {
-      console.error("Export failed:", error);
-      alert("Failed to export Excel file.");
-    } finally {
-      setIsExporting(false);
-    }
+  const handleExport = () => {
+    // Redirect to export page with modal open query param
+    router.push(`/analysis/${packageId}?tab=export&openRentRollModal=true`);
   };
 
   const handleCancel = () => {
@@ -427,7 +395,7 @@ export default function RentRollWidget({
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
-                  Export Excel
+                  Download Rent Roll
                 </>
               )}
             </button>
