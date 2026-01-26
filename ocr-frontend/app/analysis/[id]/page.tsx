@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import { UnderwritingAnalysis, FinancialAnalysisProgress, DealParameters } from "@/lib/types";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
@@ -75,6 +76,7 @@ export default function AnalysisResultPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const id = params.id as string;
+  const { user } = useAuth();
   const [analysis, setAnalysis] = useState<UnderwritingAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -389,7 +391,15 @@ export default function AnalysisResultPage() {
       };
     }
   };
-
+  const getUserInitials = () => {
+    if (!user?.name) return "FA";
+    const names = user.name.split(" ");
+    return names
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase();
+  };
+ 
   return (
     <div className="min-h-screen overflow-hidden bg-white text-neutral-900 flex relative">
       {/* Background Animation */}
@@ -443,44 +453,11 @@ export default function AnalysisResultPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push(`/verification/${id}`)}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 11l3 3L22 4"></path>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-              </svg>
-              Verify Data
-            </button>
-            <button
-              onClick={() => setActiveTab('audit')}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 12a9 9 0 1 0 9-9 9.76 9.76 0 0 0-4.7 8.5"></path>
-                <path d="M3 12h9"></path>
-                <path d="M3 12v9"></path>
-              </svg>
-              Audit Trail
-            </button>
-            <button 
-              onClick={() => setActiveTab('export')}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="7 10 12 15 17 10"></polyline>
-                <line x1="12" x2="12" y1="15" y2="3"></line>
-              </svg>
-              Export
-            </button>
-            <button 
-              onClick={() => router.push('/dashboard')}
-              className="flex items-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-white px-3 py-1.5 rounded-md text-xs font-medium transition-all shadow-sm"
-            >
-              New Analysis
-            </button>
+            <div className="w-9 h-9 rounded-full bg-[#FF5E00] flex items-center justify-center shrink-0 ring-2 ring-transparent hover:ring-[#FF5E00]/20 transition-all cursor-pointer">
+              <span className="text-white text-sm font-medium">
+                {getUserInitials()}
+              </span>
+            </div>
           </div>
         </header>
 
