@@ -5,11 +5,12 @@ import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
 import WidgetTooltip from "./WidgetTooltip";
+import RentRollExportModal from "./RentRollExportModal";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
   onReanalyze?: (params: DealParameters) => void;
-  onOpenRentRollModal?: () => void;
+  // onOpenRentRollModal?: () => void; // This will be handled internally now
 }
 
 const METRIC_DEFINITIONS: Record<string, string> = {
@@ -126,8 +127,8 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
 export default function UnderwritingDashboard({
   analysis,
   onReanalyze,
-  onOpenRentRollModal,
 }: UnderwritingDashboardProps) {
+  const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
   const [isEditingPropertyDetails, setIsEditingPropertyDetails] = useState(false);
   const [isCommentaryExpanded, setIsCommentaryExpanded] = useState(true);
   const [editParams, setEditParams] = useState<DealParameters>(
@@ -161,6 +162,9 @@ export default function UnderwritingDashboard({
       [key]: numValue
     }));
   };
+
+  const handleOpenRentRollModal = () => setIsRentRollModalOpen(true);
+  const handleCloseRentRollModal = () => setIsRentRollModalOpen(false);
 
   const handleSave = () => {
     console.log("handleSave called with params:", editParams);
@@ -324,6 +328,19 @@ export default function UnderwritingDashboard({
   const hasCriticalIssues = missingValues.length > 0 || logicErrors.length > 0;
 
   return (
+    <>
+    <RentRollExportModal
+      isOpen={isRentRollModalOpen}
+      onClose={handleCloseRentRollModal}
+      analysis={analysis}
+      onAnalysisUpdate={(updatedAnalysis) => {
+        // This is an optimistic update. The parent page will ultimately refresh the prop
+        // but this makes the UI feel faster.
+        if (onReanalyze) {
+          // You might want a more specific update logic here instead of a full re-analyze
+        }
+      }}
+    />
     <div className="space-y-6 font-sans">
       {/* Critical Issues Banner (Missing Values or Logic Errors) */}
       {hasCriticalIssues && (
@@ -477,7 +494,7 @@ export default function UnderwritingDashboard({
         packageId={analysis.document_id}
         studentHousingConfig={analysis.student_housing_config}
         onUpdate={() => onReanalyze && onReanalyze(editParams)}
-        onOpenConfig={onOpenRentRollModal}
+        onOpenConfig={handleOpenRentRollModal}
       />
 
       {/* AI Underwriting Section */}
@@ -1196,5 +1213,6 @@ export default function UnderwritingDashboard({
       )}
 
     </div>
+    </>
   );
 }

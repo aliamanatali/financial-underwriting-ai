@@ -125,19 +125,89 @@ export default function RentRollWidget({
 
 
 
+  const validateItem = (item: EditableRentRollItem) => {
+    const errors: Record<string, string> = {};
+    if (!item.unit_number) errors.unit_number = "Required";
+    if (!item.unit_type) errors.unit_type = "Required";
+    if (parseFloat(String(item.unit_size)) <= 0) errors.unit_size = "Required";
+
+    if (parseFloat(String(item.stabilized_rent)) <= 0) errors.stabilized_rent = "Required";
+    if (parseFloat(String(item.market_rent)) <= 0) errors.market_rent = "Required";
+
+    if (parseFloat(String(item.current_rent)) > 0 && !item.lease_start) {
+      errors.lease_start = "Required";
+    }
+
+    const validateYear = (date: string, field: string) => {
+      if (!date) return;
+      let year;
+      // Handle YYYY-MM-DD
+      if (date.includes('-')) {
+        year = parseInt(date.split('-')[0], 10);
+      }
+      // Handle MM/DD/YYYY
+      else if (date.includes('/')) {
+        const parts = date.split('/');
+        let yearStr = parts[2];
+        if (yearStr.length === 2) {
+          yearStr = "20" + yearStr; // handle 2-digit years
+        }
+        year = parseInt(yearStr, 10);
+      }
+      
+      if (year && (year < 1900 || year > 2100)) {
+        errors[field] = "Invalid Year";
+      }
+    };
+
+    validateYear(item.lease_start, "lease_start");
+    validateYear(item.lease_end, "lease_end");
+    validateYear(item.move_in_date, "move_in_date");
+    
+    return errors;
+  };
+
   const handleItemChange = (index: number, field: keyof EditableRentRollItem, value: any) => {
     const newItems = [...items];
-    newItems[index] = {
+    const updatedItem = {
       ...newItems[index],
       [field]: value,
     };
+    newItems[index] = updatedItem;
     setItems(newItems);
+
+    const errors = validateItem(updatedItem);
+    if (Object.keys(errors).length > 0) {
+      setRowErrors(prev => ({
+        ...prev,
+        [updatedItem.id]: errors,
+      }));
+    } else {
+      // If there are no errors, remove the entry for this item
+      setRowErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[updatedItem.id];
+        return newErrors;
+      });
+    }
+  };
+
+  const handleEdit = () => {
+    setIsEditing(true);
+    // Validate all items when entering edit mode
+    const initialErrors: Record<string, Record<string, string>> = {};
+    items.forEach(item => {
+      const errors = validateItem(item);
+      if (Object.keys(errors).length > 0) {
+        initialErrors[item.id] = errors;
+      }
+    });
+    setRowErrors(initialErrors);
   };
 
   const handleSave = async () => {
     setIsSaving(true);
 
-    // 1. Normalize data first (convert strings to numbers, handle empty values)
     const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
       ...rest,
       unit_size: parseFloat(String(rest.unit_size)) || 0,
@@ -146,44 +216,28 @@ export default function RentRollWidget({
       market_rent: parseFloat(String(rest.market_rent)) || 0,
     }));
 
-    // 2. Validate normalized data
-    const newRowErrors: Record<string, Record<string, string>> = {};
     let errorCount = 0;
+    const newRowErrors: Record<string, Record<string, string>> = {};
 
-    cleanItems.forEach((item, index) => {
-      const rowId = items[index].id; // Get ID from original items
-      const errors: Record<string, string> = {};
-
-      if (!item.unit_number) errors.unit_number = "Required";
-      if (!item.unit_type) errors.unit_type = "Required";
-      if (item.unit_size <= 0) errors.unit_size = "Required";
-
-      if (item.stabilized_rent <= 0) errors.stabilized_rent = "Required";
-      if (item.market_rent <= 0) errors.market_rent = "Required";
-
-      // Occupancy Logic:
-      // 1. If paying rent (Current Rent > 0), Lease Start Date is required.
-      if (item.current_rent > 0 && !item.lease_start) {
-        errors.lease_start = "Required";
-      }
-
-      if (Object.keys(errors).length > 0) {
-        newRowErrors[rowId] = errors;
-        errorCount++;
-      }
+    items.forEach((item) => {
+        const errors = validateItem(item);
+        if (Object.keys(errors).length > 0) {
+            newRowErrors[item.id] = errors;
+            errorCount++;
+        }
     });
 
+    setRowErrors(newRowErrors); // Update state with all current errors
+
     if (errorCount > 0) {
-      setRowErrors(newRowErrors);
-      setWarningMessage(
-        `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
-      );
-      setShowWarning(true);
-      setIsSaving(false);
-      return;
+        setWarningMessage(
+            `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
+        );
+        setShowWarning(true);
+        setIsSaving(false);
+        return;
     }
-    
-    // Clear invalid rows if all good
+
     setRowErrors({});
 
     try {
@@ -400,7 +454,7 @@ export default function RentRollWidget({
               )}
             </button>
             <button
-              onClick={() => setIsEditing(true)}
+              onClick={handleEdit}
               className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -604,6 +658,11 @@ function SortableRow({
   formatCurrency: (val: number) => string;
   removeItem: (index: number) => void;
 }) {
+  const handleNumericChange = (index: number, field: keyof EditableRentRollItem, value: string) => {
+    const numericValue = value.replace(/[^0-9.]/g, '');
+    handleItemChange(index, field, numericValue);
+  };
+
   const {
     attributes,
     listeners,
@@ -671,7 +730,7 @@ function SortableRow({
             <input
               type="text"
               value={item.unit_size}
-              onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
+              onChange={(e) => handleNumericChange(idx, "unit_size", e.target.value)}
               className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
                 errors?.unit_size ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
@@ -705,7 +764,7 @@ function SortableRow({
             <input
               type="text"
               value={item.current_rent}
-              onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
+              onChange={(e) => handleNumericChange(idx, "current_rent", e.target.value)}
               className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
             />
           </div>
@@ -719,7 +778,7 @@ function SortableRow({
             <input
               type="text"
               value={item.stabilized_rent}
-              onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
+              onChange={(e) => handleNumericChange(idx, "stabilized_rent", e.target.value)}
               className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
                 errors?.stabilized_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
@@ -736,7 +795,7 @@ function SortableRow({
             <input
               type="text"
               value={item.market_rent}
-              onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
+              onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)}
               className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
                 errors?.market_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
@@ -752,12 +811,17 @@ function SortableRow({
           <input
             type="date"
             value={toInputDate(item.move_in_date)}
+            min="1900-01-01"
+            max="2100-12-31"
             onChange={(e) => handleItemChange(idx, "move_in_date", fromInputDate(e.target.value))}
-            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+            className={`w-28 mx-auto bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
+              errors?.move_in_date ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+          }`}
+        />
         ) : (
           item.move_in_date || "-"
         )}
+         {errors?.move_in_date && <div className="text-[10px] text-rose-600 mt-1">{errors.move_in_date}</div>}
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
@@ -765,6 +829,8 @@ function SortableRow({
             <input
               type="date"
               value={toInputDate(item.lease_start)}
+              min="1900-01-01"
+              max="2100-12-31"
               onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))}
               className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                 errors?.lease_start ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
@@ -781,12 +847,17 @@ function SortableRow({
           <input
             type="date"
             value={toInputDate(item.lease_end)}
+            min="1900-01-01"
+            max="2100-12-31"
             onChange={(e) => handleItemChange(idx, "lease_end", fromInputDate(e.target.value))}
-            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+           className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
+              errors?.lease_end ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+          }`}
+        />
         ) : (
           item.lease_end || "-"
         )}
+        {errors?.lease_end && <div className="text-[10px] text-rose-600 mt-1">{errors.lease_end}</div>}
       </td>
       {isEditing && (
         <td className="px-4 py-2.5 text-center">

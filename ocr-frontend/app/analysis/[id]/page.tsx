@@ -491,7 +491,6 @@ export default function AnalysisResultPage() {
               <UnderwritingDashboard
                 analysis={analysis}
                 onReanalyze={handleReanalyze}
-                onOpenRentRollModal={() => setIsRentRollModalOpen(true)}
               />
             )}
 
@@ -507,7 +506,6 @@ export default function AnalysisResultPage() {
                     console.log("Updating analysis state in parent page", newAnalysis);
                     setAnalysis(newAnalysis);
                   }}
-                  onOpenRentRollModal={() => setIsRentRollModalOpen(true)}
                 />
               </div>
             )}

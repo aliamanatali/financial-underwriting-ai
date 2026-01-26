@@ -10,22 +10,21 @@ import { apiClient } from "@/lib/api";
 interface ExportButtonsProps {
   analysis: UnderwritingAnalysis;
   onAnalysisUpdate?: (newAnalysis: UnderwritingAnalysis) => void;
-  onOpenRentRollModal?: () => void;
 }
 
-export default function ExportButtons({ analysis, onAnalysisUpdate, onOpenRentRollModal }: ExportButtonsProps) {
+export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButtonsProps) {
   const [isExporting, setIsExporting] = useState<"excel" | "memo" | "om-proforma" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   const handleExport = async (type: "excel" | "memo" | "om-proforma" | "rent-roll") => {
     // If it's rent-roll export, open the modal instead of direct export
-    if (type === "rent-roll") {
-        if (onOpenRentRollModal) {
-            onOpenRentRollModal();
-        }
-        return;
-    }
+    // if (type === "rent-roll") {
+    //     if (onOpenRentRollModal) {
+    //         onOpenRentRollModal();
+    //     }
+    //     return;
+    // }
 
     setIsExporting(type as "excel" | "memo" | "om-proforma");
     setError(null);
