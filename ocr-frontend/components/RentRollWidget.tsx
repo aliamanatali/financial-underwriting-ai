@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { RentRollItem, RentRollSummary, UnderwritingAnalysis, StudentHousingConfig } from "@/lib/types";
 import { apiClient } from "@/lib/api";
+import WarningModal from "./WarningModal";
 import {
   DndContext,
   closestCenter,
@@ -95,6 +96,10 @@ export default function RentRollWidget({
 
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
+  const [warningMessage, setWarningMessage] = useState("");
+  // Map of Row ID -> { fieldName: errorMessage }
+  const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -129,16 +134,57 @@ export default function RentRollWidget({
 
   const handleSave = async () => {
     setIsSaving(true);
+
+    // 1. Normalize data first (convert strings to numbers, handle empty values)
+    const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
+      ...rest,
+      unit_size: parseFloat(String(rest.unit_size)) || 0,
+      current_rent: parseFloat(String(rest.current_rent)) || 0,
+      stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+      market_rent: parseFloat(String(rest.market_rent)) || 0,
+    }));
+
+    // 2. Validate normalized data
+    const newRowErrors: Record<string, Record<string, string>> = {};
+    let errorCount = 0;
+
+    cleanItems.forEach((item, index) => {
+      const rowId = items[index].id; // Get ID from original items
+      const errors: Record<string, string> = {};
+
+      if (!item.unit_number) errors.unit_number = "Required";
+      if (!item.unit_type) errors.unit_type = "Required";
+      if (item.unit_size <= 0) errors.unit_size = "Required";
+
+      if (item.stabilized_rent <= 0) errors.stabilized_rent = "Required";
+      if (item.market_rent <= 0) errors.market_rent = "Required";
+
+      // Occupancy Logic:
+      // 1. If paying rent (Current Rent > 0), Lease Start Date is required.
+      if (item.current_rent > 0 && !item.lease_start) {
+        errors.lease_start = "Required";
+      }
+
+      if (Object.keys(errors).length > 0) {
+        newRowErrors[rowId] = errors;
+        errorCount++;
+      }
+    });
+
+    if (errorCount > 0) {
+      setRowErrors(newRowErrors);
+      setWarningMessage(
+        `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
+      );
+      setShowWarning(true);
+      setIsSaving(false);
+      return;
+    }
+    
+    // Clear invalid rows if all good
+    setRowErrors({});
+
     try {
-      // Remove 'id' and convert string numbers back to numbers before saving
-      const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
-        ...rest,
-        unit_size: parseFloat(String(rest.unit_size)) || 0,
-        current_rent: parseFloat(String(rest.current_rent)) || 0,
-        stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
-        market_rent: parseFloat(String(rest.market_rent)) || 0,
-      }));
-      
       await apiClient.updateManualOverrides(packageId, { rent_roll: cleanItems });
       setIsEditing(false);
       if (onUpdate) {
@@ -193,17 +239,41 @@ export default function RentRollWidget({
 
   const handleCancel = () => {
     setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
+    setRowErrors({});
     setIsEditing(false);
   };
 
   const addItem = () => {
+    // Determine the next unit number based on the maximum existing number found
+    let maxNum = 0;
+    const regex = /\d+/;
+    items.forEach(item => {
+      const match = item.unit_number?.match(regex);
+      if (match) {
+        const num = parseInt(match[0], 10);
+        if (num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+
+    let nextNum = maxNum + 1;
+    let nextUnitNumber = `# ${nextNum}`;
+    const existingUnitNumbers = new Set(items.map(i => i.unit_number?.trim().toLowerCase() || ""));
+    
+    // Ensure uniqueness just in case (e.g. if mixed formats cause collision)
+    while (existingUnitNumbers.has(nextUnitNumber.toLowerCase())) {
+        nextNum++;
+        nextUnitNumber = `# ${nextNum}`;
+    }
+
     setItems([
       ...items,
       {
         id: `new-${Date.now()}`,
-        unit_number: `Unit ${items.length + 1}`,
+        unit_number: nextUnitNumber,
         unit_size: 0,
-        unit_type: "1BR",
+        unit_type: "0/1.00",
         tenant_name: "Vacant",
         current_rent: 0,
         stabilized_rent: 0,
@@ -324,6 +394,13 @@ export default function RentRollWidget({
 
   return (
     <>
+      <WarningModal
+        isOpen={showWarning}
+        onClose={() => setShowWarning(false)}
+        title="Incomplete Data"
+        message={warningMessage}
+      />
+
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
       <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
         <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
@@ -422,6 +499,7 @@ export default function RentRollWidget({
                     item={item}
                     idx={idx}
                     isEditing={isEditing}
+                    errors={rowErrors[item.id]}
                     handleItemChange={handleItemChange}
                     formatCurrency={formatCurrency}
                     removeItem={removeItem}
@@ -545,6 +623,7 @@ function SortableRow({
   item,
   idx,
   isEditing,
+  errors,
   handleItemChange,
   formatCurrency,
   removeItem,
@@ -552,6 +631,7 @@ function SortableRow({
   item: EditableRentRollItem;
   idx: number;
   isEditing: boolean;
+  errors?: Record<string, string>;
   handleItemChange: (index: number, field: keyof EditableRentRollItem, value: any) => void;
   formatCurrency: (val: number) => string;
   removeItem: (index: number) => void;
@@ -576,8 +656,11 @@ function SortableRow({
     <tr
       ref={setNodeRef}
       style={style}
-      className={`group hover:bg-neutral-50/50 transition-colors ${isDragging ? "bg-neutral-50 shadow-md" : "bg-white"
-        }`}
+      className={`group hover:bg-neutral-50/50 transition-colors border-l-4 ${
+        isDragging ? "bg-neutral-50 shadow-md" : "bg-white"
+      } ${
+        errors ? "border-l-rose-500 bg-rose-50/10" : "border-l-transparent"
+      }`}
     >
       <td className="px-4 py-2.5 font-medium text-neutral-900">
         <div className="flex items-center gap-2">
@@ -598,12 +681,17 @@ function SortableRow({
             </div>
            )}
           {isEditing ? (
-            <input
-              type="text"
-              value={item.unit_number}
-              onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-            />
+            <div className="w-full">
+              <input
+                type="text"
+                value={item.unit_number}
+                onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
+                className={`w-full bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:outline-none ${
+                  errors?.unit_number ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+                }`}
+              />
+              {errors?.unit_number && <div className="text-[10px] text-rose-600 mt-1">{errors.unit_number}</div>}
+            </div>
           ) : (
             item.unit_number
           )}
@@ -611,60 +699,82 @@ function SortableRow({
       </td>
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
-          <input
-            type="text"
-            value={item.unit_size}
-            onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
-            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-20 ml-auto">
+            <input
+              type="text"
+              value={item.unit_size}
+              onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+                errors?.unit_size ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+              }`}
+            />
+            {errors?.unit_size && <div className="text-[10px] text-rose-600 mt-1">{errors.unit_size}</div>}
+          </div>
         ) : (
           item.unit_size || "-"
         )}
       </td>
       <td className="px-4 py-2.5 text-neutral-600">
         {isEditing ? (
-          <input
-            type="text"
-            value={item.unit_type}
-            onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
-            className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-full">
+            <input
+              type="text"
+              value={item.unit_type}
+              onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
+              className={`w-full bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:outline-none ${
+                errors?.unit_type ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+              }`}
+            />
+            {errors?.unit_type && <div className="text-[10px] text-rose-600 mt-1">{errors.unit_type}</div>}
+          </div>
         ) : (
           item.unit_type
         )}
       </td>
       <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
         {isEditing ? (
-          <input
-            type="text"
-            value={item.current_rent}
-            onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
-            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-20 ml-auto">
+            <input
+              type="text"
+              value={item.current_rent}
+              onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            />
+          </div>
         ) : (
           formatCurrency(typeof item.current_rent === 'number' ? item.current_rent : parseFloat(item.current_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
-          <input
-            type="text"
-            value={item.stabilized_rent}
-            onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
-            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-20 ml-auto">
+            <input
+              type="text"
+              value={item.stabilized_rent}
+              onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+                errors?.stabilized_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+              }`}
+            />
+            {errors?.stabilized_rent && <div className="text-[10px] text-rose-600 mt-1">{errors.stabilized_rent}</div>}
+          </div>
         ) : (
           formatCurrency(typeof item.stabilized_rent === 'number' ? item.stabilized_rent : parseFloat(item.stabilized_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
-          <input
-            type="text"
-            value={item.market_rent}
-            onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
-            className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-20 ml-auto">
+            <input
+              type="text"
+              value={item.market_rent}
+              onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+                errors?.market_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+              }`}
+            />
+            {errors?.market_rent && <div className="text-[10px] text-rose-600 mt-1">{errors.market_rent}</div>}
+          </div>
         ) : (
           formatCurrency(typeof item.market_rent === 'number' ? item.market_rent : parseFloat(item.market_rent) || 0)
         )}
@@ -683,12 +793,17 @@ function SortableRow({
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
-          <input
-            type="date"
-            value={toInputDate(item.lease_start)}
-            onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))}
-            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-          />
+          <div className="w-28 mx-auto">
+            <input
+              type="date"
+              value={toInputDate(item.lease_start)}
+              onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))}
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
+                errors?.lease_start ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+              }`}
+            />
+             {errors?.lease_start && <div className="text-[10px] text-rose-600 mt-1">{errors.lease_start}</div>}
+          </div>
         ) : (
           item.lease_start || "-"
         )}

@@ -34,9 +34,9 @@ export default function WarningModal({ isOpen, onClose, title, message }: Warnin
             {title}
           </h3>
           
-          <p className="text-gray-600 mb-8 leading-relaxed">
+          <div className="text-gray-600 mb-8 leading-relaxed whitespace-pre-line">
             {message}
-          </p>
+          </div>
           
           <button
             onClick={onClose}
