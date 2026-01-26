@@ -146,7 +146,7 @@ export default function AnalysisResultPage() {
                 <div className="flex gap-4">
                   <a
                     href="/"
-                    className="inline-block px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                    className="inline-block px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition cursor-pointer"
                   >
                     ← Back to Upload
                   </a>

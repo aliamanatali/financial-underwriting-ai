@@ -69,37 +69,27 @@ export default function Sidebar({
           {/* Logo Wrapper (Acts as Expand Trigger when collapsed) */}
           <div
             id="logo-wrapper"
-            className={`relative flex items-center justify-center w-10 h-10 shrink-0 rounded-xl ${
-              !sidebarExpanded ? "cursor-pointer" : ""
-            }`}
-            onClick={() => !sidebarExpanded && toggleSidebar()}
+            className="group relative flex items-center justify-center w-10 h-10 shrink-0 rounded-xl cursor-pointer"
+            onClick={toggleSidebar}
           >
             {/* Logo (Blue) */}
-            <div className="text-[#FF5E00]">
+            <div className="text-[#FF5E00] transition-opacity group-hover:opacity-0">
               <FireIcon size={24} />
             </div>
 
-            {/* Expand Button Overlay (Visible on Hover when collapsed) */}
-            {!sidebarExpanded && (
-              <button
-                id="expand-trigger"
-                className="absolute inset-0 flex items-center justify-center rounded-xl text-neutral-400 transition-all backdrop-blur-sm opacity-0 hover:opacity-100"
-              >
+            {/* Toggle Button Overlay (Visible on Hover) */}
+            <div
+              id="sidebar-toggle-overlay"
+              className="absolute inset-0 flex items-center justify-center rounded-xl text-neutral-400 transition-all backdrop-blur-sm opacity-0 group-hover:opacity-100"
+            >
+              {!sidebarExpanded ? (
                 <PanelLeftOpenIcon size={20} />
-              </button>
-            )}
+              ) : (
+                <PanelLeftIcon size={20} />
+              )}
+            </div>
           </div>
 
-          {/* Collapse Button (Visible only when expanded) */}
-          {sidebarExpanded && (
-            <button
-              id="collapse-trigger"
-              onClick={toggleSidebar}
-              className="text-neutral-400 hover:text-neutral-600 transition-colors p-1"
-            >
-              <PanelLeftIcon size={20} />
-            </button>
-          )}
         </div>
 
         {/* Divider */}

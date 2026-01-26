@@ -241,7 +241,7 @@ function ProcessingContent() {
             <div className="flex items-center gap-4">
               <button
                 onClick={() => router.push("/dashboard")}
-                className="text-neutral-500 hover:text-neutral-900 transition-colors"
+                className="text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"

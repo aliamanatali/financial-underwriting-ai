@@ -326,7 +326,7 @@ export default function AnalysisResultPage() {
                 <div className="flex gap-4">
                   <button
                     onClick={() => router.push("/")}
-                    className="inline-flex items-center px-6 py-3 bg-neutral-800 text-white rounded-lg hover:bg-neutral-900 transition-colors font-medium"
+                    className="inline-flex items-center px-6 py-3 bg-neutral-800 text-white rounded-lg hover:bg-neutral-900 transition-colors font-medium cursor-pointer"
                   >
                     ← Back to Dashboard
                   </button>
@@ -408,7 +408,7 @@ export default function AnalysisResultPage() {
                   router.push('/dashboard');
                 }
               }}
-              className="text-neutral-500 hover:text-neutral-900 transition-colors"
+              className="text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="m12 19-7-7 7-7"></path>

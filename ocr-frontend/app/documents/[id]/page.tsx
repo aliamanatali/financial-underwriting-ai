@@ -18,7 +18,7 @@ export default function DocumentDetailPage() {
             <div className="flex items-center">
               <button
                 onClick={() => router.push("/")}
-                className="mr-4 text-gray-600 hover:text-gray-900"
+                className="mr-4 text-gray-600 hover:text-gray-900 cursor-pointer"
                 aria-label="Go back"
               >
                 <svg
