@@ -13,15 +13,6 @@ function DashboardContent() {
   const router = useRouter();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
-  const getUserInitials = () => {
-    if (!user?.name) return "FA";
-    const names = user.name.split(" ");
-    return names
-      .map((n) => n[0])
-      .join("")
-      .toUpperCase();
-  };
-
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded);
   };
@@ -114,10 +105,12 @@ function DashboardContent() {
                 </p>
                 <p className="text-[10px] text-neutral-500">Valiance Capital</p>
               </div>
-              <div className="w-9 h-9 rounded-full bg-[#FF5E00] flex items-center justify-center shrink-0 ring-2 ring-transparent hover:ring-[#FF5E00]/20 transition-all cursor-pointer">
-                <span className="text-white text-sm font-medium">
-                  {getUserInitials()}
-                </span>
+              <div className="w-8 h-8 rounded-full overflow-hidden ring-2 ring-neutral-100 group-hover:ring-neutral-200 transition-all">
+                <img
+                  src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
+                  alt="User"
+                  className="w-full h-full object-cover"
+                />
               </div>
             </button>
           </div>
