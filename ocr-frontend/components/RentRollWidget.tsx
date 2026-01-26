@@ -21,7 +21,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-type DraggableRentRollItem = RentRollItem & { id: string };
+type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
+  id: string;
+  unit_size: string | number;
+  current_rent: string | number;
+  stabilized_rent: string | number;
+  market_rent: string | number;
+};
 
 interface RentRollWidgetProps {
   rentRoll: RentRollItem[];
@@ -31,6 +37,43 @@ interface RentRollWidgetProps {
   studentHousingConfig?: StudentHousingConfig;
   onOpenConfig?: () => void;
 }
+
+// Helpers for date input conversion (YYYY-MM-DD <-> MM/DD/YYYY)
+const toInputDate = (displayDate: string | undefined | null) => {
+  if (!displayDate) return "";
+  
+  // If it's already in YYYY-MM-DD format, return as is
+  if (displayDate.match(/^\d{4}-\d{2}-\d{2}$/)) return displayDate;
+
+  const parts = displayDate.split('/');
+  if (parts.length === 3) {
+    let [month, day, year] = parts;
+    
+    // Handle 2-digit years (e.g. "24" -> "2024")
+    if (year.length === 2) {
+      year = "20" + year;
+    }
+    
+    // Ensure padding
+    month = month.padStart(2, '0');
+    day = day.padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
+  }
+  
+  // If parsing fails, return empty string to avoid input error
+  return "";
+};
+
+const fromInputDate = (inputDate: string) => {
+  if (!inputDate) return "";
+  const parts = inputDate.split('-');
+  if (parts.length === 3) {
+    // YYYY-MM-DD -> MM/DD/YYYY
+    return `${parts[1]}/${parts[2]}/${parts[0]}`;
+  }
+  return inputDate;
+};
 
 export default function RentRollWidget({
   rentRoll,
@@ -42,7 +85,7 @@ export default function RentRollWidget({
 }: RentRollWidgetProps) {
   const [isEditing, setIsEditing] = useState(false);
   // Initialize with IDs
-  const [items, setItems] = useState<DraggableRentRollItem[]>(
+  const [items, setItems] = useState<EditableRentRollItem[]>(
     rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` }))
   );
 
@@ -75,11 +118,11 @@ export default function RentRollWidget({
 
 
 
-  const handleItemChange = (index: number, field: keyof RentRollItem, value: any) => {
+  const handleItemChange = (index: number, field: keyof EditableRentRollItem, value: any) => {
     const newItems = [...items];
     newItems[index] = {
       ...newItems[index],
-      [field]: ["current_rent", "market_rent", "stabilized_rent", "unit_size"].includes(field) ? parseFloat(value) || 0 : value,
+      [field]: value,
     };
     setItems(newItems);
   };
@@ -87,9 +130,15 @@ export default function RentRollWidget({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // Remove 'id' before saving
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const cleanItems = items.map(({ id, ...rest }) => rest);
+      // Remove 'id' and convert string numbers back to numbers before saving
+      const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
+        ...rest,
+        unit_size: parseFloat(String(rest.unit_size)) || 0,
+        current_rent: parseFloat(String(rest.current_rent)) || 0,
+        stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+        market_rent: parseFloat(String(rest.market_rent)) || 0,
+      }));
+      
       await apiClient.updateManualOverrides(packageId, { rent_roll: cleanItems });
       setIsEditing(false);
       if (onUpdate) {
@@ -118,7 +167,13 @@ export default function RentRollWidget({
       // This ensures edited values (even if not saved to backend yet) are exported
       const exportData: Partial<UnderwritingAnalysis> = {
         document_id: packageId, // Use packageId as doc id for filename
-        rent_roll: items,
+        rent_roll: items.map(item => ({
+          ...item,
+          unit_size: parseFloat(String(item.unit_size)) || 0,
+          current_rent: parseFloat(String(item.current_rent)) || 0,
+          stabilized_rent: parseFloat(String(item.stabilized_rent)) || 0,
+          market_rent: parseFloat(String(item.market_rent)) || 0,
+        })),
         rent_roll_summary: displaySummary,
         student_housing_config: studentHousingConfig,
         // Fill other required fields with safe defaults if needed by the backend schema validation
@@ -175,21 +230,21 @@ export default function RentRollWidget({
     const payingItems = items.filter(i =>
       i.tenant_name &&
       i.tenant_name.toLowerCase() !== "vacant" &&
-      (i.current_rent || 0) > 0
+      (parseFloat(String(i.current_rent)) || 0) > 0
     );
 
     const occupiedUnits = payingItems.length;
     const occupancyRate = totalUnits > 0 ? occupiedUnits / totalUnits : 0;
     
-    const totalUnitSize = items.reduce((sum, item) => sum + (item.unit_size || 0), 0);
-    const payingUnitSize = payingItems.reduce((sum, item) => sum + (item.unit_size || 0), 0);
+    const totalUnitSize = items.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
+    const payingUnitSize = payingItems.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
     const avgUnitSize = totalUnits > 0 ? totalUnitSize / totalUnits : 0;
 
-    const totalMonthlyRent = items.reduce((sum, item) => sum + (item.current_rent || 0), 0);
+    const totalMonthlyRent = items.reduce((sum, item) => sum + (parseFloat(String(item.current_rent)) || 0), 0);
     const totalAnnualRent = totalMonthlyRent * 12;
     
-    const totalStabilizedRent = items.reduce((sum, item) => sum + (item.stabilized_rent || 0), 0);
-    const totalMarketRent = items.reduce((sum, item) => sum + (item.market_rent || 0), 0);
+    const totalStabilizedRent = items.reduce((sum, item) => sum + (parseFloat(String(item.stabilized_rent)) || 0), 0);
+    const totalMarketRent = items.reduce((sum, item) => sum + (parseFloat(String(item.market_rent)) || 0), 0);
 
     // Calculate averages based on paying units only (ignoring 0$ rent units)
     const avgRentPerUnit = occupiedUnits > 0 ? totalMonthlyRent / occupiedUnits : 0;
@@ -238,13 +293,14 @@ export default function RentRollWidget({
       }
       
       groups[key].count++;
-      if ((item.current_rent || 0) > 0) {
+      const currentRent = parseFloat(String(item.current_rent)) || 0;
+      if (currentRent > 0) {
         groups[key].payingCount++;
       }
-      groups[key].totalCurrentRent += item.current_rent || 0;
-      groups[key].totalStabilizedRent += item.stabilized_rent || 0;
-      groups[key].totalMarketRent += item.market_rent || 0;
-      groups[key].totalSqFt += item.unit_size || 0;
+      groups[key].totalCurrentRent += currentRent;
+      groups[key].totalStabilizedRent += parseFloat(String(item.stabilized_rent)) || 0;
+      groups[key].totalMarketRent += parseFloat(String(item.market_rent)) || 0;
+      groups[key].totalSqFt += parseFloat(String(item.unit_size)) || 0;
     });
 
     return Object.entries(groups).map(([type, data]) => ({
@@ -493,10 +549,10 @@ function SortableRow({
   formatCurrency,
   removeItem,
 }: {
-  item: RentRollItem;
+  item: EditableRentRollItem;
   idx: number;
   isEditing: boolean;
-  handleItemChange: (index: number, field: keyof RentRollItem, value: any) => void;
+  handleItemChange: (index: number, field: keyof EditableRentRollItem, value: any) => void;
   formatCurrency: (val: number) => string;
   removeItem: (index: number) => void;
 }) {
@@ -556,7 +612,7 @@ function SortableRow({
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
           <input
-            type="number"
+            type="text"
             value={item.unit_size}
             onChange={(e) => handleItemChange(idx, "unit_size", e.target.value)}
             className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
@@ -580,47 +636,46 @@ function SortableRow({
       <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
         {isEditing ? (
           <input
-            type="number"
+            type="text"
             value={item.current_rent}
             onChange={(e) => handleItemChange(idx, "current_rent", e.target.value)}
             className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
-          formatCurrency(item.current_rent)
+          formatCurrency(typeof item.current_rent === 'number' ? item.current_rent : parseFloat(item.current_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
           <input
-            type="number"
+            type="text"
             value={item.stabilized_rent}
             onChange={(e) => handleItemChange(idx, "stabilized_rent", e.target.value)}
             className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
-          formatCurrency(item.stabilized_rent || 0)
+          formatCurrency(typeof item.stabilized_rent === 'number' ? item.stabilized_rent : parseFloat(item.stabilized_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-right text-neutral-600">
         {isEditing ? (
           <input
-            type="number"
+            type="text"
             value={item.market_rent}
             onChange={(e) => handleItemChange(idx, "market_rent", e.target.value)}
             className="w-20 ml-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
-          formatCurrency(item.market_rent || 0)
+          formatCurrency(typeof item.market_rent === 'number' ? item.market_rent : parseFloat(item.market_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
           <input
-            type="text"
-            value={item.move_in_date || ""}
-            placeholder="MM/DD/YY"
-            onChange={(e) => handleItemChange(idx, "move_in_date", e.target.value)}
-            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            type="date"
+            value={toInputDate(item.move_in_date)}
+            onChange={(e) => handleItemChange(idx, "move_in_date", fromInputDate(e.target.value))}
+            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
           item.move_in_date || "-"
@@ -629,11 +684,10 @@ function SortableRow({
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
           <input
-            type="text"
-            value={item.lease_start || ""}
-            placeholder="MM/DD/YY"
-            onChange={(e) => handleItemChange(idx, "lease_start", e.target.value)}
-            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            type="date"
+            value={toInputDate(item.lease_start)}
+            onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))}
+            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
           item.lease_start || "-"
@@ -642,11 +696,10 @@ function SortableRow({
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
           <input
-            type="text"
-            value={item.lease_end || ""}
-            placeholder="MM/DD/YY"
-            onChange={(e) => handleItemChange(idx, "lease_end", e.target.value)}
-            className="w-24 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            type="date"
+            value={toInputDate(item.lease_end)}
+            onChange={(e) => handleItemChange(idx, "lease_end", fromInputDate(e.target.value))}
+            className="w-28 mx-auto bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
           />
         ) : (
           item.lease_end || "-"
