@@ -3,29 +3,63 @@
 import React from "react";
 import { RentRollItem, StudentHousingConfig } from "@/lib/types";
 
+type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
+  id: string;
+  unit_size: string | number;
+  current_rent: string | number;
+  stabilized_rent: string | number;
+  market_rent: string | number;
+};
+
 interface UnitBreakdownTableProps {
-  rentRoll: RentRollItem[];
+  rentRoll: EditableRentRollItem[];
   studentHousingConfig?: StudentHousingConfig;
+  isEditing?: boolean;
+  onItemChange?: (unitType: string, field: keyof EditableRentRollItem, value: any) => void;
+  formatCurrency: (val: number, decimals?: number) => string;
 }
 
-export default function UnitBreakdownTable({ rentRoll, studentHousingConfig }: UnitBreakdownTableProps) {
-  const formatCurrency = (val: number, decimals = 0) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(val);
+export default function UnitBreakdownTable({ rentRoll, studentHousingConfig, isEditing, onItemChange, formatCurrency }: UnitBreakdownTableProps) {
+  const [localRentRoll, setLocalRentRoll] = React.useState(rentRoll);
+
+  React.useEffect(() => {
+    setLocalRentRoll(rentRoll);
+  }, [rentRoll]);
+
   const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 1 }).format(val);
 
-  const data = React.useMemo(() => {
-    if (!rentRoll) return [];
+  const handleNumericChange = (unitType: string, field: keyof EditableRentRollItem, value: string) => {
+    const numericValue = value.replace(/[^0-9.]/g, '');
+    if (onItemChange) {
+      onItemChange(unitType, field, numericValue);
+    }
+  };
 
-    const totalUnitsOverall = rentRoll.length;
-    const totalSfOverall = rentRoll.reduce((sum, item) => sum + (item.unit_size || 0), 0);
+  const handleLocalChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
+    setLocalRentRoll(prev =>
+      prev.map(item =>
+        item.unit_type === unitType ? { ...item, [field]: value } : item
+      )
+    );
+    if (onItemChange) {
+      onItemChange(unitType, field, value);
+    }
+  };
+
+  const data = React.useMemo(() => {
+    const sourceData = isEditing ? localRentRoll : rentRoll;
+    if (!sourceData) return [];
+
+    const totalUnitsOverall = sourceData.length;
+    const totalSfOverall = sourceData.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
     
-    const uniqueUnitTypes = Array.from(new Set(rentRoll.map(item => item.unit_type)));
+    const uniqueUnitTypes = Array.from(new Set(sourceData.map(item => item.unit_type)));
 
     return uniqueUnitTypes.map(unitType => {
-      const items = rentRoll.filter(item => item.unit_type === unitType);
+      const items = sourceData.filter(item => item.unit_type === unitType);
       const unitCount = items.length;
-      const avgCurrentRent = items.reduce((sum, item) => sum + (item.current_rent || 0), 0) / (unitCount || 1);
-      const avgSize = items.reduce((sum, item) => sum + (item.unit_size || 0), 0) / (unitCount || 1);
+      const avgCurrentRent = items.reduce((sum, item) => sum + (parseFloat(String(item.current_rent)) || 0), 0) / (unitCount || 1);
+      const avgSize = items.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0) / (unitCount || 1);
       const totalSf = avgSize * unitCount;
       const rentPerSf = avgCurrentRent / (avgSize || 1);
       const mixPercent = unitCount / (totalUnitsOverall || 1);
@@ -116,8 +150,30 @@ export default function UnitBreakdownTable({ rentRoll, studentHousingConfig }: U
           {data.map((row, idx) => (
             <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
               <td className="px-4 py-2.5 font-medium">{row.unit_type}</td>
-              <td className="px-4 py-2.5 text-right">{formatCurrency(row.avgCurrentRent)}</td>
-              <td className="px-4 py-2.5 text-right">{row.avgSize.toFixed(0)}</td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.current_rent || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "current_rent", e.target.value)}
+                    className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                  />
+                ) : (
+                  formatCurrency(row.avgCurrentRent)
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.unit_size || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "unit_size", e.target.value)}
+                    className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                  />
+                ) : (
+                  row.avgSize.toFixed(0)
+                )}
+              </td>
               <td className="px-4 py-2.5 text-right">{row.totalSf.toFixed(0)}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerSf, 2)}</td>
               <td className="px-4 py-2.5 text-center">{row.unitCount}</td>

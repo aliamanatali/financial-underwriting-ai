@@ -3,29 +3,69 @@
 import React from "react";
 import { RentRollItem, StudentHousingConfig } from "@/lib/types";
 
+type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
+  id: string;
+  unit_size: string | number;
+  current_rent: string | number;
+  stabilized_rent: string | number;
+  market_rent: string | number;
+  beds_single?: number;
+  beds_double?: number;
+  market_rent_single?: number;
+  market_rent_double?: number;
+  unit_config_label?: string;
+};
+
 interface UnitBreakdownTableProps {
-  rentRoll: RentRollItem[];
+  rentRoll: EditableRentRollItem[];
   studentHousingConfig?: StudentHousingConfig;
+  isEditing?: boolean;
+  onItemChange?: (unitType: string, field: keyof EditableRentRollItem, value: any) => void;
 }
 
-export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingConfig }: UnitBreakdownTableProps) {
+export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingConfig, isEditing, onItemChange }: UnitBreakdownTableProps) {
+  const [localRentRoll, setLocalRentRoll] = React.useState(rentRoll);
+
+  React.useEffect(() => {
+    setLocalRentRoll(rentRoll);
+  }, [rentRoll]);
+
   const formatCurrency = (val: number, decimals = 0) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(val);
   const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 1 }).format(val);
 
-  const data = React.useMemo(() => {
-    if (!rentRoll) return [];
+  const handleNumericChange = (unitType: string, field: keyof EditableRentRollItem, value: string) => {
+    const numericValue = value.replace(/[^0-9.]/g, '');
+    if (onItemChange) {
+      onItemChange(unitType, field, numericValue);
+    }
+  };
+ 
+   const handleLocalChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
+    setLocalRentRoll(prev =>
+      prev.map(item =>
+        item.unit_type === unitType ? { ...item, [field]: value } : item
+      )
+    );
+    if (onItemChange) {
+      onItemChange(unitType, field, value);
+    }
+  };
 
-    const totalUnitsOverall = rentRoll.length;
-    const totalSfOverall = rentRoll.reduce((sum, item) => sum + (item.unit_size || 0), 0);
+   const data = React.useMemo(() => {
+     const sourceData = isEditing ? localRentRoll : rentRoll;
+    if (!sourceData) return [];
+
+    const totalUnitsOverall = sourceData.length;
+    const totalSfOverall = sourceData.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
     
-    const uniqueUnitTypes = Array.from(new Set(rentRoll.map(item => item.unit_type)));
+    const uniqueUnitTypes = Array.from(new Set(sourceData.map(item => item.unit_type)));
 
     return uniqueUnitTypes.map(unitType => {
-      const items = rentRoll.filter(item => item.unit_type === unitType);
+      const items = sourceData.filter(item => item.unit_type === unitType);
       const unitCount = items.length;
-      const avgMarketRent = items.reduce((sum, item) => sum + (item.market_rent || 0), 0) / (unitCount || 1);
-      const avgSize = items.reduce((sum, item) => sum + (item.unit_size || 0), 0) / (unitCount || 1);
+      const avgMarketRent = items.reduce((sum, item) => sum + (parseFloat(String(item.market_rent)) || 0), 0) / (unitCount || 1);
+      const avgSize = items.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0) / (unitCount || 1);
       const totalSf = avgSize * unitCount;
       const rentPerSf = avgMarketRent / (avgSize || 1);
       const mixPercent = unitCount / (totalUnitsOverall || 1);
@@ -107,6 +147,10 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
     const totalSfPercent = data.reduce((sum, row) => sum + row.sfPercent, 0);
     const weightedAvgBeds = data.reduce((sum, row) => sum + row.beds * row.unitCount, 0) / (totalUnits || 1);
     const weightedAvgRentPerBed = weightedAvgRent / (weightedAvgBeds || 1);
+    const totalBedsSingle = data.reduce((sum, row) => sum + (row.beds_s || 0), 0);
+    const totalBedsDouble = data.reduce((sum, row) => sum + (row.beds_d || 0), 0);
+    const totalMarketRentSingle = data.reduce((sum, row) => sum + (row.price_s || 0), 0);
+    const totalMarketRentDouble = data.reduce((sum, row) => sum + (row.price_d || 0), 0);
     
     return {
       totalUnits,
@@ -118,11 +162,15 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
       totalSfPercent,
       weightedAvgBeds,
       weightedAvgRentPerBed,
+      totalBedsSingle,
+      totalBedsDouble,
+      totalMarketRentSingle,
+      totalMarketRentDouble,
     };
   }, [data]);
 
   return (
-    <div className="overflow-x-auto p-4">
+    <div className="overflow-x-auto p-4 horizontal-scrollbar">
       <table className="min-w-full text-left text-sm whitespace-nowrap">
         <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
           <tr>
@@ -147,8 +195,30 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
           {data.map((row, idx) => (
             <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
               <td className="px-4 py-2.5 font-medium">{row.unit_type}</td>
-              <td className="px-4 py-2.5 text-right">{formatCurrency(row.avgMarketRent)}</td>
-              <td className="px-4 py-2.5 text-right">{row.avgSize.toFixed(0)}</td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "market_rent", e.target.value)}
+                    className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                  />
+                ) : (
+                  formatCurrency(row.avgMarketRent)
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.unit_size || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "unit_size", e.target.value)}
+                    className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                  />
+                ) : (
+                  row.avgSize.toFixed(0)
+                )}
+              </td>
               <td className="px-4 py-2.5 text-right">{row.totalSf.toFixed(0)}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerSf, 2)}</td>
               <td className="px-4 py-2.5 text-center">{row.unitCount}</td>
@@ -156,11 +226,41 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
               <td className="px-4 py-2.5 text-center">{formatPercent(row.sfPercent)}</td>
               <td className="px-4 py-2.5 text-center">{row.beds}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerBed)}</td>
-              <td className="px-4 py-2.5 text-center">{row.beds_s > 0 ? row.beds_s : "-"}</td>
-              <td className="px-4 py-2.5 text-center">{row.beds_d > 0 ? row.beds_d : "-"}</td>
-              <td className="px-4 py-2.5 text-right">{row.price_s > 0 ? formatCurrency(row.price_s) : (row.beds_s > 0 ? formatCurrency(row.rentPerBed) : "-")}</td>
-              <td className="px-4 py-2.5 text-right">{row.price_d > 0 ? formatCurrency(row.price_d) : (row.beds_d > 0 ? formatCurrency(row.rentPerBed) : "-")}</td>
-              <td className="px-4 py-2.5 text-center">{row.config_str}</td>
+              <td className="px-4 py-2.5 text-center">
+                {isEditing && onItemChange ? (
+                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_single || ''} onChange={(e) => handleLocalChange(row.unit_type, "beds_single" as any, e.target.value)} className="w-16 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                ) : (
+                  row.beds_s > 0 ? row.beds_s : "-"
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-center">
+                {isEditing && onItemChange ? (
+                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_double || ''} onChange={(e) => handleLocalChange(row.unit_type, "beds_double" as any, e.target.value)} className="w-16 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                ) : (
+                  row.beds_d > 0 ? row.beds_d : "-"
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_single || ''} onChange={(e) => handleLocalChange(row.unit_type, "market_rent_single" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                ) : (
+                  row.price_s > 0 ? formatCurrency(row.price_s) : (row.beds_s > 0 ? formatCurrency(row.rentPerBed) : "-")
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-right">
+                {isEditing && onItemChange ? (
+                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_double || ''} onChange={(e) => handleLocalChange(row.unit_type, "market_rent_double" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                ) : (
+                  row.price_d > 0 ? formatCurrency(row.price_d) : (row.beds_d > 0 ? formatCurrency(row.rentPerBed) : "-")
+                )}
+              </td>
+              <td className="px-4 py-2.5 text-center">
+                {isEditing && onItemChange ? (
+                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.unit_config_label || ''} onChange={(e) => handleLocalChange(row.unit_type, "unit_config_label" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                ) : (
+                  row.config_str
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -176,10 +276,10 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                 <td className="px-4 py-3 text-center">{formatPercent(totals.totalSfPercent)}</td>
                 <td className="px-4 py-3 text-center">{totals.weightedAvgBeds.toFixed(1)}</td>
                 <td className="px-4 py-3 text-right">{formatCurrency(totals.weightedAvgRentPerBed)}</td>
-                <td className="px-4 py-3 text-center">-</td>
-                <td className="px-4 py-3 text-center">-</td>
-                <td className="px-4 py-3 text-right">-</td>
-                <td className="px-4 py-3 text-right">-</td>
+                <td className="px-4 py-3 text-center">{totals.totalBedsSingle}</td>
+                <td className="px-4 py-3 text-center">{totals.totalBedsDouble}</td>
+                <td className="px-4 py-3 text-right">{formatCurrency(totals.totalMarketRentSingle)}</td>
+                <td className="px-4 py-3 text-right">{formatCurrency(totals.totalMarketRentDouble)}</td>
                 <td className="px-4 py-3 text-center">-</td>
             </tr>
         </tfoot>
