@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { RentRollItem, RentRollSummary, UnderwritingAnalysis, StudentHousingConfig } from "@/lib/types";
 import { apiClient } from "@/lib/api";
 import WarningModal from "./WarningModal";
+import UnitBreakdownTable from "./UnitBreakdownTable";
+import UnitBreakdownStabilizedTable from "./UnitBreakdownStabilizedTable";
 import {
   DndContext,
   closestCenter,
@@ -41,6 +43,11 @@ interface RentRollWidgetProps {
 }
 
 // Helpers for date input conversion (YYYY-MM-DD <-> MM/DD/YYYY)
+/**
+ * Converts a date string from MM/DD/YYYY format to YYYY-MM-DD format for date inputs.
+ * @param {string | undefined | null} displayDate - The date string to convert.
+ * @returns {string} The formatted date string or an empty string if invalid.
+ */
 const toInputDate = (displayDate: string | undefined | null) => {
   if (!displayDate) return "";
   
@@ -67,6 +74,11 @@ const toInputDate = (displayDate: string | undefined | null) => {
   return "";
 };
 
+/**
+ * Converts a date string from YYYY-MM-DD format to MM/DD/YYYY format for display.
+ * @param {string} inputDate - The date string to convert.
+ * @returns {string} The formatted date string.
+ */
 const fromInputDate = (inputDate: string) => {
   if (!inputDate) return "";
   const parts = inputDate.split('-');
@@ -77,6 +89,40 @@ const fromInputDate = (inputDate: string) => {
   return inputDate;
 };
 
+function getBedCountFromUnitType(unit_type: string): number {
+  if (!unit_type) return 1;
+
+  // Heuristic 1: Bed/Bath format "0/1.00", "2/1"
+  const match_slash = unit_type.match(/^(\d+)\s*\//);
+  if (match_slash) {
+    const val = parseInt(match_slash[1], 10);
+    return val > 0 ? val : 1; // Treat 0 beds (Studio) as 1 bed
+  }
+
+  // Heuristic 2: "2bd", "2 br"
+  const match_bd = unit_type.toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
+  if (match_bd) {
+    return parseInt(match_bd[1], 10);
+  }
+
+  if (unit_type.toLowerCase().includes("studio")) {
+    return 1;
+  }
+
+  // Fallback: Look for first digit
+  const match = unit_type.match(/\d+/);
+  if (match) {
+    return parseInt(match[0], 10);
+  }
+
+  return 1;
+}
+
+/**
+ * A component that displays and allows editing of a rent roll, with different views and export functionalities.
+ * @param {RentRollWidgetProps} props - The props for the component.
+ * @returns {JSX.Element} The rendered RentRollWidget component.
+ */
 export default function RentRollWidget({
   rentRoll,
   summary,
@@ -86,6 +132,7 @@ export default function RentRollWidget({
   onOpenConfig,
 }: RentRollWidgetProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   // Initialize with IDs
   const [items, setItems] = useState<EditableRentRollItem[]>(
     rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` }))
@@ -424,219 +471,327 @@ export default function RentRollWidget({
       />
 
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
-      <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
-        <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="3" y1="9" x2="21" y2="9"></line>
-            <line x1="9" y1="21" x2="9" y2="9"></line>
-          </svg>
-          Rent Roll Detail
-        </h3>
-        {!isEditing ? (
-          <div className="flex gap-2">
-            <button
-              onClick={handleExport}
-              disabled={isExporting}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
-            >
-              {isExporting ? (
-                <span>Exporting...</span>
-              ) : (
+        <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
+          <div className="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
+            <div className="flex items-center border border-neutral-200 rounded-lg p-0.5 bg-white shadow-inner">
+              <button
+                onClick={() => setActiveTab("details")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "details" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+              >
+                Rent Roll Details
+              </button>
+              <button
+                onClick={() => setActiveTab("omExport")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "omExport" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+              >
+                OM Export View
+             </button>
+             <button
+               onClick={() => setActiveTab("unitBreakdown")}
+               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdown" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+             >
+               Unit Breakdown
+             </button>
+             <button
+               onClick={() => setActiveTab("unitBreakdownStabilized")}
+               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdownStabilized" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+             >
+               Unit Breakdown Stabilized
+             </button>
+           </div>
+          </div>
+          {!isEditing ? (
+            <div className="flex gap-2">
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
+              >
+                {isExporting ? (
+                  <span>Exporting...</span>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                      <polyline points="7 10 12 15 17 10"></polyline>
+                      <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Download Rent Roll
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleEdit}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                Edit Rent Roll
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              {activeTab === 'details' && (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                  </svg>
-                  Download Rent Roll
+                  <button
+                    onClick={addItem}
+                    className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+                  >
+                    + Add Unit
+                  </button>
+                  <button
+                    onClick={handleCancel}
+                    className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="text-xs font-medium bg-neutral-900 text-white px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isSaving ? "Saving..." : "Save Changes"}
+                  </button>
                 </>
               )}
-            </button>
-            <button
-              onClick={handleEdit}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
-              Edit Rent Roll
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-             <button
-              onClick={addItem}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
-            >
-              + Add Unit
-            </button>
-            <button
-              onClick={handleCancel}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="text-xs font-medium bg-neutral-900 text-white px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {isSaving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
 
-      <div className="overflow-x-auto">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
-                <th className="px-4 py-3">Unit #</th>
-                <th className="px-4 py-3 text-right">Unit Size</th>
-                <th className="px-4 py-3">Unit Type</th>
-                <th className="px-4 py-3 text-right">Current Rent</th>
-                <th className="px-4 py-3 text-right">Stabilized Rent</th>
-                <th className="px-4 py-3 text-right">Market Rent</th>
-                <th className="px-4 py-3 text-center">Move-In Date</th>
-                <th className="px-4 py-3 text-center">Lease Start</th>
-                <th className="px-4 py-3 text-center">Lease End</th>
-                {isEditing && <th className="px-4 py-3 text-center">Action</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              <SortableContext
-                items={items.map((item) => item.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {items.map((item, idx) => (
-                  <SortableRow
-                    key={item.id}
-                    item={item}
-                    idx={idx}
-                    isEditing={isEditing}
-                    errors={rowErrors[item.id]}
-                    handleItemChange={handleItemChange}
-                    formatCurrency={formatCurrency}
-                    removeItem={removeItem}
-                  />
-                ))}
-              </SortableContext>
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
-                    No rent roll data available.
-                  </td>
+        {activeTab === 'details' && (
+           <div className="overflow-x-auto">
+           <DndContext
+             sensors={sensors}
+             collisionDetection={closestCenter}
+             onDragEnd={handleDragEnd}
+           >
+             <table className="w-full text-left text-sm">
+               <thead>
+                 <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
+                   <th className="px-4 py-3">Unit #</th>
+                   <th className="px-4 py-3 text-right">Unit Size</th>
+                   <th className="px-4 py-3">Unit Type</th>
+                   <th className="px-4 py-3 text-right">Current Rent</th>
+                   <th className="px-4 py-3 text-right">Stabilized Rent</th>
+                   <th className="px-4 py-3 text-right">Market Rent</th>
+                   <th className="px-4 py-3 text-center">Move-In Date</th>
+                   <th className="px-4 py-3 text-center">Lease Start</th>
+                   <th className="px-4 py-3 text-center">Lease End</th>
+                   {isEditing && <th className="px-4 py-3 text-center">Action</th>}
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-neutral-100">
+                 <SortableContext
+                   items={items.map((item) => item.id)}
+                   strategy={verticalListSortingStrategy}
+                 >
+                   {items.map((item, idx) => (
+                     <SortableRow
+                       key={item.id}
+                       item={item}
+                       idx={idx}
+                       isEditing={isEditing}
+                       errors={rowErrors[item.id]}
+                       handleItemChange={handleItemChange}
+                       formatCurrency={formatCurrency}
+                       removeItem={removeItem}
+                     />
+                   ))}
+                 </SortableContext>
+                 {items.length === 0 && (
+                   <tr>
+                     <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
+                       No rent roll data available.
+                     </td>
+                   </tr>
+                 )}
+               </tbody>
+               <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
+                {/* Header Row */}
+                <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
+                  <td className="px-4 py-3 text-center">Total Units</td>
+                  <td className="px-4 py-3 text-right">Avg Unit Size</td>
+                  <td className="px-4 py-3"></td>
+                  <td className="px-4 py-3 text-right">Current Rent</td>
+                  <td className="px-4 py-3 text-right">Stabilized Rent</td>
+                  <td className="px-4 py-3 text-right">Market Rent</td>
+                  <td colSpan={isEditing ? 4 : 3}></td>
                 </tr>
-              )}
-            </tbody>
-            <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
-             {/* Header Row */}
-             <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
-               <td className="px-4 py-3 text-center">Total Units</td>
-               <td className="px-4 py-3 text-right">Avg Unit Size</td>
-               <td className="px-4 py-3"></td>
-               <td className="px-4 py-3 text-right">Current Rent</td>
-               <td className="px-4 py-3 text-right">Stabilized Rent</td>
-               <td className="px-4 py-3 text-right">Market Rent</td>
-               <td colSpan={isEditing ? 4 : 3}></td>
-             </tr>
-             {/* Data Row */}
-             <tr className="border-b border-neutral-800/50 align-top">
-               <td className="px-4 py-3 text-center">
-                 <div className="font-bold text-lg">{displaySummary.total_units}</div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
-               </td>
-               <td className="px-4 py-3"></td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_market_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td colSpan={isEditing ? 4 : 3}></td>
-             </tr>
-          </tfoot>
-          </table>
-        </DndContext>
-      </div>
-     </div>
-
-      {/* Rent Roll Summary Table */}
-      <div className="mt-8">
-        <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
-          <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
-            <h3 className="text-white font-medium">Rent Roll Summary</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
-                  <th className="px-6 py-3">Unit Mix</th>
-                  <th className="px-6 py-3 text-center">Unit Count</th>
-                  <th className="px-6 py-3 text-center">%</th>
-                  <th className="px-6 py-3 text-right">Avg. Current Rent</th>
-                  <th className="px-6 py-3 text-right">Stabilized Rent</th>
-                  <th className="px-6 py-3 text-right">Market Rent</th>
-                  <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+                {/* Data Row */}
+                <tr className="border-b border-neutral-800/50 align-top">
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-lg">{displaySummary.total_units}</div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
+                  </td>
+                  <td className="px-4 py-3"></td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_market_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td colSpan={isEditing ? 4 : 3}></td>
+                </tr>
+             </tfoot>
+             </table>
+           </DndContext>
+         </div>
+        )}
+        {activeTab === 'omExport' && (
+          <div className="overflow-x-auto horizontal-scrollbar">
+            <table className="min-w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
+                <tr>
+                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
+                  <th colSpan={6} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
+                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
+                  <th colSpan={3} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Pro Forma Rents</th>
+                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Pro Forma Rent Comparison</th>
+                  <th colSpan={6} className="px-4 py-2 text-center border-b border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
+                </tr>
+                <tr className="tracking-wider">
+                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10">Count</th>
+                  <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10">Unit</th>
+                  <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10">Occupancy Type</th>
+                  <th className="px-4 py-3 border-r">Units</th>
+                  <th className="px-4 py-3 border-r">Beds</th>
+                  <th className="px-4 py-3 border-r">Size</th>
+                  <th className="px-4 py-3 border-r">$/Month</th>
+                  <th className="px-4 py-3 border-r">$/SF</th>
+                  <th className="px-4 py-3 border-r">Units</th>
+                  <th className="px-4 py-3 border-r">$/Month</th>
+                  <th className="px-4 py-3 border-r">$/SqFt</th>
+                  <th className="px-4 py-3 border-r">$ Increase</th>
+                  <th className="px-4 py-3 border-r">% Increase</th>
+                  <th className="px-4 py-3 border-r">Pro Forma Unit Type</th>
+                  <th className="px-4 py-3 border-r">Unit Config</th>
+                  <th className="px-4 py-3 border-r">Beds</th>
+                  <th className="px-4 py-3 border-r">RC</th>
+                  <th className="px-4 py-3 border-r">Start Date</th>
+                  <th className="px-4 py-3">End Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {summaryGroups.map((group, idx) => (
-                  <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
-                    <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
-                    <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
-                    <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
-                  </tr>
-                ))}
-                {/* Totals Row */}
-                <tr className="border-t-2 border-neutral-900 font-bold bg-white">
-                  <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
-                  <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
-                  <td className="px-6 py-4 text-center text-neutral-900">100%</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">
-                    {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
-                  </td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
-                </tr>
+                {items.map((item, idx) => {
+                  const config = studentHousingConfig?.unit_type_configs.find(c => c.unit_type === item.unit_type);
+                  // Prioritize bed_count from the item, fall back to config, then to 1.
+                  const bedCount = (item as any).bed_count || config?.bed_count || getBedCountFromUnitType(item.unit_type);
+                  return (
+                    <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-4 py-2.5 text-center sticky left-0 bg-white group-hover:bg-neutral-50/50">{idx + 1}</td>
+                      <td className="px-4 py-2.5 sticky left-[3rem] bg-white group-hover:bg-neutral-50/50">{item.unit_number}</td>
+                      <td className="px-4 py-2.5 sticky left-[7rem] bg-white group-hover:bg-neutral-50/50">{item.unit_type}</td>
+                      <td className="px-4 py-2.5 text-center">1</td>
+                      <td className="px-4 py-2.5 text-center">{bedCount}</td>
+                      <td className="px-4 py-2.5 text-right">{item.unit_size}</td>
+                      <td className="px-4 py-2.5 text-right">{formatCurrency(Number(item.current_rent))}</td>
+                      <td className="px-4 py-2.5 text-right">${(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-center">1</td>
+                      <td className="px-4 py-2.5 text-right">{formatCurrency(Number(item.market_rent))}</td>
+                      <td className="px-4 py-2.5 text-right">${(Number(item.market_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-right">{formatCurrency(Number(item.market_rent) - Number(item.current_rent))}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {Number(item.current_rent) > 0 ? `${(((Number(item.market_rent) - Number(item.current_rent)) / Number(item.current_rent)) * 100).toFixed(0)}%` : "0%"}
+                      </td>
+                      <td className="px-4 py-2.5">{item.unit_type}</td>
+                      <td className="px-4 py-2.5">{config?.unit_config_label || item.unit_type}</td>
+                      <td className="px-4 py-2.5 text-center">{bedCount}</td>
+                      <td className="px-4 py-2.5 text-center">{item.unit_type?.toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
+                      <td className="px-4 py-2.5">{item.lease_start}</td>
+                      <td className="px-4 py-2.5">{item.lease_end}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </div>
+        )}
+       {activeTab === 'unitBreakdown' && (
+          <UnitBreakdownTable rentRoll={rentRoll} studentHousingConfig={studentHousingConfig} />
+       )}
+       {activeTab === 'unitBreakdownStabilized' && (
+         <UnitBreakdownStabilizedTable rentRoll={rentRoll} studentHousingConfig={studentHousingConfig} />
+       )}
       </div>
+
+      {/* Rent Roll Summary Table */}
+      {activeTab === 'details' && (
+        <div className="mt-8">
+          <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+            <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
+              <h3 className="text-white font-medium">Rent Roll Summary</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
+                    <th className="px-6 py-3">Unit Mix</th>
+                    <th className="px-6 py-3 text-center">Unit Count</th>
+                    <th className="px-6 py-3 text-center">%</th>
+                    <th className="px-6 py-3 text-right">Avg. Current Rent</th>
+                    <th className="px-6 py-3 text-right">Stabilized Rent</th>
+                    <th className="px-6 py-3 text-right">Market Rent</th>
+                    <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {summaryGroups.map((group, idx) => (
+                    <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
+                    </tr>
+                  ))}
+                  {/* Totals Row */}
+                  <tr className="border-t-2 border-neutral-900 font-bold bg-white">
+                    <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">100%</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">
+                      {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
+                    </td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
