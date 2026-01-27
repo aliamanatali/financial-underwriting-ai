@@ -138,11 +138,14 @@ export default function SourceDocumentViewer({
     const topPct = ymin * 100;
     const leftPct = xmin * 100;
 
+    // Add a small padding to ensure the text is fully covered (robustness improvement)
+    const padding = 0.5; // 0.5% padding
+
     return {
-      top: `${topPct}%`,
-      left: `${leftPct}%`,
-      width: `${widthPct}%`,
-      height: `${heightPct}%`,
+      top: `${Math.max(0, topPct - padding)}%`,
+      left: `${Math.max(0, leftPct - padding)}%`,
+      width: `${Math.min(100, widthPct + (padding * 2))}%`,
+      height: `${Math.min(100, heightPct + (padding * 2))}%`,
     };
   };
 

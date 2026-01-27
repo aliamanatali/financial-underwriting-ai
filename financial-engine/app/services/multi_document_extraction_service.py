@@ -308,7 +308,7 @@ class MultiDocumentExtractionService:
                         "period": "annual" or "monthly" or "one-time",
                         "type": "revenue", // or "expense", "property_info", "capex"
                         "page_number": 1, // Integer, 1-based page number
-                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000. Ensure the box fully encompasses the text value with a small margin.
                     }
                 ]
                 
