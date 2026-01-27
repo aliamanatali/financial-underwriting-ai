@@ -1382,4 +1382,43 @@ async def delete_deal_package(package_id: str):
     for doc_id in file_ids_to_remove:
         del file_storage_cache[doc_id]
     
-    return {"message": f"Deal package {package_id} deleted successfully"}
+@router.get("/packages/{package_id}/documents/{document_id}/content")
+async def get_package_document_content(package_id: str, document_id: str):
+    """
+    Get the raw content of a document within a package.
+    """
+    # Check cache first
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+        deal_packages_cache[package_id] = package
+
+    # Find document metadata
+    target_doc = None
+    for doc_list in package.documents.values():
+        for doc in doc_list:
+            if doc.document_id == document_id:
+                target_doc = doc
+                break
+        if target_doc:
+            break
+            
+    if not target_doc:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
+
+    # Generate a signed URL for the document
+    try:
+        extension = Path(target_doc.filename).suffix
+        storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
+        signed_url = await storage_service.get_signed_url(storage_path)
+        if not signed_url:
+            raise HTTPException(status_code=404, detail="Could not generate download link.")
+        
+        return {"signed_url": signed_url}
+    except Exception as e:
+        logger.error(f"Error generating signed URL for {storage_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve document URL.")

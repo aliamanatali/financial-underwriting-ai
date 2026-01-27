@@ -297,6 +297,8 @@ class MultiDocumentExtractionService:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable.
                 3. The item type: "revenue", "expense", "property_info", "capex".
+                4. The page number where this item is found.
+                5. The bounding box of the area containing this item (text + value).
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -304,7 +306,9 @@ class MultiDocumentExtractionService:
                         "raw_text": "Exact description",
                         "amount": 12345.67, // or null
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue" // or "expense", "property_info", "capex"
+                        "type": "revenue", // or "expense", "property_info", "capex"
+                        "page_number": 1, // Integer, 1-based page number
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
                     }
                 ]
                 
@@ -857,7 +861,9 @@ class MultiDocumentExtractionService:
                                 "reasoning": normalization.get("reasoning", ""),
                                 "row_count": expense.get("row_count"),
                                 "categories_found": expense.get("categories_found"),
-                                "original_type": item_type
+                                "original_type": item_type,
+                                "page_number": expense.get("page_number"),
+                                "bbox": expense.get("bbox")
                             }
                         )
                         normalized_items.append(item)

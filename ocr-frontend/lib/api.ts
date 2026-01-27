@@ -154,6 +154,11 @@ class ApiClient {
     // No content expected on successful deletion
   }
 
+  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{ signed_url: string }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/content`);
+    return this.handleResponse<{ signed_url: string }>(response);
+  }
+
   // --- Financial Engine Methods ---
 
   async startAnalysis(documentId: string, params: DealParameters): Promise<UnderwritingAnalysis> {

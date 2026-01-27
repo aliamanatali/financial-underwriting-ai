@@ -31,10 +31,14 @@ async def export_excel(
     pro_forma_entries = excel_service.generate_side_by_side_view(analysis_data)
     excel_data = await excel_service.create_side_by_side_excel(pro_forma_entries, analysis_data)
 
+    filename = "financial_analysis.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
     return StreamingResponse(
         iter([excel_data]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=financial_analysis.xlsx"}
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 @router.post("/export/om-proforma")
@@ -47,10 +51,14 @@ async def export_om_proforma(
     """
     excel_data = await excel_service.create_om_proforma_excel(analysis_data)
 
+    filename = "om_proforma.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
     return StreamingResponse(
         iter([excel_data]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=om_proforma.xlsx"}
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 @router.post("/export/rent-roll")
@@ -67,10 +75,14 @@ async def export_rent_roll(
             print(f"DEBUG Config Item: {c.unit_type} -> {c.occupancy_type} / {c.unit_config_label}")
     excel_data = await excel_service.create_rent_roll_excel(analysis_data)
 
+    filename = "rent_roll_detail.xlsx"
+    encoded_filename = urllib.parse.quote(filename)
     return StreamingResponse(
         iter([excel_data]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=rent_roll_detail.xlsx"}
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 @router.post("/export/memo")
@@ -97,10 +109,14 @@ async def export_memo(
         memo_content = memo_service.generate_investment_memo(analysis_data)
     
     # Return as markdown text with proper encoding
+    filename = "investment_memo.md"
+    encoded_filename = urllib.parse.quote(filename)
     return Response(
         content=memo_content,
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": "attachment; filename=investment_memo.md"}
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
+        }
     )
 
 @router.post("/export/audit-trail")

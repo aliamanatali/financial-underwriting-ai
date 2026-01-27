@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
+import DataVerificationTable from "@/components/DataVerificationTable";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
 const AVAILABLE_CATEGORIES = [
@@ -381,6 +382,9 @@ export default function VerificationPage() {
   const totalCount = normalizedItems.length;
   const verificationPercentage = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
 
+  // Pass the full documents object to the verification table
+  const documents = dealPackage?.documents ?? {};
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -603,130 +607,16 @@ export default function VerificationPage() {
               </div>
             ) : (
               // Data Tables by Section
-              <>
-                {Object.entries(groupedItems).map(([section, items]) => (
-                  <section key={section}>
-                    <div className="flex items-center gap-3 mb-4">
-                      <h3 className="text-lg font-semibold text-neutral-900 tracking-tight">{section}</h3>
-                      <span className="px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-500 text-xs font-medium">
-                        {items.length} items
-                      </span>
-                    </div>
-                    <div className="bg-white border border-neutral-200 rounded-xl shadow-sm overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full">
-                          <thead className="bg-neutral-50/50">
-                            <tr>
-                              <th className="w-[200px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
-                                Source Document
-                              </th>
-                              <th className="min-w-[240px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
-                                Raw Text
-                              </th>
-                              <th className="w-[180px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
-                                Mapped Category
-                              </th>
-                              <th className="w-[120px] font-medium text-xs text-neutral-500 px-4 py-3 text-left border-b border-neutral-200 whitespace-nowrap">
-                                Confidence
-                              </th>
-                              <th className="w-[140px] font-medium text-xs text-neutral-500 px-4 py-3 text-right border-b border-neutral-200 whitespace-nowrap">
-                                Actions
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {items.map((item, idx) => (
-                              <tr
-                                key={item.id}
-                                className={`${item.user_verified ? 'bg-green-50/30' : ''} hover:bg-neutral-50 transition-colors`}
-                              >
-                                <td className="px-4 py-3 text-xs text-neutral-500 border-b border-neutral-100">
-                                  {item.source_document || "Unknown"}
-                                </td>
-                                <td className="px-4 py-3 text-xs font-mono border-b border-neutral-100">
-                                  {item.raw_text}
-                                </td>
-                                <td className="px-4 py-3 border-b border-neutral-100">
-                                  {editingItem === item.id ? (
-                                    <select
-                                      value={editCategory}
-                                      onChange={(e) => setEditCategory(e.target.value)}
-                                      className="w-full text-xs px-2 py-1 border border-neutral-300 rounded-md"
-                                    >
-                                      {AVAILABLE_CATEGORIES.map(cat => (
-                                        <option key={cat} value={cat}>{cat}</option>
-                                      ))}
-                                    </select>
-                                  ) : (
-                                    <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${
-                                      item.normalized_value === "Uncategorized"
-                                        ? "bg-red-50 text-red-700 border-red-100"
-                                        : "bg-neutral-100 text-neutral-700 border-neutral-200"
-                                    }`}>
-                                      {item.user_correction || item.normalized_value || "Uncategorized"}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-3 border-b border-neutral-100">
-                                  <div className="flex items-center gap-2">
-                                    <div className={`w-2 h-2 rounded-full ${getConfidenceColor(item.confidence || 0)}`}></div>
-                                    <span className={`text-xs font-medium ${getConfidenceTextColor(item.confidence || 0)}`}>
-                                      {formatConfidence(item.confidence || 0)}%
-                                    </span>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-right border-b border-neutral-100">
-                                  {editingItem === item.id ? (
-                                    <div className="flex items-center justify-end gap-2">
-                                      <button 
-                                        onClick={() => setEditingItem(null)}
-                                        className="text-neutral-400 hover:text-neutral-900 text-xs font-medium transition-colors"
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button 
-                                        onClick={() => handleSaveEdit(item.id)}
-                                        className="text-neutral-900 hover:text-neutral-600 text-xs font-medium transition-colors"
-                                      >
-                                        Save
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center justify-end gap-2">
-                                      {item.user_verified && (
-                                        <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium text-green-700 bg-green-50 border border-green-100 mr-2">
-                                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M20 6 9 17l-5-5"></path>
-                                          </svg>
-                                          Verified
-                                        </span>
-                                      )}
-                                      <button
-                                        onClick={() => handleEditItem(item.id, item.user_correction || item.normalized_value || "")}
-                                        className="text-neutral-400 hover:text-neutral-900 text-xs font-medium transition-colors"
-                                      >
-                                        Edit
-                                      </button>
-                                      {!item.user_verified && (
-                                        <button
-                                          onClick={() => handleVerifyItem(item.id)}
-                                          className="text-neutral-900 hover:text-neutral-600 text-xs font-medium transition-colors"
-                                        >
-                                          Verify
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </section>
-                ))}
-              </>
+              <div className="space-y-8">
+                <DataVerificationTable
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES}
+                  documents={documents}
+                  packageId={packageId}
+                  onVerify={handleVerifyItem}
+                  onVerifyAll={handleVerifyAll}
+                />
+              </div>
             )}
           </div>
 
