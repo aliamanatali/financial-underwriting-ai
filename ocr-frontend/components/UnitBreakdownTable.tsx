@@ -197,28 +197,10 @@ export default function UnitBreakdownTable({ rentRoll, studentHousingConfig, isE
             <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
               <td className="px-4 py-2.5 font-medium">{row.unit_type}</td>
               <td className="px-4 py-2.5 text-right">
-                {isEditing && onItemChange ? (
-                  <input
-                    type="text"
-                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.current_rent || ''}
-                    onChange={(e) => handleLocalChange(row.unit_type, "current_rent", e.target.value)}
-                    className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                  />
-                ) : (
-                  formatCurrency(row.avgCurrentRent)
-                )}
+                {formatCurrency(row.avgCurrentRent)}
               </td>
               <td className="px-4 py-2.5 text-right">
-                {isEditing && onItemChange ? (
-                  <input
-                    type="text"
-                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.unit_size || ''}
-                    onChange={(e) => handleLocalChange(row.unit_type, "unit_size", e.target.value)}
-                    className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                  />
-                ) : (
-                  row.avgSize.toFixed(0)
-                )}
+                {row.avgSize.toFixed(0)}
               </td>
               <td className="px-4 py-2.5 text-right">{row.totalSf.toFixed(0)}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerSf, 2)}</td>

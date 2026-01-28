@@ -33,7 +33,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
   React.useEffect(() => {
     if (isEditing && studentHousingConfig) {
         setLocalRentRoll(prev => prev.map(item => {
-            const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type === item.unit_type);
+            const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type?.trim().toLowerCase() === item.unit_type?.trim().toLowerCase());
             if (config) {
                 // Determine default bed count if not set
                 let defaultBeds = 1;
@@ -189,7 +189,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
       // Otherwise fall back to config
       const sampleItem = items[0]; // All items in this group should have same type-level config
       
-      const conf_obj = studentHousingConfig?.unit_type_configs.find(c => c.unit_type === unitType);
+      const conf_obj = studentHousingConfig?.unit_type_configs.find(c => c.unit_type?.trim().toLowerCase() === unitType?.trim().toLowerCase());
       
       const occupancy = sampleItem?.occupancy_type || conf_obj?.occupancy_type || "Single";
       const label = sampleItem?.unit_config_label || conf_obj?.unit_config_label || "Single";
@@ -353,16 +353,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                 )}
               </td>
               <td className="px-4 py-2.5 text-right">
-                {isEditing && onItemChange ? (
-                  <input
-                    type="text"
-                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.unit_size || ''}
-                    onChange={(e) => handleLocalChange(row.unit_type, "unit_size", e.target.value)}
-                    className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
-                  />
-                ) : (
-                  row.avgSize.toFixed(0)
-                )}
+                {row.avgSize.toFixed(0)}
               </td>
               <td className="px-4 py-2.5 text-right">{row.totalSf.toFixed(0)}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerSf, 2)}</td>
@@ -404,8 +395,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_single || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "beds_single" as any, parseInt(e.target.value) || 0)}
-                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double"}
-                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double"}
+                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.beds_s > 0 ? row.beds_s : "-"
@@ -417,8 +408,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_double || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "beds_double" as any, parseInt(e.target.value) || 0)}
-                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single"}
-                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single"}
+                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.beds_d > 0 ? row.beds_d : "-"
@@ -430,8 +421,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_single || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "market_rent_single" as any, parseFloat(e.target.value) || 0)}
-                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double"}
-                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double"}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.price_s > 0 ? formatCurrency(row.price_s) : (row.beds_s > 0 ? formatCurrency(row.rentPerBed) : "-")
@@ -443,8 +434,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_double || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "market_rent_double" as any, parseFloat(e.target.value) || 0)}
-                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single"}
-                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single"}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.price_d > 0 ? formatCurrency(row.price_d) : (row.beds_d > 0 ? formatCurrency(row.rentPerBed) : "-")
@@ -472,6 +463,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                 <td className="px-4 py-3 text-center">{formatPercent(totals.totalSfPercent)}</td>
                 <td className="px-4 py-3 text-center">{totals.weightedAvgBeds.toFixed(1)}</td>
                 <td className="px-4 py-3 text-right">{formatCurrency(totals.weightedAvgRentPerBed)}</td>
+                <td className="px-4 py-3 text-center">-</td>
+                <td className="px-4 py-3 text-center">-</td>
                 <td className="px-4 py-3 text-center">{totals.totalBedsSingle}</td>
                 <td className="px-4 py-3 text-center">{totals.totalBedsDouble}</td>
                 <td className="px-4 py-3 text-right">{formatCurrency(totals.totalMarketRentSingle)}</td>

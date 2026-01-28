@@ -1226,6 +1226,8 @@ class ExcelService:
             "SF %",
             "Beds",
             "$/Beds",
+            "Bed Count",
+            "Occupancy Type",
             "Single",
             "Double",
             "Single $",
@@ -1233,8 +1235,8 @@ class ExcelService:
             "Unit Config"
         ]
         
-        # Map: AL -> AZ
-        stab_cols = ["AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV", "AW", "AX", "AY", "AZ"]
+        # Map: AL -> BB
+        stab_cols = ["AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV", "AW", "AX", "AY", "AZ", "BA", "BB"]
         
         for col, title in zip(stab_cols, stab_headers):
             c = sheet[f"{col}2"]
@@ -1347,37 +1349,47 @@ class ExcelService:
 
             # 2. Write Columns
             
-            # AV: Single Count
-            if beds_s > 0:
-                set_stab("AV", beds_s, "0", align='center')
+            # AV: Bed Count
+            bed_count_val = conf_obj.bed_count if conf_obj else 0
+            if bed_count_val > 0:
+                set_stab("AV", bed_count_val, "0", align='center')
             else:
                 set_stab("AV", "-", align='center')
-                
-            # AW: Double Count
-            if beds_d > 0:
-                set_stab("AW", beds_d, "0", align='center')
-            else:
-                set_stab("AW", "-", align='center')
-                
-            # AX: Single $
-            if price_s > 0:
-                set_stab("AX", price_s, currency_fmt)
-            elif beds_s > 0:
-                # Fallback: Use Average $/Bed (AU)
-                set_stab("AX", f"=AU{stab_row}", currency_fmt)
+
+            # AW: Occupancy Type
+            set_stab("AW", occupancy, align='center')
+
+            # AX: Single Count
+            if beds_s > 0:
+                set_stab("AX", beds_s, "0", align='center')
             else:
                 set_stab("AX", "-", align='center')
                 
-            # AY: Double $
+            # AY: Double Count
+            if beds_d > 0:
+                set_stab("AY", beds_d, "0", align='center')
+            else:
+                set_stab("AY", "-", align='center')
+                
+            # AZ: Single $
+            if price_s > 0:
+                set_stab("AZ", price_s, currency_fmt)
+            elif beds_s > 0:
+                # Fallback: Use Average $/Bed (AU)
+                set_stab("AZ", f"=AU{stab_row}", currency_fmt)
+            else:
+                set_stab("AZ", "-", align='center')
+                
+            # BA: Double $
             if price_d > 0:
-                 set_stab("AY", price_d, currency_fmt)
+                 set_stab("BA", price_d, currency_fmt)
             elif beds_d > 0:
                  # Fallback: Use Average $/Bed (AU)
-                 set_stab("AY", f"=AU{stab_row}", currency_fmt)
+                 set_stab("BA", f"=AU{stab_row}", currency_fmt)
             else:
-                 set_stab("AY", "-", align='center')
+                 set_stab("BA", "-", align='center')
                  
-            # AZ: Unit Config Text
+            # BB: Unit Config Text
             # Construct string: "X Single, Y Double" or just "X Single"
             parts = []
             if beds_s > 0: parts.append(f"{beds_s} Single")
@@ -1388,7 +1400,7 @@ class ExcelService:
                  # Fallback to old label logic if nothing
                  config_str = f"{conf_obj.bed_count if conf_obj else 0} {label}"
                  
-            set_stab("AZ", config_str, align='center')
+            set_stab("BB", config_str, align='center')
             
             stab_row += 1
 
@@ -1435,20 +1447,26 @@ class ExcelService:
         # AU: $/Beds (Avg)
         set_stab_total("AU", f"=IFERROR(AM{stab_row}/AT{stab_row},0)", currency_fmt)
         
-        # AV: Single Total (Avg)
-        set_stab_total("AV", f"=AT{stab_row}", "0.0", align='center')
-        
-        # AW: Double Total
+        # AV: Bed Count
+        set_stab_total("AV", "-", align='center')
+
+        # AW: Occupancy Type
         set_stab_total("AW", "-", align='center')
+
+        # AX: Single Total (Avg)
+        set_stab_total("AX", f"=AT{stab_row}", "0.0", align='center')
         
-        # AX: Single $ (Avg)
-        set_stab_total("AX", f"=AU{stab_row}", currency_fmt)
-        
-        # AY: Double $
+        # AY: Double Total
         set_stab_total("AY", "-", align='center')
         
-        # AZ
-        set_stab_total("AZ", "-", align='center')
+        # AZ: Single $ (Avg)
+        set_stab_total("AZ", f"=AU{stab_row}", currency_fmt)
+        
+        # BA: Double $
+        set_stab_total("BA", "-", align='center')
+        
+        # BB
+        set_stab_total("BB", "-", align='center')
 
         # 5. Explanatory Text for Dummy Data
         stab_row += 2
@@ -1484,7 +1502,8 @@ class ExcelService:
         for col in stab_cols:
              sheet.column_dimensions[col].width = 12
         sheet.column_dimensions['AL'].width = 20
-        sheet.column_dimensions['AZ'].width = 20
+        sheet.column_dimensions['AW'].width = 15 # Occupancy Type
+        sheet.column_dimensions['BB'].width = 20 # Unit Config
 
         # Save
         virtual_workbook = io.BytesIO()

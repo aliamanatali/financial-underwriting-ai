@@ -48,6 +48,10 @@ interface RentRollWidgetProps {
   onUpdate?: () => void;
   studentHousingConfig?: StudentHousingConfig;
   onOpenConfig?: () => void;
+  initialTab?: "details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized";
+  initialEditMode?: boolean;
+  fullAnalysis?: UnderwritingAnalysis; // Add optional full analysis prop
+  validationTrigger?: number;
 }
 
 // Helpers for date input conversion (YYYY-MM-DD <-> MM/DD/YYYY)
@@ -135,25 +139,77 @@ export default function RentRollWidget({
   rentRoll,
   summary,
   packageId,
+  // Using partial because we might not have the full object in the widget props,
+  // but we need it for export. If it's not passed, we'll try to fetch or construct it.
+  // Ideally, the parent should pass the full analysis object.
+  fullAnalysis,
   onUpdate,
   studentHousingConfig,
   onOpenConfig,
+  initialTab = "details",
+  initialEditMode = false,
+  validationTrigger,
 }: RentRollWidgetProps) {
+  const [activeTab, setActiveTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">(initialTab);
   const [isEditing, setIsEditing] = useState({
     details: false,
     omExport: false,
     unitBreakdown: false,
-    unitBreakdownStabilized: false,
+    unitBreakdownStabilized: initialEditMode && initialTab === "unitBreakdownStabilized",
   });
-  const [activeTab, setActiveTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
-  // Initialize with IDs
+  
+  const componentRef = React.useRef<HTMLDivElement>(null);
+
+  // Effect to handle initial props changes if they come from parent updates (e.g. URL param changes)
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+    if (initialEditMode && initialTab) {
+      setIsEditing(prev => ({ ...prev, [initialTab]: true }));
+    }
+    
+    // Scroll to the widget if triggered
+    if (validationTrigger && componentRef.current) {
+        componentRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [initialTab, initialEditMode, validationTrigger]);
+
+  // Initialize with IDs and merge Student Housing Config
+  const initializeItems = (items: RentRollItem[], config?: StudentHousingConfig): EditableRentRollItem[] => {
+    console.log("RentRollWidget: Initializing Items. Config present:", !!config);
+    return items.map(item => {
+      // Robust matching: trim and lowercase
+      const typeConfig = config?.unit_type_configs.find(c =>
+        c.unit_type?.trim().toLowerCase() === item.unit_type?.trim().toLowerCase()
+      );
+      
+      if (config && !typeConfig) {
+          console.warn(`RentRollWidget: No config found for unit type: '${item.unit_type}'`);
+      }
+
+      return {
+        ...item,
+        id: item.unit_number || `unit-${Math.random()}`,
+        // Merge config values if they exist
+        beds_single: typeConfig?.beds_single,
+        beds_double: typeConfig?.beds_double,
+        market_rent_single: typeConfig?.market_rent_single,
+        market_rent_double: typeConfig?.market_rent_double,
+        unit_config_label: typeConfig?.unit_config_label,
+        bed_count: typeConfig?.bed_count,
+        occupancy_type: typeConfig?.occupancy_type
+      };
+    });
+  };
+
   const [items, setItems] = useState<EditableRentRollItem[]>(
-    rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` }))
+    initializeItems(rentRoll, studentHousingConfig)
   );
 
   useEffect(() => {
-    setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
-  }, [rentRoll]);
+    setItems(initializeItems(rentRoll, studentHousingConfig));
+  }, [rentRoll, studentHousingConfig]);
 
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
@@ -323,28 +379,45 @@ export default function RentRollWidget({
 
     try {
       const payload: any = { rent_roll: cleanItems };
-      if (studentHousingConfig) {
-        const updatedConfig = {
-          ...studentHousingConfig,
-          unit_type_configs: studentHousingConfig.unit_type_configs.map(config => {
-            const item = items.find(i => i.unit_type === config.unit_type);
-            if (item) {
+      
+      // Construct unit_type_configs from current items to ensure we capture all unit types
+      // even if they weren't in the original config or if it was empty.
+      const uniqueUnitTypes = Array.from(new Set(items.map(i => i.unit_type)));
+      
+      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
+          const item = items.find(i => i.unit_type === unitType);
+          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
+            c.unit_type?.trim().toLowerCase() === unitType?.trim().toLowerCase()
+          );
+          
+          if (item) {
+              // Priority: Item values > Existing Config > Defaults
               return {
-                ...config,
-                beds_single: item.beds_single,
-                beds_double: item.beds_double,
-                market_rent_single: item.market_rent_single,
-                market_rent_double: item.market_rent_double,
-                unit_config_label: item.unit_config_label,
-                bed_count: item.bed_count !== undefined ? item.bed_count : config.bed_count,
-                occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || config.occupancy_type,
+                  unit_type: unitType,
+                  beds_single: item.beds_single ?? existingConfig?.beds_single,
+                  beds_double: item.beds_double ?? existingConfig?.beds_double,
+                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
+                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
+                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
+                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
+                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
               };
-            }
-            return config;
-          }),
-        };
-        payload.student_housing_config = updatedConfig;
-      }
+          }
+          return existingConfig || {
+              unit_type: unitType,
+              bed_count: 1,
+              occupancy_type: "Single",
+              unit_config_label: "Single"
+          };
+      });
+
+      const updatedConfig = {
+          ...(studentHousingConfig || { unit_type_configs: [] }),
+          unit_type_configs: newUnitTypeConfigs
+      };
+      
+      payload.student_housing_config = updatedConfig;
+
       await apiClient.updateManualOverrides(packageId, payload);
       setIsEditing({
         details: false,
@@ -363,9 +436,109 @@ export default function RentRollWidget({
     }
   };
 
-  const handleExport = () => {
-    // Redirect to export page with modal open query param
-    router.push(`/analysis/${packageId}?tab=export&openRentRollModal=true`);
+  const validateConfigForExport = (): boolean => {
+      // Logic mirrors the strict checks in ExportButtons.tsx
+      if (!studentHousingConfig?.unit_type_configs) return false;
+
+      // Get unique unit types from current items
+      const unitTypes = Array.from(new Set(items.map(i => i.unit_type)));
+      
+      for (const unitType of unitTypes) {
+          // Check against the merged item state first (as it reflects unsaved edits or current view)
+          // OR check against the config object.
+          // Since we are exporting what is currently in 'items' (plus config for fields not in items),
+          // we should verify the data we are about to export.
+          
+          // However, handleExport constructs exportData using studentHousingConfig.
+          // We should validate the studentHousingConfig we are about to send (or the items if merged).
+          // Let's check the items directly as they are the source of truth for the export payload
+          
+          // Actually, handleExport uses 'items' for rent_roll lines, but 'studentHousingConfig' for the config object.
+          // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
+          // So we must validate 'studentHousingConfig'.
+          
+          const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type?.trim() === unitType?.trim());
+          
+          if (!config) {
+              console.log(`Validation Failed: No config for ${unitType}`);
+              return false;
+          }
+          
+          if (!config.bed_count || config.bed_count <= 0) {
+               console.log(`Validation Failed: Invalid bed count for ${unitType}`);
+               return false;
+          }
+          
+          const occupancy = config.occupancy_type;
+          if (!occupancy) {
+               console.log(`Validation Failed: No occupancy for ${unitType}`);
+               return false;
+          }
+          
+          if (occupancy === "Single") {
+              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
+          } else if (occupancy === "Double") {
+              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
+          } else if (occupancy === "Mixed") {
+              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
+              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
+          }
+      }
+      return true;
+  };
+
+  const handleExport = async () => {
+    // Validate before export
+    if (!validateConfigForExport()) {
+        setWarningMessage("Cannot export Rent Roll.\n\nUnit Breakdown Stabilized information is incomplete.\nPlease ensure Bed Counts, Occupancy Types, and corresponding Prices are fully configured for all unit types.");
+        setShowWarning(true);
+        // Switch to the tab to help user
+        setActiveTab("unitBreakdownStabilized");
+        setIsEditing(prev => ({ ...prev, unitBreakdownStabilized: true }));
+        return;
+    }
+
+    // Directly download the rent roll export instead of opening a modal
+    setIsExporting(true);
+    try {
+        // Construct the full analysis object needed for export
+        // The backend expects an UnderwritingAnalysis object
+        // Start with the full analysis object if available, or a minimal one
+        const baseAnalysis = fullAnalysis || {
+            document_id: packageId,
+            pass_fail_status: "PENDING", // Default values to satisfy validation
+            property_meta: {
+                address: "Unknown",
+                year_built: 0,
+                purchase_price: 0,
+                total_units: 0
+            },
+            historical_expenses: [],
+            rent_roll: [],
+            rent_roll_summary: summary || localSummary,
+        };
+
+        const exportData = {
+            ...baseAnalysis,
+            document_id: packageId,
+            rent_roll: items.map(({ id, ...rest }) => ({
+                ...rest,
+                unit_size: parseFloat(String(rest.unit_size)) || 0,
+                current_rent: parseFloat(String(rest.current_rent)) || 0,
+                stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+                market_rent: parseFloat(String(rest.market_rent)) || 0,
+            })),
+            rent_roll_summary: summary || localSummary,
+            student_housing_config: studentHousingConfig
+        };
+
+        await apiClient.downloadExport(exportData as any, "rent-roll");
+    } catch (error) {
+        console.error("Error exporting rent roll:", error);
+        alert("Failed to export rent roll.");
+    } finally {
+        setIsExporting(false);
+    }
   };
 
   const handleCancel = () => {
@@ -525,6 +698,7 @@ export default function RentRollWidget({
 
   return (
     <>
+      <div ref={componentRef} className="scroll-mt-20">
       <WarningModal
         isOpen={showWarning}
         onClose={() => setShowWarning(false)}
@@ -545,19 +719,19 @@ export default function RentRollWidget({
                 onClick={() => setActiveTab("details")}
                 className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "details" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
               >
-                Rent Roll Details
+                Rent Roll Information
               </button>
               <button
                 onClick={() => setActiveTab("omExport")}
                 className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "omExport" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
               >
-                OM Export View
+                Rent Roll Detailed
              </button>
              <button
                onClick={() => setActiveTab("unitBreakdown")}
                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdown" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
              >
-               Unit Breakdown
+               Unit Breakdown - Existing
              </button>
              <button
                onClick={() => setActiveTab("unitBreakdownStabilized")}
@@ -732,8 +906,8 @@ export default function RentRollWidget({
             <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
                 <tr>
                   <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
-                  <th colSpan={6} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
-                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
+                  <th colSpan={5} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
+                  <th colSpan={1} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
                   <th colSpan={3} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Pro Forma Rents</th>
                   <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Pro Forma Rent Comparison</th>
                   <th colSpan={6} className="px-4 py-2 text-center border-b border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
@@ -742,7 +916,6 @@ export default function RentRollWidget({
                   <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10">Count</th>
                   <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10">Unit</th>
                   <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10">Occupancy Type</th>
-                  <th className="px-4 py-3 border-r">Units</th>
                   <th className="px-4 py-3 border-r">Beds</th>
                   <th className="px-4 py-3 border-r">Size</th>
                   <th className="px-4 py-3 border-r">$/Month</th>
@@ -755,10 +928,9 @@ export default function RentRollWidget({
                         formulas={[{ label: "$/SF", formula: "(Current Rent * 12) / Unit Size" }]}
                       />
                     </div>
-                  </th>
-                  <th className="px-4 py-3 border-r">Units</th>
-                  <th className="px-4 py-3 border-r">$/Month</th>
-                  <th className="px-4 py-3 border-r">
+                </th>
+                <th className="px-4 py-3 border-r">$/Month</th>
+                <th className="px-4 py-3 border-r">
                     <div className="flex items-center justify-end">
                       $/SqFt
                       <WidgetTooltip
@@ -818,7 +990,6 @@ export default function RentRollWidget({
                           item.unit_type
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-center">1</td>
                       <td className="px-4 py-2.5 text-center">{bedCount}</td>
                       <td className="px-4 py-2.5 text-right">
                         {isEditing.omExport ? (
@@ -835,7 +1006,6 @@ export default function RentRollWidget({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">${(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
-                      <td className="px-4 py-2.5 text-center">1</td>
                       <td className="px-4 py-2.5 text-right">
                         {isEditing.omExport ? (
                           <input type="text" value={item.market_rent} onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
@@ -943,6 +1113,7 @@ export default function RentRollWidget({
           </div>
         </div>
       )}
+      </div>
     </>
   );
 }

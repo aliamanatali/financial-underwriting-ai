@@ -76,7 +76,7 @@ class AuditLog(BaseModel):
     field_name: str
     extracted_value: Any
     source: str
-    confidence_score: float
+    confidence_score: Optional[float] = None
     method: str
     timestamp: Optional[str] = None
 
@@ -159,7 +159,7 @@ class DealParameters(BaseModel):
 
 class StandardizedExpense(BaseModel):
     original_text: str
-    mapped_category: ExpenseCategory
+    mapped_category: Union[ExpenseCategory, str] # Allow string for flexibility
     amount: float
     confidence: float
     audit_log: AuditLog
