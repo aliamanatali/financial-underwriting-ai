@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, Tuple
 
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
+from app.services.classification_service import ClassificationService
 # Avoid circular import if ProgressService is needed only for typing
 # But we need it for execution. We'll import inside the method if needed or use Any
 from app.services.progress_service import ProgressService
@@ -94,10 +95,22 @@ class ZipProcessingService:
         """
         Process a ZIP file from disk, extract documents, creating a DealPackage,
         and saving files to storage.
-
-        Returns:
-            Tuple containing the created DealPackage and a dictionary of file cache data.
         """
+        # This legacy method can now delegate to a more generic file processor if needed,
+        # but for now we keep it as is for strict backward compatibility with existing structured ZIPs,
+        # or we could enhance it to use the classifier fallback.
+        # For this update, we will simply leave it as is to ensure stability,
+        # and implement the new smart upload logic in process_smart_upload.
+        return await self._process_zip_internal(zip_path, property_name, progress_service, task_id)
+
+    async def _process_zip_internal(
+        self,
+        zip_path: str,
+        property_name: str,
+        progress_service: Optional[ProgressService] = None,
+        task_id: Optional[str] = None,
+        classification_service: Optional[ClassificationService] = None
+    ) -> Tuple[DealPackage, Dict[str, Any]]:
         if progress_service and task_id:
             await progress_service.update_progress(task_id, 0, "Initializing ZIP processing...")
 
@@ -120,125 +133,256 @@ class ZipProcessingService:
         empty_folders = []
         file_cache_data = {}
         
+        # List to hold files that need classification
+        files_to_classify: List[Dict[str, Any]] = []
+
         try:
-            # Open ZIP file from disk directly to avoid loading into memory
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # Get list of all files in the ZIP
                 file_list = zip_ref.namelist()
                 logger.info(f"ZIP contains {len(file_list)} entries")
                 
-                # Process each file
                 total_files = len(file_list)
                 
                 for idx, file_path in enumerate(file_list):
-                    # Skip directories and hidden files
                     if file_path.endswith('/') or os.path.basename(file_path).startswith('.'):
                         continue
                     
-                    # Get the folder name (first level directory)
-                    path_parts = Path(file_path).parts
-                    
-                    if len(path_parts) < 2:
-                        logger.warning(f"Skipping file at root level: {file_path}")
-                        files_skipped += 1
-                        continue
-                    
-                    # Handle nested folder structure
-                    folder_name = None
-                    for part in path_parts[:-1]:  # Exclude the filename
-                        doc_type = get_document_type_from_folder(part)
-                        if doc_type:
-                            folder_name = part
-                            break
-                    
-                    if not folder_name:
-                        # Try the immediate parent folder
-                        folder_name = path_parts[-2] if len(path_parts) >= 2 else path_parts[0]
-                    
                     filename = os.path.basename(file_path)
                     
-                    # Determine document type from folder
-                    doc_type = get_document_type_from_folder(folder_name)
-                    if not doc_type:
-                        logger.warning(f"Could not determine document type for folder: {folder_name}")
-                        files_skipped += 1
-                        continue
+                    # Try to determine type from folder structure first
+                    path_parts = Path(file_path).parts
+                    folder_name = None
+                    doc_type = None
                     
-                    # Read file content
+                    # Check path parts for folder mapping
+                    if len(path_parts) > 1:
+                        for part in path_parts[:-1]:
+                            dt = get_document_type_from_folder(part)
+                            if dt:
+                                doc_type = dt
+                                folder_name = part
+                                break
+                    
+                    # If not found in folder, and we have a classification service,
+                    # we will queue it for classification
+                    if not doc_type and classification_service:
+                         # Read content for classification
+                        file_content = zip_ref.read(file_path)
+                        if len(file_content) == 0: continue
+                        
+                        files_to_classify.append({
+                            "filename": filename,
+                            "content": file_content,
+                            "file_path": file_path
+                        })
+                        continue
+                    elif not doc_type:
+                        # Legacy behavior: check parent folder or skip
+                        if len(path_parts) >= 2:
+                             folder_name = path_parts[-2]
+                             doc_type = get_document_type_from_folder(folder_name)
+                        
+                        if not doc_type:
+                            logger.warning(f"Could not determine document type for file: {file_path}")
+                            files_skipped += 1
+                            continue
+
+                    # If we got here, we have a doc_type from folder structure
                     file_content = zip_ref.read(file_path)
-                    file_size = len(file_content)
-                    
-                    # Skip empty files
-                    if file_size == 0:
-                        logger.warning(f"Skipping empty file: {file_path}")
-                        files_skipped += 1
-                        continue
-                    
-                    # Create document metadata
-                    document_id = str(uuid.uuid4())
-                    doc_metadata = DocumentMetadata(
-                        document_id=document_id,
-                        filename=filename,
-                        document_type=doc_type,
-                        upload_timestamp=now,
-                        file_size=file_size,
-                        extraction_status="pending"
+                    if len(file_content) == 0: continue
+
+                    await self._add_file_to_package(
+                        package, package_id, filename, doc_type, file_content, now, file_cache_data
                     )
-                    
-                    # Add to package
-                    package.documents[doc_type].append(doc_metadata)
-                    
-                    # Store file content for cache return
-                    file_cache_data[document_id] = {
-                        "content": file_content,
-                        "filename": filename,
-                        "document_type": doc_type,
-                        "package_id": package_id
-                    }
-                    
-                    # Persist file to GCP storage
-                    await storage_service.save_document_file(
-                        package_id=package_id,
-                        document_id=document_id,
-                        filename=filename,
-                        file_content=file_content
-                    )
-                    
                     files_processed += 1
                     
                     if progress_service and task_id:
-                        # Calculate progress
-                        # We use 10-90% range for processing files
-                        percent = 10 + int((idx + 1) / total_files * 80)
-                        await progress_service.update_progress(
-                            task_id,
-                            percent,
-                            f"Processing file {files_processed}/{total_files}: {filename}"
-                        )
-                
-                # Check for empty or missing document categories
+                        percent = 10 + int((idx + 1) / total_files * 60)
+                        await progress_service.update_progress(task_id, percent, f"Processing: {filename}")
+
+                # Batch classify remaining files if any
+                if files_to_classify and classification_service:
+                    if progress_service and task_id:
+                        await progress_service.update_progress(task_id, 70, f"Classifying {len(files_to_classify)} loose files...")
+                    
+                    # Extract filenames for batch classification
+                    filenames = [f["filename"] for f in files_to_classify]
+                    classification_results = await classification_service.classify_files_batch(filenames)
+                    
+                    for f_item in files_to_classify:
+                        fname = f_item["filename"]
+                        doc_type = classification_results.get(fname)
+                        
+                        if doc_type:
+                            await self._add_file_to_package(
+                                package, package_id, fname, doc_type, f_item["content"], now, file_cache_data
+                            )
+                            files_processed += 1
+                        else:
+                            logger.warning(f"Could not classify file: {fname}")
+                            files_skipped += 1
+
+                # Check for empty folders
                 for doc_type in DocumentType:
                     if doc_type not in package.documents or len(package.documents[doc_type]) == 0:
                         empty_folders.append(doc_type.value)
                 
-                # Log summary
                 logger.info(f"Processing complete: {files_processed} files processed, {files_skipped} skipped")
-                if empty_folders:
-                    logger.warning(f"Empty or missing categories: {', '.join(empty_folders)}")
-        
+
         except zipfile.BadZipFile:
             raise ValueError("Invalid ZIP file")
         except Exception as e:
             logger.error(f"Error processing ZIP file: {str(e)}")
             raise Exception(f"Error processing ZIP file: {str(e)}")
         
-        # Persist package to GCP storage
+        # Persist package
         package_dict = package.model_dump()
         await storage_service.save_deal_package(package_dict)
         
         if progress_service and task_id:
-            await progress_service.update_progress(task_id, 100, "ZIP processing complete!")
+            await progress_service.update_progress(task_id, 100, "Processing complete!")
 
-        logger.info(f"Created deal package {package_id} with {sum(len(docs) for docs in package.documents.values())} documents")
+        return package, file_cache_data
+
+    async def _add_file_to_package(self, package, package_id, filename, doc_type, content, now, file_cache_data):
+        """Helper to add file to package and storage"""
+        document_id = str(uuid.uuid4())
+        doc_metadata = DocumentMetadata(
+            document_id=document_id,
+            filename=filename,
+            document_type=doc_type,
+            upload_timestamp=now,
+            file_size=len(content),
+            extraction_status="pending"
+        )
+        
+        package.documents[doc_type].append(doc_metadata)
+        
+        file_cache_data[document_id] = {
+            "content": content,
+            "filename": filename,
+            "document_type": doc_type,
+            "package_id": package_id
+        }
+        
+        await storage_service.save_document_file(
+            package_id=package_id,
+            document_id=document_id,
+            filename=filename,
+            file_content=content
+        )
+
+    async def process_smart_upload(
+        self,
+        files: List[Tuple[str, bytes]], # List of (filename, content)
+        property_name: str,
+        classification_service: ClassificationService,
+        progress_service: Optional[ProgressService] = None,
+        task_id: Optional[str] = None
+    ) -> Tuple[DealPackage, Dict[str, Any]]:
+        """
+        Process a list of loose files (or mixed content) using AI classification.
+        """
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 0, "Initializing Smart Upload...")
+
+        package_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        
+        package = DealPackage(
+            package_id=package_id,
+            property_name=property_name,
+            created_at=now,
+            updated_at=now,
+            documents={doc_type: [] for doc_type in DocumentType},
+            normalization_status="pending",
+            verification_progress=0.0
+        )
+        
+        file_cache_data = {}
+        files_processed = 0
+        
+        # 1. Classify all files
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 20, f"Classifying {len(files)} files...")
+            
+        filenames = [f[0] for f in files]
+        classifications = await classification_service.classify_files_batch(filenames)
+        
+        # 2. Add files to package
+        for idx, (filename, content) in enumerate(files):
+            doc_type = classifications.get(filename)
+            
+            if doc_type:
+                # Use basename for storage/metadata to keep it clean
+                safe_filename = os.path.basename(filename)
+                await self._add_file_to_package(
+                    package, package_id, safe_filename, doc_type, content, now, file_cache_data
+                )
+                files_processed += 1
+            else:
+                # Handle unknown files -> maybe map to 'Other' or 'Uncategorized' if we had one?
+                # For now, we'll skip or map to DISCLOSURES as a fallback bucket? No, better to skip or warn.
+                # Actually, let's map to DISCLOSURES if unknown? No.
+                # Let's map to OFFERING_MEMORANDUM if it's a PDF and large? No.
+                # Just skip for now and log.
+                logger.warning(f"Could not classify file {filename}. Skipping.")
+            
+            if progress_service and task_id:
+                percent = 30 + int((idx + 1) / len(files) * 60)
+                await progress_service.update_progress(task_id, percent, f"Processed {filename}")
+        
+        # 3. Save Package
+        package_dict = package.model_dump()
+        await storage_service.save_deal_package(package_dict)
+        
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 100, "Upload complete!")
+            
+        return package, file_cache_data
+
+    async def add_files_to_package(
+        self,
+        package_id: str,
+        files: List[Tuple[str, bytes]],
+        classification_service: Optional[ClassificationService] = None
+    ) -> Tuple[DealPackage, Dict[str, Any]]:
+        """
+        Add additional files to an existing package using classification.
+        """
+        # Load existing package
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise ValueError(f"Package {package_id} not found")
+        
+        package = DealPackage(**package_data)
+        now = datetime.utcnow().isoformat()
+        file_cache_data = {}
+        
+        # Batch classify
+        if classification_service:
+            filenames = [f[0] for f in files]
+            classifications = await classification_service.classify_files_batch(filenames)
+        else:
+            classifications = {}
+
+        files_added = 0
+        for filename, content in files:
+            doc_type = classifications.get(filename)
+            
+            if doc_type:
+                safe_filename = os.path.basename(filename)
+                await self._add_file_to_package(
+                    package, package_id, safe_filename, doc_type, content, now, file_cache_data
+                )
+                files_added += 1
+            else:
+                logger.warning(f"Could not classify additional file {filename}. Skipping.")
+
+        if files_added > 0:
+            package.updated_at = now
+            # Reset normalization status if new files are added, so we re-process
+            package.normalization_status = "pending"
+            await storage_service.save_deal_package(package.model_dump())
         
         return package, file_cache_data

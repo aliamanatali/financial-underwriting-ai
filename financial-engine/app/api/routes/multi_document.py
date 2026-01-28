@@ -29,7 +29,8 @@ from app.services.multi_document_extraction_service import MultiDocumentExtracti
 from app.services.storage_service import storage_service
 from app.services.explainability_service import ExplainabilityService
 from app.services.progress_service import ProgressService
-from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service
+from app.services.classification_service import ClassificationService
+from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service
 from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAPPING
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
@@ -137,14 +138,16 @@ async def complete_chunk_upload(
     upload_id: str = Form(...),
     original_filename: str = Form(...),
     property_name: Optional[str] = Form(None),
+    is_smart_upload: bool = Form(False),
     progress_service: ProgressService = Depends(get_progress_service),
+    classification_service: ClassificationService = Depends(get_classification_service)
 ):
-    """Complete the chunked upload and process the full file."""
+    """Complete the chunked upload and process the file(s)."""
     upload_dir = os.path.join(TEMP_UPLOAD_DIR, upload_id)
     if not os.path.exists(upload_dir):
         raise HTTPException(status_code=404, detail="Upload session not found")
     
-    logger.info(f"Completing chunked upload {upload_id} for {original_filename}")
+    logger.info(f"Completing chunked upload {upload_id} for {original_filename} (Smart Upload: {is_smart_upload})")
     
     try:
         # Get all chunk files
@@ -157,36 +160,107 @@ async def complete_chunk_upload(
              raise HTTPException(status_code=400, detail="No chunks found")
 
         # Combine chunks into a single file
-        combined_zip_path = os.path.join(upload_dir, "combined.zip")
+        # If it's smart upload with multiple files, this logic might need adjustment if we uploaded multiple files separately
+        # But assuming we zip them on frontend or upload 1 big zip for now?
+        # WAIT: The prompt says "User can upload Zip/pngs/pdf/csv/exels/docs".
+        # If the user uploads multiple individual files, the frontend typically sends them one by one or as a formData list.
+        # But our chunk endpoint is designed for one large file stream.
+        # Strategy: The frontend should ZIP the selected files if there are multiple loose files,
+        # OR we need a new endpoint for multi-file upload.
+        # Given "upload-chunk" flow, it assumes one binary blob.
+        # Let's assume the frontend Zips selected files on the client side before chunking, OR sends a single Zip file.
+        # If "is_smart_upload" is true, we treat the content as a ZIP that might contain loose files needing classification.
+
+        combined_path = os.path.join(upload_dir, "combined_upload.tmp")
         
-        with open(combined_zip_path, "wb") as outfile:
+        with open(combined_path, "wb") as outfile:
             for chunk_file in chunk_files:
                 chunk_path = os.path.join(upload_dir, chunk_file)
                 with open(chunk_path, "rb") as infile:
-                    # Stream chunk content to output file
                     shutil.copyfileobj(infile, outfile)
         
-        # Determine property name if not provided
+        # Determine property name
         if not property_name:
              property_name = original_filename.replace('.zip', '').replace('_Inputs', '')
 
-        # Process the full ZIP file from disk
-        package, file_data_map = await zip_service.process_zip_file(
-            combined_zip_path,
-            property_name,
-            progress_service=progress_service,
-            task_id=upload_id
-        )
+        if is_smart_upload:
+            # For smart upload, we extract the zip (created by client or user) and process loose files
+            # Check if it is a zip
+            if not zipfile.is_zipfile(combined_path):
+                 # It might be a single file uploaded directly?
+                 # If so, we can wrap it in a list and process it.
+                 # But our chunk flow is generic. Let's see if we can just pass it to zip_service
+                 # If it's NOT a zip, we can't use zip_service.process_zip_file directly without modification or wrapper
+                 
+                 # Let's assume for now the frontend packages multiple files into a ZIP if needed.
+                 # If single file (e.g. PDF), we should probably support that too.
+                 
+                 # Read file content
+                 with open(combined_path, "rb") as f:
+                     content = f.read()
+                 
+                 files = [(original_filename, content)]
+                 
+                 package, file_data_map = await zip_service.process_smart_upload(
+                    files=files,
+                    property_name=property_name,
+                    classification_service=classification_service,
+                    progress_service=progress_service,
+                    task_id=upload_id
+                 )
+            else:
+                # It is a zip, so we use the internal zip processor BUT we need to tell it to use classification
+                # We need to use process_smart_upload by unzipping first
+                files = []
+                with zipfile.ZipFile(combined_path, 'r') as zip_ref:
+                    for name in zip_ref.namelist():
+                        if not name.endswith('/') and not os.path.basename(name).startswith('.'):
+                            # Use full path for better classification context
+                            files.append((name, zip_ref.read(name)))
+                
+                package, file_data_map = await zip_service.process_smart_upload(
+                    files=files,
+                    property_name=property_name,
+                    classification_service=classification_service,
+                    progress_service=progress_service,
+                    task_id=upload_id
+                )
+        else:
+            # Standard "Structured Zip" processing
+            package, file_data_map = await zip_service.process_zip_file(
+                combined_path,
+                property_name,
+                progress_service=progress_service,
+                task_id=upload_id
+            )
         
         # Update caches
         deal_packages_cache[package.package_id] = package
         file_storage_cache.update(file_data_map)
         
-        # Cleanup temp directory
+        # Cleanup
         try:
             shutil.rmtree(upload_dir)
         except Exception as e:
             logger.warning(f"Failed to cleanup temp dir {upload_dir}: {str(e)}")
+        
+        # Check for missing info and attach validation warning to response if needed
+        # We can calculate missing docs here
+        required_types = {
+            DocumentType.OFFERING_MEMORANDUM,
+            DocumentType.RENT_ROLL,
+            DocumentType.FINANCIALS
+        }
+        present_types = set()
+        for dt, docs in package.documents.items():
+            if docs:
+                present_types.add(dt)
+        
+        missing = [dt.value for dt in required_types if dt not in present_types]
+        
+        # We can't easily change the return type schema dynamically to add "missing_info",
+        # but we can add a transient field or frontend can check "documents" map.
+        # Let's rely on frontend checking the returned package.documents
         
         return package
         
@@ -194,9 +268,69 @@ async def complete_chunk_upload(
         raise
     except Exception as e:
         logger.error(f"Error processing chunked upload {upload_id}: {str(e)}", exc_info=True)
-        # We don't delete the temp dir immediately on error to allow for inspection or potential retry logic later
-        # But for now, let's keep it clean and maybe rely on a cron job for cleanup
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@router.post("/packages/smart-upload/validate-files")
+async def validate_smart_upload_files(
+    files: List[UploadFile] = File(...),
+    classification_service: ClassificationService = Depends(get_classification_service)
+):
+    """
+    Endpoint to pre-validate and classify files before actual upload/processing if needed.
+    """
+    results = []
+    filenames = [f.filename for f in files]
+    
+    # Batch classify
+    classification_map = await classification_service.classify_files_batch(filenames)
+    
+    for file in files:
+        doc_type = classification_map.get(file.filename, "Unknown")
+        results.append({
+            "filename": file.filename,
+            "detected_type": doc_type,
+            "status": "valid" if doc_type != "Unknown" else "needs_review"
+        })
+    
+    return {"files": results}
+
+
+@router.post("/packages/{package_id}/documents")
+async def upload_additional_documents(
+    package_id: str,
+    files: List[UploadFile] = File(...),
+    classification_service: ClassificationService = Depends(get_classification_service),
+):
+    """
+    Upload additional documents to an existing package.
+    Uses AI classification to determine where to place the files.
+    """
+    try:
+        # Read all files into memory (assuming they are reasonable size for now)
+        # For larger files, we might need a streaming approach or chunked upload similar to the main upload
+        file_data = []
+        for file in files:
+            content = await file.read()
+            file_data.append((file.filename, content))
+            
+        package, file_map = await zip_service.add_files_to_package(
+            package_id=package_id,
+            files=file_data,
+            classification_service=classification_service
+        )
+        
+        # Update caches
+        deal_packages_cache[package.package_id] = package
+        file_storage_cache.update(file_map)
+        
+        return package
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding documents to package {package_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to add documents: {str(e)}")
 
 
 @router.get("/packages/{package_id}", response_model=DealPackage)
