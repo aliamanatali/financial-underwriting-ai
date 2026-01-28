@@ -25,6 +25,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import WidgetTooltip from "./WidgetTooltip";
+import RentRollPreviewModal from "./RentRollPreviewModal";
 
 type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
   id: string;
@@ -216,6 +217,9 @@ export default function RentRollWidget({
   const [isExporting, setIsExporting] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
   const [warningMessage, setWarningMessage] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
+  const [pendingExportData, setPendingExportData] = useState<UnderwritingAnalysis | null>(null);
+
   // Map of Row ID -> { fieldName: errorMessage }
   const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>({});
 
@@ -498,41 +502,48 @@ export default function RentRollWidget({
         return;
     }
 
-    // Directly download the rent roll export instead of opening a modal
+    // Construct the full analysis object needed for export
+    // The backend expects an UnderwritingAnalysis object
+    // Start with the full analysis object if available, or a minimal one
+    const baseAnalysis = fullAnalysis || {
+        document_id: packageId,
+        pass_fail_status: "PENDING", // Default values to satisfy validation
+        property_meta: {
+            address: "Unknown",
+            year_built: 0,
+            purchase_price: 0,
+            total_units: 0
+        },
+        historical_expenses: [],
+        rent_roll: [],
+        rent_roll_summary: summary || localSummary,
+    };
+
+    const exportData = {
+        ...baseAnalysis,
+        document_id: packageId,
+        rent_roll: items.map(({ id, ...rest }) => ({
+            ...rest,
+            unit_size: parseFloat(String(rest.unit_size)) || 0,
+            current_rent: parseFloat(String(rest.current_rent)) || 0,
+            stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+            market_rent: parseFloat(String(rest.market_rent)) || 0,
+        })),
+        rent_roll_summary: summary || localSummary,
+        student_housing_config: studentHousingConfig
+    };
+
+    setPendingExportData(exportData as any);
+    setShowPreview(true);
+  };
+
+  const confirmDownload = async () => {
+    if (!pendingExportData) return;
+    
     setIsExporting(true);
     try {
-        // Construct the full analysis object needed for export
-        // The backend expects an UnderwritingAnalysis object
-        // Start with the full analysis object if available, or a minimal one
-        const baseAnalysis = fullAnalysis || {
-            document_id: packageId,
-            pass_fail_status: "PENDING", // Default values to satisfy validation
-            property_meta: {
-                address: "Unknown",
-                year_built: 0,
-                purchase_price: 0,
-                total_units: 0
-            },
-            historical_expenses: [],
-            rent_roll: [],
-            rent_roll_summary: summary || localSummary,
-        };
-
-        const exportData = {
-            ...baseAnalysis,
-            document_id: packageId,
-            rent_roll: items.map(({ id, ...rest }) => ({
-                ...rest,
-                unit_size: parseFloat(String(rest.unit_size)) || 0,
-                current_rent: parseFloat(String(rest.current_rent)) || 0,
-                stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
-                market_rent: parseFloat(String(rest.market_rent)) || 0,
-            })),
-            rent_roll_summary: summary || localSummary,
-            student_housing_config: studentHousingConfig
-        };
-
-        await apiClient.downloadExport(exportData as any, "rent-roll");
+        await apiClient.downloadExport(pendingExportData, "rent-roll");
+        setShowPreview(false);
     } catch (error) {
         console.error("Error exporting rent roll:", error);
         alert("Failed to export rent roll.");
@@ -705,6 +716,16 @@ export default function RentRollWidget({
         title="Incomplete Data"
         message={warningMessage}
       />
+      
+      {pendingExportData && (
+        <RentRollPreviewModal
+            isOpen={showPreview}
+            onClose={() => setShowPreview(false)}
+            analysisData={pendingExportData}
+            onConfirmDownload={confirmDownload}
+            isDownloading={isExporting}
+        />
+      )}
 
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
         <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
@@ -748,18 +769,12 @@ export default function RentRollWidget({
                 disabled={isExporting}
                 className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
               >
-                {isExporting ? (
-                  <span>Exporting...</span>
-                ) : (
-                  <>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                      <polyline points="7 10 12 15 17 10"></polyline>
-                      <line x1="12" y1="15" x2="12" y2="3"></line>
-                    </svg>
-                    Download Rent Roll
-                  </>
-                )}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Preview Rent Roll
               </button>
               <button
                 onClick={handleEdit}

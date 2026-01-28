@@ -737,6 +737,361 @@ class ExcelService:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._create_rent_roll_excel_sync, analysis_data)
 
+    def get_rent_roll_preview_data(self, analysis_data: UnderwritingAnalysis) -> Dict[str, Any]:
+        """
+        Generates preview data for the Rent Roll in JSON format.
+        Returns detailed rent roll rows + summary tables.
+        """
+        import re
+        rows = []
+        rent_roll = analysis_data.rent_roll
+        
+        # Track unique unit types for summaries
+        unique_unit_types = set()
+        
+        # Prepare Rows
+        for idx, item in enumerate(rent_roll, 1):
+            unit_type = item.unit_type or "Unknown"
+            unique_unit_types.add(unit_type)
+            
+            # Determine Beds
+            beds = 1
+            config_found = False
+            conf_obj = None
+            
+            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+                for conf in analysis_data.student_housing_config.unit_type_configs:
+                    if conf.unit_type == unit_type:
+                        beds = conf.bed_count
+                        config_found = True
+                        conf_obj = conf
+                        break
+            
+            if not config_found:
+                try:
+                    match_slash = re.search(r'^(\d+)\s*/', unit_type)
+                    if match_slash:
+                        val = int(match_slash.group(1))
+                        beds = val if val > 0 else 1
+                    else:
+                        match_bd = re.search(r'(\d+)\s*(?:bd|br|bed)', unit_type.lower())
+                        if match_bd:
+                            beds = int(match_bd.group(1))
+                        elif "studio" in unit_type.lower():
+                            beds = 1
+                        else:
+                            match = re.search(r'\d+', unit_type)
+                            if match:
+                                beds = int(match.group())
+                except:
+                    pass
+
+            current_rent = item.current_rent or 0
+            market_rent = item.market_rent or 0
+            unit_size = item.unit_size or 0
+            
+            current_rent_sf = (current_rent / unit_size) if unit_size > 0 else 0
+            market_rent_sf = (market_rent / unit_size) if unit_size > 0 else 0
+            
+            dollar_increase = 0 if current_rent == 0 else (market_rent - current_rent)
+            percent_increase = (dollar_increase / current_rent) if current_rent > 0 else 0
+            
+            def fmt_date(d):
+                if not d: return ""
+                try:
+                    parts = d.split('-')
+                    if len(parts) == 3:
+                        return f"{int(parts[1])}/{int(parts[2])}/{parts[0]}"
+                    return d
+                except:
+                    return d
+
+            row = {
+                "id": idx,
+                "unit_number": item.unit_number,
+                "unit_type": unit_type,
+                "beds": beds,
+                "unit_size": unit_size,
+                "current_rent": current_rent,
+                "current_rent_sf": current_rent_sf,
+                "market_rent": market_rent,
+                "market_rent_sf": market_rent_sf,
+                "dollar_increase": dollar_increase,
+                "percent_increase": percent_increase,
+                "pro_forma_unit_type": unit_type,
+                "unit_config": conf_obj.unit_config_label if conf_obj else unit_type,
+                "pro_forma_beds": beds,
+                "rc": "RC" if "rent control" in (item.unit_type or "").lower() else "-",
+                "lease_start": fmt_date(item.lease_start),
+                "lease_end": fmt_date(item.lease_end)
+            }
+            rows.append(row)
+
+        # --- Summary Tables Calculation ---
+        
+        # Helper to sort unit types: Studio, 1 Bed, 2 Bed...
+        def sort_key(k):
+            k = k.lower()
+            if "studio" in k: return 0
+            if "1" in k: return 1
+            if "2" in k: return 2
+            if "3" in k: return 3
+            if "4" in k: return 4
+            return 99
+
+        sorted_types = sorted(list(unique_unit_types), key=sort_key)
+        
+        # Calculate Aggregates
+        # We need to aggregate data per unit type from the 'rows' we just built
+        
+        summary_rows = []
+        stabilized_rows = []
+        
+        grand_total_units = len(rows)
+        grand_total_sf = sum(r['unit_size'] for r in rows)
+        
+        for u_type in sorted_types:
+            # Filter rows for this type
+            type_rows = [r for r in rows if r['unit_type'] == u_type]
+            count = len(type_rows)
+            if count == 0: continue
+            
+            avg_current_rent = sum(r['current_rent'] for r in type_rows) / count
+            avg_size = sum(r['unit_size'] for r in type_rows) / count
+            total_sf = sum(r['unit_size'] for r in type_rows)
+            rent_per_sf = (avg_current_rent / avg_size) if avg_size > 0 else 0
+            
+            mix_percent = count / grand_total_units if grand_total_units > 0 else 0
+            sf_percent = total_sf / grand_total_sf if grand_total_sf > 0 else 0
+            
+            avg_beds = sum(r['beds'] for r in type_rows) / count
+            rent_per_bed = (avg_current_rent / avg_beds) if avg_beds > 0 else 0
+            
+            # Summary Row
+            sum_row = {
+                "unit_type": u_type,
+                "avg_current_rent": avg_current_rent,
+                "avg_size": avg_size,
+                "total_sf": total_sf,
+                "rent_per_sf": rent_per_sf,
+                "units": count,
+                "mix_percent": mix_percent,
+                "sf_percent": sf_percent,
+                "beds": avg_beds,
+                "rent_per_bed": rent_per_bed
+            }
+            summary_rows.append(sum_row)
+            
+            # Stabilized Row
+            avg_market_rent = sum(r['market_rent'] for r in type_rows) / count
+            # Weighted Avg Rent/SF for stabilized = (Total Rent / Total SF) ideally, but here use simple avg
+            # Wait, Excel uses Avg Rent / Avg Size for display rows
+            stab_rent_per_sf = (avg_market_rent / avg_size) if avg_size > 0 else 0
+            
+            # Config lookup for stabilized details
+            conf_obj = None
+            if analysis_data.student_housing_config and analysis_data.student_housing_config.unit_type_configs:
+                for c in analysis_data.student_housing_config.unit_type_configs:
+                    if c.unit_type == u_type:
+                        conf_obj = c
+                        break
+            
+            beds_s = 0
+            beds_d = 0
+            price_s = 0.0
+            price_d = 0.0
+            occupancy = conf_obj.occupancy_type if conf_obj else "Single"
+            label = conf_obj.unit_config_label if conf_obj else "Single"
+            
+            if conf_obj:
+                beds_s = conf_obj.beds_single if conf_obj.beds_single is not None else 0
+                beds_d = conf_obj.beds_double if conf_obj.beds_double is not None else 0
+                price_s = conf_obj.market_rent_single if conf_obj.market_rent_single is not None else 0.0
+                price_d = conf_obj.market_rent_double if conf_obj.market_rent_double is not None else 0.0
+                
+                if beds_s == 0 and beds_d == 0:
+                    if occupancy == "Single":
+                        beds_s = conf_obj.bed_count
+                    elif occupancy == "Double":
+                        beds_d = conf_obj.bed_count
+
+            calc_beds = beds_s + beds_d if (beds_s + beds_d) > 0 else avg_beds
+            stab_rent_per_bed = (avg_market_rent / calc_beds) if calc_beds > 0 else 0
+            
+            # Format config string
+            parts = []
+            if beds_s > 0: parts.append(f"{beds_s} Single")
+            if beds_d > 0: parts.append(f"{beds_d} Double")
+            config_str = ", ".join(parts)
+            if not config_str:
+                 config_str = f"{conf_obj.bed_count if conf_obj else 0} {label}"
+
+            stab_row = {
+                "unit_type": u_type,
+                "pro_forma_rent": avg_market_rent,
+                "size": avg_size,
+                "total_sf": total_sf,
+                "rent_per_sf": stab_rent_per_sf,
+                "units": count,
+                "mix_percent": mix_percent,
+                "sf_percent": sf_percent,
+                "beds": calc_beds,
+                "rent_per_bed": stab_rent_per_bed,
+                "bed_count": conf_obj.bed_count if conf_obj else 0,
+                "occupancy_type": occupancy,
+                "single_count": beds_s if beds_s > 0 else "-",
+                "double_count": beds_d if beds_d > 0 else "-",
+                "single_price": price_s if price_s > 0 else (stab_rent_per_bed if beds_s > 0 else "-"),
+                "double_price": price_d if price_d > 0 else (stab_rent_per_bed if beds_d > 0 else "-"),
+                "unit_config": config_str
+            }
+            stabilized_rows.append(stab_row)
+
+        # --- Merge Summary Tables into Main Rows (Unified View) ---
+        # We append columns to the first N rows of the main dataset
+        
+        # Ensure we have enough rows to hold the summary data
+        # If rent roll is shorter than summary tables (unlikely but possible), we need to pad rows
+        max_summary_rows = max(len(summary_rows), len(stabilized_rows))
+        while len(rows) < max_summary_rows:
+            rows.append({}) # Add empty rows if needed
+
+        for i, row in enumerate(rows):
+            # 1. Spacer 1 (Separates Main Rent Roll from Summary)
+            row['spacer1'] = ''
+            
+            # 2. Unit Mix Summary
+            if i < len(summary_rows):
+                s = summary_rows[i]
+                row['sum_unit_type'] = s['unit_type']
+                row['sum_avg_rent'] = s['avg_current_rent']
+                row['sum_avg_size'] = s['avg_size']
+                row['sum_total_sf'] = s['total_sf']
+                row['sum_rent_sf'] = s['rent_per_sf']
+                row['sum_units'] = s['units']
+                row['sum_mix'] = s['mix_percent']
+                row['sum_sf_pct'] = s['sf_percent']
+                row['sum_beds'] = s['beds']
+                row['sum_rent_bed'] = s['rent_per_bed']
+            else:
+                # Add None/Empty keys to ensure consistent JSON structure if needed, or rely on undefined
+                pass
+
+            # 3. Spacer 2
+            row['spacer2'] = ''
+
+            # 4. Stabilized Breakdown
+            if i < len(stabilized_rows):
+                s = stabilized_rows[i]
+                row['stab_unit_type'] = s['unit_type']
+                row['stab_rent'] = s['pro_forma_rent']
+                row['stab_size'] = s['size']
+                row['stab_total_sf'] = s['total_sf']
+                row['stab_rent_sf'] = s['rent_per_sf']
+                row['stab_units'] = s['units']
+                row['stab_mix'] = s['mix_percent']
+                row['stab_sf_pct'] = s['sf_percent']
+                row['stab_beds'] = s['beds']
+                row['stab_rent_bed'] = s['rent_per_bed']
+                row['stab_bed_count'] = s['bed_count']
+                row['stab_occ'] = s['occupancy_type']
+                row['stab_single'] = s['single_count']
+                row['stab_double'] = s['double_count']
+                row['stab_s_price'] = s['single_price']
+                row['stab_d_price'] = s['double_price']
+                row['stab_config'] = s['unit_config']
+
+        # Define Unified Columns
+        main_cols = [
+            {"field": "unit_number", "headerName": "Unit", "width": 80, "pinned": "left"},
+            {
+                "headerName": "Unit Mix Summary",
+                "children": [
+                    {"field": "unit_type", "headerName": "Type", "width": 120},
+                    {"field": "beds", "headerName": "Beds", "width": 70},
+                    {"field": "unit_size", "headerName": "Size", "width": 80},
+                ]
+            },
+            {
+                "headerName": "Current Effective",
+                "children": [
+                    {"field": "current_rent", "headerName": "$/Mo", "width": 100, "type": "currency"},
+                    {"field": "current_rent_sf", "headerName": "$/SF", "width": 80, "type": "currency"},
+                ]
+            },
+            {
+                "headerName": "Pro Forma Rents",
+                "children": [
+                    {"field": "market_rent", "headerName": "PF $/Mo", "width": 100, "type": "currency"},
+                    {"field": "market_rent_sf", "headerName": "PF $/SF", "width": 80, "type": "currency"},
+                ]
+            },
+            {
+                "headerName": "Pro Forma Rent Comparison",
+                "children": [
+                    {"field": "dollar_increase", "headerName": "$ Incr", "width": 90, "type": "currency"},
+                    {"field": "percent_increase", "headerName": "% Incr", "width": 90, "type": "percent"},
+                ]
+            },
+            {
+                "headerName": "Notes on Tenancy",
+                "children": [
+                    {"field": "pro_forma_unit_type", "headerName": "PF Type", "width": 120},
+                    {"field": "unit_config", "headerName": "Config", "width": 120},
+                    {"field": "pro_forma_beds", "headerName": "PF Beds", "width": 90},
+                    {"field": "rc", "headerName": "RC", "width": 60},
+                    {"field": "lease_start", "headerName": "Start", "width": 100},
+                    {"field": "lease_end", "headerName": "End", "width": 100}
+                ]
+            }
+        ]
+
+        spacer1 = [{"field": "spacer1", "headerName": "", "width": 50, "cellStyle": {'backgroundColor': '#f5f5f5'}}]
+        
+        summary_cols = [
+            {"headerName": "Unit Breakdown - Existing", "children": [
+                {"field": "sum_unit_type", "headerName": "Type", "width": 120},
+                {"field": "sum_avg_rent", "headerName": "Avg Rent", "width": 100, "type": "currency"},
+                {"field": "sum_avg_size", "headerName": "Avg Size", "width": 90},
+                {"field": "sum_total_sf", "headerName": "Total SF", "width": 90},
+                {"field": "sum_rent_sf", "headerName": "$/SF", "width": 80, "type": "currency"},
+                {"field": "sum_units", "headerName": "Units", "width": 70},
+                {"field": "sum_mix", "headerName": "Mix %", "width": 80, "type": "percent"},
+                {"field": "sum_sf_pct", "headerName": "SF %", "width": 80, "type": "percent"},
+                {"field": "sum_beds", "headerName": "Avg Beds", "width": 80},
+                {"field": "sum_rent_bed", "headerName": "$/Bed", "width": 90, "type": "currency"}
+            ]}
+        ]
+
+        spacer2 = [{"field": "spacer2", "headerName": "", "width": 50, "cellStyle": {'backgroundColor': '#f5f5f5'}}]
+
+        stabilized_cols = [
+            {"headerName": "Unit Breakdown - Stabilized", "children": [
+                {"field": "stab_unit_type", "headerName": "Type", "width": 120},
+                {"field": "stab_rent", "headerName": "PF Rent", "width": 100, "type": "currency"},
+                {"field": "stab_size", "headerName": "Avg Size", "width": 90},
+                {"field": "stab_total_sf", "headerName": "Total SF", "width": 90},
+                {"field": "stab_rent_sf", "headerName": "$/SF", "width": 80, "type": "currency"},
+                {"field": "stab_units", "headerName": "Units", "width": 70},
+                {"field": "stab_mix", "headerName": "Mix %", "width": 80, "type": "percent"},
+                {"field": "stab_sf_pct", "headerName": "SF %", "width": 80, "type": "percent"},
+                {"field": "stab_beds", "headerName": "Beds", "width": 70},
+                {"field": "stab_rent_bed", "headerName": "$/Bed", "width": 90, "type": "currency"},
+                {"field": "stab_bed_count", "headerName": "Bed Ct", "width": 80},
+                {"field": "stab_occ", "headerName": "Occ", "width": 100},
+                {"field": "stab_single", "headerName": "Single", "width": 70},
+                {"field": "stab_double", "headerName": "Double", "width": 70},
+                {"field": "stab_s_price", "headerName": "S $", "width": 90, "type": "currency"},
+                {"field": "stab_d_price", "headerName": "D $", "width": 90, "type": "currency"},
+                {"field": "stab_config", "headerName": "Config", "width": 120}
+            ]}
+        ]
+
+        return {
+            "columns": main_cols + spacer1 + summary_cols + spacer2 + stabilized_cols,
+            "rows": rows
+        }
+
     def _create_rent_roll_excel_sync(self, analysis_data: UnderwritingAnalysis) -> bytes:
         workbook = openpyxl.Workbook()
         assumptions_log = []
