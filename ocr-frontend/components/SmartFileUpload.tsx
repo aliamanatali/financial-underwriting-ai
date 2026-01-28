@@ -25,6 +25,7 @@ export default function SmartFileUpload({
   const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ loaded: 0, total: 0, percentage: 0 });
   const [processingMessage, setProcessingMessage] = useState<string>("Initializing...");
   
@@ -66,13 +67,13 @@ export default function SmartFileUpload({
     setIsDragging(false);
 
     const files = Array.from(e.dataTransfer.files);
-    addFiles(files);
+    processAndAddFiles(files);
   }, []);
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
-      addFiles(files);
+      processAndAddFiles(files);
     }
     // Reset input value to allow selecting same files again if needed
     if (fileInputRef.current) {
@@ -80,28 +81,77 @@ export default function SmartFileUpload({
     }
   };
 
-  const addFiles = (files: File[]) => {
-    const newStagedFiles: StagedFile[] = [];
-    
-    files.forEach(file => {
-      // Basic validation
-      if (file.size === 0) return;
-      
-      // Check for duplicates
-      if (stagedFiles.some(f => f.file.name === file.name && f.file.size === file.size)) {
-          return;
+  const processAndAddFiles = async (files: File[]) => {
+    setIsExtracting(true);
+    const processedFiles: File[] = [];
+
+    try {
+      for (const file of files) {
+        // If it's a ZIP file, extract it locally
+        if (file.name.toLowerCase().endsWith('.zip')) {
+          try {
+            const zip = await JSZip.loadAsync(file);
+            const extractions: Promise<void>[] = [];
+
+            zip.forEach((relativePath, zipEntry) => {
+              if (zipEntry.dir) return; // Skip directories
+              // Skip macOS artifacts and hidden files
+              if (zipEntry.name.includes('__MACOSX') || zipEntry.name.split('/').pop()?.startsWith('.')) return;
+
+              const promise = zipEntry.async('blob').then((blob) => {
+                // Determine mime type based on extension (simple check) or default
+                const type = blob.type || 'application/octet-stream';
+                const extractedFile = new File([blob], zipEntry.name, { type });
+                processedFiles.push(extractedFile);
+              });
+              extractions.push(promise);
+            });
+
+            await Promise.all(extractions);
+          } catch (err) {
+            console.error("Error extracting zip:", err);
+            // If extraction fails, just add the original zip
+            processedFiles.push(file);
+            showWarning("Zip Extraction Failed", `Could not extract ${file.name}. It will be uploaded as-is.`);
+          }
+        } else {
+          processedFiles.push(file);
+        }
       }
+    } catch (error) {
+      console.error("Error processing files:", error);
+    } finally {
+      setIsExtracting(false);
+    }
 
-      const isImage = file.type.startsWith('image/');
+    // Now add all processed files to stage
+    addFiles(processedFiles);
+  };
+
+  const addFiles = (files: File[]) => {
+    setStagedFiles(prev => {
+      const newStagedFiles: StagedFile[] = [];
       
-      newStagedFiles.push({
-        id: Math.random().toString(36).substring(7),
-        file,
-        previewUrl: isImage ? URL.createObjectURL(file) : undefined
-      });
-    });
+      files.forEach(file => {
+        // Basic validation
+        if (file.size === 0) return;
+        
+        // Check for duplicates
+        if (prev.some(f => f.file.name === file.name && f.file.size === file.size)) {
+            return;
+        }
 
-    setStagedFiles(prev => [...prev, ...newStagedFiles]);
+        const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        
+        newStagedFiles.push({
+          id: Math.random().toString(36).substring(7),
+          file,
+          previewUrl: isImage ? URL.createObjectURL(file) : undefined
+        });
+      });
+      
+      return [...prev, ...newStagedFiles];
+    });
   };
 
   const removeFile = (id: string) => {
@@ -230,20 +280,30 @@ export default function SmartFileUpload({
                 
             </p>
             
-            <button className="px-6 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors">
-                Select Files
+            <button
+                className="px-6 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors"
+                disabled={isExtracting}
+            >
+                {isExtracting ? "Processing..." : "Select Files"}
             </button>
         </div>
 
         {/* Staging Area */}
-        <div className="flex flex-col h-[400px] bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex flex-col h-[400px] bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden relative">
+            {isExtracting && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+                    <div className="w-8 h-8 border-2 border-gray-200 border-t-[#FF5E00] rounded-full animate-spin mb-2"></div>
+                    <p className="text-sm font-medium text-gray-600">Extracting files...</p>
+                </div>
+            )}
+            
             <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
                 <h3 className="font-semibold text-gray-800">Selected Files ({stagedFiles.length})</h3>
                 {stagedFiles.length > 0 && (
-                    <button 
+                    <button
                         onClick={(e) => { e.stopPropagation(); setStagedFiles([]); }}
                         className="text-xs text-red-500 hover:text-red-700 font-medium"
-                        disabled={isUploading}
+                        disabled={isUploading || isExtracting}
                     >
                         Clear All
                     </button>
@@ -251,7 +311,7 @@ export default function SmartFileUpload({
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {stagedFiles.length === 0 ? (
+                {stagedFiles.length === 0 && !isExtracting ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-2 opacity-60">
                         <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

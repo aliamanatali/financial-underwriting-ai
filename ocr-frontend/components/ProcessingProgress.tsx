@@ -129,9 +129,12 @@ export default function ProcessingProgressComponent({
       {/* Overall Progress */}
       <div className="bg-white shadow rounded-lg p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">
-            Processing Progress
-          </h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-lg font-semibold text-gray-900">
+              Processing Progress
+            </h3>
+            {progress.status === "processing" && <LoadingSpinner size="sm" />}
+          </div>
           <span className="text-2xl font-bold text-[#FF5E00]">
             {Math.round(progressPercentage)}%
           </span>

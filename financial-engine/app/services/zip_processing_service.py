@@ -103,6 +103,21 @@ class ZipProcessingService:
         # and implement the new smart upload logic in process_smart_upload.
         return await self._process_zip_internal(zip_path, property_name, progress_service, task_id)
 
+    def _should_skip_file(self, file_path: str) -> bool:
+        """Check if file should be skipped (hidden files, MACOSX artifacts, etc)."""
+        if file_path.endswith('/'):
+            return True
+            
+        basename = os.path.basename(file_path)
+        if basename.startswith('.'):
+            return True
+            
+        # Skip macOS resource forks
+        if "__MACOSX" in file_path:
+            return True
+            
+        return False
+
     async def _process_zip_internal(
         self,
         zip_path: str,
@@ -144,7 +159,7 @@ class ZipProcessingService:
                 total_files = len(file_list)
                 
                 for idx, file_path in enumerate(file_list):
-                    if file_path.endswith('/') or os.path.basename(file_path).startswith('.'):
+                    if self._should_skip_file(file_path):
                         continue
                     
                     filename = os.path.basename(file_path)
@@ -203,7 +218,7 @@ class ZipProcessingService:
                 # Batch classify remaining files if any
                 if files_to_classify and classification_service:
                     if progress_service and task_id:
-                        await progress_service.update_progress(task_id, 70, f"Classifying {len(files_to_classify)} loose files...")
+                        await progress_service.update_progress(task_id, 70, f"Classifying files...")
                     
                     # Extract filenames for batch classification
                     filenames = [f["filename"] for f in files_to_classify]
@@ -302,16 +317,52 @@ class ZipProcessingService:
         file_cache_data = {}
         files_processed = 0
         
-        # 1. Classify all files
-        if progress_service and task_id:
-            await progress_service.update_progress(task_id, 20, f"Classifying {len(files)} files...")
-            
-        filenames = [f[0] for f in files]
-        classifications = await classification_service.classify_files_batch(filenames)
+        # 1. separate files into known (by folder/path) and unknown (need classification)
+        files_to_classify = []
+        known_files = [] # list of (filename, content, doc_type)
         
-        # 2. Add files to package
-        for idx, (filename, content) in enumerate(files):
-            doc_type = classifications.get(filename)
+        for filename, content in files:
+            # Check for skip first (in case not filtered upstream)
+            if self._should_skip_file(filename):
+                continue
+
+            # Try to determine type from folder structure first
+            path_parts = Path(filename).parts
+            found_type = None
+            
+            # Check path parts for folder mapping
+            if len(path_parts) > 1:
+                for part in path_parts[:-1]:
+                    dt = get_document_type_from_folder(part)
+                    if dt:
+                        found_type = dt
+                        break
+            
+            if found_type:
+                known_files.append((filename, content, found_type))
+            else:
+                files_to_classify.append((filename, content))
+
+        # 2. Classify unknown files
+        if files_to_classify:
+            if progress_service and task_id:
+                await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} loose files...")
+                
+            filenames_to_classify = [f[0] for f in files_to_classify]
+            classifications = await classification_service.classify_files_batch(filenames_to_classify)
+        else:
+            classifications = {}
+
+        # 3. Add all files to package
+        all_files = known_files + files_to_classify
+        total_files = len(all_files)
+        
+        for idx, item in enumerate(all_files):
+            if len(item) == 3:
+                filename, content, doc_type = item
+            else:
+                filename, content = item
+                doc_type = classifications.get(filename)
             
             if doc_type:
                 # Use basename for storage/metadata to keep it clean
@@ -359,16 +410,49 @@ class ZipProcessingService:
         now = datetime.utcnow().isoformat()
         file_cache_data = {}
         
-        # Batch classify
-        if classification_service:
-            filenames = [f[0] for f in files]
-            classifications = await classification_service.classify_files_batch(filenames)
+        # 1. separate files into known (by folder/path) and unknown (need classification)
+        files_to_classify = []
+        known_files = [] # list of (filename, content, doc_type)
+        
+        for filename, content in files:
+            # Check for skip first
+            if self._should_skip_file(filename):
+                continue
+
+            # Try to determine type from folder structure first
+            path_parts = Path(filename).parts
+            found_type = None
+            
+            # Check path parts for folder mapping
+            if len(path_parts) > 1:
+                for part in path_parts[:-1]:
+                    dt = get_document_type_from_folder(part)
+                    if dt:
+                        found_type = dt
+                        break
+            
+            if found_type:
+                known_files.append((filename, content, found_type))
+            else:
+                files_to_classify.append((filename, content))
+
+        # 2. Classify unknown files
+        if files_to_classify and classification_service:
+            filenames_to_classify = [f[0] for f in files_to_classify]
+            classifications = await classification_service.classify_files_batch(filenames_to_classify)
         else:
             classifications = {}
 
+        # 3. Add all files to package
+        all_files = known_files + files_to_classify
         files_added = 0
-        for filename, content in files:
-            doc_type = classifications.get(filename)
+        
+        for idx, item in enumerate(all_files):
+            if len(item) == 3:
+                filename, content, doc_type = item
+            else:
+                filename, content = item
+                doc_type = classifications.get(filename)
             
             if doc_type:
                 safe_filename = os.path.basename(filename)
