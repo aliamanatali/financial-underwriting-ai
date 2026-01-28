@@ -136,8 +136,26 @@ export default function UnitBreakdownTable({ rentRoll, studentHousingConfig, isE
         <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
           <tr>
             <th className="px-4 py-3">Unit Type</th>
-            <th className="px-4 py-3 text-right">Avg Current Rent</th>
-            <th className="px-4 py-3 text-right">Size</th>
+            <th className="px-4 py-3 text-right">
+              <div className="flex items-center justify-end">
+                Avg Current Rent
+                <WidgetTooltip
+                  title="Average Current Rent"
+                  description="The average current monthly rent for units in this category."
+                  formulas={[{ label: "Avg Rent", formula: "Sum of Current Rents / Unit Count" }]}
+                />
+              </div>
+            </th>
+            <th className="px-4 py-3 text-right">
+              <div className="flex items-center justify-end">
+                Size
+                <WidgetTooltip
+                  title="Average Unit Size"
+                  description="The average square footage of units in this category."
+                  formulas={[{ label: "Avg Size", formula: "Sum of Unit Sizes / Unit Count" }]}
+                />
+              </div>
+            </th>
             <th className="px-4 py-3 text-right">
               <div className="flex items-center justify-end">
                 Total SF
