@@ -236,7 +236,7 @@ export default function SmartFileUpload({
         </div>
 
         {/* Staging Area */}
-        <div className="flex flex-col h-full min-h-[400px] bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex flex-col h-[400px] bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
                 <h3 className="font-semibold text-gray-800">Selected Files ({stagedFiles.length})</h3>
                 {stagedFiles.length > 0 && (
@@ -250,7 +250,7 @@ export default function SmartFileUpload({
                 )}
             </div>
             
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[350px]">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {stagedFiles.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-2 opacity-60">
                         <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
