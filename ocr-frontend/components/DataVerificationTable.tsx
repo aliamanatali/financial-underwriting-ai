@@ -77,9 +77,6 @@ export default function DataVerificationTable({
     return "text-rose-700 bg-rose-50 border border-rose-100";
   };
 
-  const verifiedCount = items.filter((item) => item.user_verified).length;
-  const totalCount = items.length;
-  const progressPercentage = totalCount > 0 ? (verifiedCount / totalCount) * 100 : 0;
 
   const getDocumentId = (item: NormalizedDataItem): string | undefined => {
     if (!documents) return undefined;
@@ -95,46 +92,6 @@ export default function DataVerificationTable({
 
   return (
     <div className="space-y-6">
-      {/* Header with Progress */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">
-              Data Verification
-            </h2>
-            <p className="text-base text-slate-500 mt-1">
-              Review and correct AI-mapped categories
-            </p>
-          </div>
-          <button
-            onClick={onVerifyAll}
-            disabled={verifiedCount === totalCount}
-            className={`px-6 py-2.5 rounded-lg font-medium transition-colors ${
-              verifiedCount === totalCount
-                ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                : "bg-[#FF5E00] text-white hover:bg-[#E65400] shadow-md hover:shadow-lg"
-            }`}
-          >
-            Verify All
-          </button>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="space-y-3">
-          <div className="flex justify-between text-sm font-medium text-slate-600">
-            <span>
-              Verified: <span className="text-slate-900">{verifiedCount}</span> / {totalCount}
-            </span>
-            <span className="text-slate-900">{progressPercentage.toFixed(0)}%</span>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-            <div
-              className="bg-[#FF5E00] h-3 rounded-full transition-all duration-500 ease-out"
-              style={{ width: `${progressPercentage}%` }}
-            />
-          </div>
-        </div>
-      </div>
 
       {/* Grouped Tables */}
       <div className="space-y-8">

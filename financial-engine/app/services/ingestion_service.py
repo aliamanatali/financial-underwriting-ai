@@ -263,7 +263,7 @@ class IngestionService:
         raw_expenses = await self.ingest_financials_from_pdf(document_id)
 
         # 4. Normalize Expenses (with audit trail integration)
-        historical_expenses = self.normalization_service.normalize_expenses(raw_expenses)
+        historical_expenses = self.normalization_service.normalize_expenses(raw_expenses, document_id=document_id)
         
         # 5. Compute Rent Roll Summary first (needed for audit trail)
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
@@ -292,35 +292,40 @@ class IngestionService:
             "extracted_value": property_meta.address,
             "source": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from Operating Memorandum cover page"
+            "method": "Extracted from Operating Memorandum cover page",
+            "document_id": document_id
         })
         audit_trail_entries.append({
             "field_name": "Year Built",
             "extracted_value": property_meta.year_built,
             "source": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from property description section"
+            "method": "Extracted from property description section",
+            "document_id": document_id
         })
         audit_trail_entries.append({
             "field_name": "Building Size (Sq Ft)",
             "extracted_value": property_meta.building_size,
             "source": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from property description section (NRA/Rentable SF)"
+            "method": "Extracted from property description section (NRA/Rentable SF)",
+            "document_id": document_id
         })
         audit_trail_entries.append({
             "field_name": "Purchase Price",
             "extracted_value": property_meta.purchase_price,
             "source": "OM / PDF",
             "confidence_score": 0.9,
-            "method": "Extracted from offering summary"
+            "method": "Extracted from offering summary",
+            "document_id": document_id
         })
         audit_trail_entries.append({
             "field_name": "Total Units",
             "extracted_value": property_meta.total_units,
             "source": "Rent Roll / PDF",
             "confidence_score": 0.95,
-            "method": "Counted from rent roll line items"
+            "method": "Counted from rent roll line items",
+            "document_id": document_id
         })
         
         # Add Rent Roll summary audit logs
@@ -329,14 +334,16 @@ class IngestionService:
             "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}",
             "source": "Rent Roll / PDF",
             "confidence_score": 0.98,
-            "method": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total"
+            "method": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total",
+            "document_id": document_id
         })
         audit_trail_entries.append({
             "field_name": "Total Annual Rent (T12)",
             "extracted_value": rent_roll_summary.total_annual_rent,
             "source": "Rent Roll / PDF",
             "confidence_score": 0.98,
-            "method": "Summed current rents from all unit line items"
+            "method": "Summed current rents from all unit line items",
+            "document_id": document_id
         })
         
         # Add Normalized Expenses audit logs
@@ -391,6 +398,11 @@ class IngestionService:
         Extracts raw T12 line items. We don't normalize yet, just get the text.
         """
         raw_text = await self.ocr_backend_client.get_document_text(document_id)
+        
+        # NOTE: We are currently using text-only prompt which doesn't return bounding boxes easily with Gemini 1.5/2.0 text mode.
+        # To get bounding boxes, we would need to use OCR results directly or a vision model that returns coordinates.
+        # For now, we will proceed without bbox for expenses, but document_id will be linked.
+        # Future improvement: Use OCR backend's word/line coordinates if available.
 
         prompt = """
         Analyze this T12 Income Statement. Extract all EXPENSE line items.

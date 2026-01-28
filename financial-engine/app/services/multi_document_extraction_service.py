@@ -672,11 +672,17 @@ class MultiDocumentExtractionService:
         
         logger.info(f"Starting to process {len(documents)} documents")
         
+        # Create mapping of filename to document_id for later association
+        filename_to_doc_id = {}
+        # We need to extract document_id from the document input if available
+        # The input 'documents' is constructed in multi_document.py
+        
         # Extract from each document
         for idx, doc in enumerate(documents):
             file_content = doc.get("content")
             filename = doc.get("filename", "unknown")
             file_type = doc.get("type", "").lower()
+            document_id = doc.get("document_id")  # This needs to be passed from the route
             
             if progress_service and task_id:
                 # Calculate progress based on files processed
@@ -742,13 +748,19 @@ class MultiDocumentExtractionService:
                     expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
                     logger.info(f"Extracted {len(expenses)} expenses from {filename}")
                     
+                    # Attach document_id to expenses if available
+                    if document_id:
+                        for exp in expenses:
+                            exp["document_id"] = document_id
+
                     # If extraction returned empty, create a placeholder entry
                     if not expenses:
                         logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
                         expenses = [{
                             "raw_text": f"Document - {filename} (No expenses extracted)",
                             "amount": 0.0,
-                            "source_document": filename
+                            "source_document": filename,
+                            "document_id": document_id
                         }]
                 else:
                     logger.warning(f"Unsupported file type for {filename}")
@@ -846,6 +858,18 @@ class MultiDocumentExtractionService:
                             except:
                                 group_enum = CategoryGroup.OTHER
                             
+                        # Ensure metadata includes document_id
+                        meta = {
+                            "amount": amount,
+                            "reasoning": normalization.get("reasoning", ""),
+                            "row_count": expense.get("row_count"),
+                            "categories_found": expense.get("categories_found"),
+                            "original_type": item_type,
+                            "page_number": expense.get("page_number"),
+                            "bbox": expense.get("bbox"),
+                            "document_id": expense.get("document_id")  # Pass document_id
+                        }
+
                         item = NormalizedDataItem(
                             id=f"item_{len(normalized_items)}",
                             raw_text=raw_text,
@@ -856,15 +880,7 @@ class MultiDocumentExtractionService:
                             confidence=normalization.get("confidence", 0.5),
                             user_verified=False,
                             source_document=expense.get("source_document", "Unknown"),
-                            metadata={
-                                "amount": amount,
-                                "reasoning": normalization.get("reasoning", ""),
-                                "row_count": expense.get("row_count"),
-                                "categories_found": expense.get("categories_found"),
-                                "original_type": item_type,
-                                "page_number": expense.get("page_number"),
-                                "bbox": expense.get("bbox")
-                            }
+                            metadata=meta
                         )
                         normalized_items.append(item)
                         

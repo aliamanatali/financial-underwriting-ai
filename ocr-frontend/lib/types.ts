@@ -208,6 +208,9 @@ export interface AuditEntry {
   confidence_score?: number;
   timestamp?: string;
   reasons?: string[];
+  document_id?: string;
+  page_number?: number;
+  bbox?: number[];
 }
 
 export interface ExplanationSource {

@@ -364,7 +364,8 @@ async def normalize_package_documents(
                 "content": file_data["content"],
                 "filename": filename,
                 "type": file_type,
-                "document_category": doc_metadata.document_type
+                "document_category": doc_metadata.document_type,
+                "document_id": doc_id # Pass document_id for downstream linking
             })
     
     if not documents_to_process:
@@ -1024,6 +1025,11 @@ async def analyze_deal_package(
                     if amount == 0.0:
                         amount = 1000.0  # Default fallback
                 
+                # Get document_id from metadata if available (it should be there now)
+                doc_id = item.metadata.get("document_id") if item.metadata else None
+                page_number = item.metadata.get("page_number") if item.metadata else None
+                bbox = item.metadata.get("bbox") if item.metadata else None
+
                 expense = StandardizedExpense(
                     original_text=item.raw_text,
                     mapped_category=category,
@@ -1034,7 +1040,10 @@ async def analyze_deal_package(
                         extracted_value=amount,
                         source=item.source_document,
                         confidence_score=sanitize_float(item.confidence),
-                        method=f"Extracted from {item.source_document}"
+                        method=f"Extracted from {item.source_document}",
+                        document_id=doc_id,
+                        page_number=page_number,
+                        bbox=bbox
                     ),
                     user_verified=item.user_verified,
                     user_corrected_category=ExpenseCategory(item.user_correction) if item.user_correction else None

@@ -79,6 +79,9 @@ class AuditLog(BaseModel):
     confidence_score: float
     method: str
     timestamp: Optional[str] = None
+    document_id: Optional[str] = None
+    page_number: Optional[int] = None
+    bbox: Optional[List[float]] = None
 
 class PropertyMeta(BaseModel):
     address: Optional[str] = "Unknown"

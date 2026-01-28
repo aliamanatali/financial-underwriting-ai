@@ -495,7 +495,7 @@ export default function AnalysisResultPage() {
             )}
 
             {activeTab === "audit" && (
-              <AuditTrailWidget auditTrail={analysis.audit_trail || []} />
+              <AuditTrailWidget auditTrail={analysis.audit_trail || []} packageId={id} />
             )}
 
             {activeTab === "export" && (
