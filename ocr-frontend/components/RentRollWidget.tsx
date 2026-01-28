@@ -24,6 +24,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import WidgetTooltip from "./WidgetTooltip";
 
 type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
   id: string;
@@ -36,6 +37,8 @@ type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "s
   market_rent_single?: number;
   market_rent_double?: number;
   unit_config_label?: string;
+  bed_count?: number;
+  occupancy_type?: string;
 };
 
 interface RentRollWidgetProps {
@@ -270,7 +273,7 @@ export default function RentRollWidget({
   };
 
   const handleUnitBreakdownChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
-    const newItems = items.map(item => {
+    setItems(prevItems => prevItems.map(item => {
       if (item.unit_type === unitType) {
         return {
           ...item,
@@ -278,8 +281,7 @@ export default function RentRollWidget({
         };
       }
       return item;
-    });
-    setItems(newItems);
+    }));
   };
 
   const handleSave = async () => {
@@ -334,6 +336,8 @@ export default function RentRollWidget({
                 market_rent_single: item.market_rent_single,
                 market_rent_double: item.market_rent_double,
                 unit_config_label: item.unit_config_label,
+                bed_count: item.bed_count !== undefined ? item.bed_count : config.bed_count,
+                occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || config.occupancy_type,
               };
             }
             return config;
@@ -742,12 +746,48 @@ export default function RentRollWidget({
                   <th className="px-4 py-3 border-r">Beds</th>
                   <th className="px-4 py-3 border-r">Size</th>
                   <th className="px-4 py-3 border-r">$/Month</th>
-                  <th className="px-4 py-3 border-r">$/SF</th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $/SF
+                      <WidgetTooltip
+                        title="Rent per Square Foot (Annual)"
+                        description="The annualized rent calculated on a per-square-foot basis."
+                        formulas={[{ label: "$/SF", formula: "(Current Rent * 12) / Unit Size" }]}
+                      />
+                    </div>
+                  </th>
                   <th className="px-4 py-3 border-r">Units</th>
                   <th className="px-4 py-3 border-r">$/Month</th>
-                  <th className="px-4 py-3 border-r">$/SqFt</th>
-                  <th className="px-4 py-3 border-r">$ Increase</th>
-                  <th className="px-4 py-3 border-r">% Increase</th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $/SqFt
+                      <WidgetTooltip
+                        title="Pro Forma Rent per Square Foot (Annual)"
+                        description="The annualized pro forma market rent calculated on a per-square-foot basis."
+                        formulas={[{ label: "$/SqFt", formula: "(Market Rent * 12) / Unit Size" }]}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $ Increase
+                      <WidgetTooltip
+                        title="Rent Increase ($)"
+                        description="The dollar amount difference between the pro forma market rent and the current rent."
+                        formulas={[{ label: "$ Increase", formula: "Market Rent - Current Rent" }]}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      % Increase
+                      <WidgetTooltip
+                        title="Rent Increase (%)"
+                        description="The percentage increase from the current rent to the pro forma market rent."
+                        formulas={[{ label: "% Increase", formula: "((Market Rent - Current Rent) / Current Rent) * 100" }]}
+                      />
+                    </div>
+                  </th>
                   <th className="px-4 py-3 border-r">Pro Forma Unit Type</th>
                   <th className="px-4 py-3 border-r">Unit Config</th>
                   <th className="px-4 py-3 border-r">Beds</th>

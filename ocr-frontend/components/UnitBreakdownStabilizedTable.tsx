@@ -2,6 +2,7 @@
 
 import React from "react";
 import { RentRollItem, StudentHousingConfig } from "@/lib/types";
+import WidgetTooltip from "./WidgetTooltip";
 
 type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
   id: string;
@@ -14,6 +15,8 @@ type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "s
   market_rent_single?: number;
   market_rent_double?: number;
   unit_config_label?: string;
+  bed_count?: number;
+  occupancy_type?: string;
 };
 
 interface UnitBreakdownTableProps {
@@ -26,9 +29,44 @@ interface UnitBreakdownTableProps {
 export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingConfig, isEditing, onItemChange }: UnitBreakdownTableProps) {
   const [localRentRoll, setLocalRentRoll] = React.useState(rentRoll);
 
+  // Initialize localRentRoll with config values when editing starts or config/rentRoll changes
   React.useEffect(() => {
-    setLocalRentRoll(rentRoll);
-  }, [rentRoll]);
+    if (isEditing && studentHousingConfig) {
+        setLocalRentRoll(prev => prev.map(item => {
+            const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type === item.unit_type);
+            if (config) {
+                // Determine default bed count if not set
+                let defaultBeds = 1;
+                if (!config.bed_count) {
+                    const type = item.unit_type || "";
+                    const match = type.match(/(\d+)\s*(?:bd|br|bed|bedroom)/i);
+                    if (match) {
+                        defaultBeds = parseInt(match[1]);
+                    } else if (type.toLowerCase().includes("studio")) {
+                        defaultBeds = 1;
+                    } else {
+                        const startMatch = type.match(/^(\d+)/);
+                        if (startMatch) defaultBeds = parseInt(startMatch[1]);
+                    }
+                }
+
+                return {
+                    ...item,
+                    beds_single: item.beds_single ?? config.beds_single,
+                    beds_double: item.beds_double ?? config.beds_double,
+                    market_rent_single: item.market_rent_single ?? config.market_rent_single,
+                    market_rent_double: item.market_rent_double ?? config.market_rent_double,
+                    unit_config_label: item.unit_config_label ?? config.unit_config_label,
+                    bed_count: item.bed_count ?? (config.bed_count || defaultBeds),
+                    occupancy_type: item.occupancy_type ?? config.occupancy_type
+                };
+            }
+            return item;
+        }));
+    } else {
+        setLocalRentRoll(rentRoll);
+    }
+  }, [rentRoll, isEditing, studentHousingConfig]);
 
   const formatCurrency = (val: number, decimals = 0) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(val);
@@ -42,14 +80,65 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
   };
  
    const handleLocalChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
-    setLocalRentRoll(prev =>
-      prev.map(item =>
-        item.unit_type === unitType ? { ...item, [field]: value } : item
-      )
-    );
-    if (onItemChange) {
-      onItemChange(unitType, field, value);
-    }
+    setLocalRentRoll(prev => {
+        const updated = prev.map(item => {
+            if (item.unit_type === unitType) {
+                let newItem = { ...item, [field]: value };
+
+                // UX Improvement: Auto-update label if it matches the occupancy type
+                if (field === "occupancy_type") {
+                    // If label was same as old occupancy (default), update it to new occupancy
+                    // We need the *previous* label/occupancy state, but since we are mapping over current items, 'item' is the previous state
+                    if (item.unit_config_label === item.occupancy_type) {
+                        newItem.unit_config_label = value;
+                    }
+
+                    // Intelligent Preset for Mixed/Single/Double Logic
+                    if (value === "Single") {
+                        newItem.beds_single = newItem.bed_count;
+                        newItem.beds_double = 0;
+                    } else if (value === "Double") {
+                        newItem.beds_single = 0;
+                        newItem.beds_double = newItem.bed_count;
+                    }
+                    // For "Mixed", we leave values as-is
+                    if (!newItem.beds_single) newItem.beds_single = 0;
+                    if (!newItem.beds_double) newItem.beds_double = 0;
+                }
+
+                // UX Improvement: If bed count changes, auto-update sub-counts if strictly Single or Double
+                if (field === "bed_count") {
+                    if (newItem.occupancy_type === "Single") {
+                        newItem.beds_single = value;
+                    } else if (newItem.occupancy_type === "Double") {
+                        newItem.beds_double = value;
+                    }
+                }
+
+                return newItem;
+            }
+            return item;
+        });
+        
+        // Propagate changes to parent
+        // Note: We need to find the updated item to pass the *new* values for potentially auto-updated fields
+        const updatedItem = updated.find(i => i.unit_type === unitType);
+        if (updatedItem && onItemChange) {
+            // We need to call onItemChange for all potentially changed fields
+            onItemChange(unitType, field, value);
+            if (field === "occupancy_type") {
+                onItemChange(unitType, "unit_config_label", updatedItem.unit_config_label);
+                onItemChange(unitType, "beds_single", updatedItem.beds_single);
+                onItemChange(unitType, "beds_double", updatedItem.beds_double);
+            }
+            if (field === "bed_count") {
+                onItemChange(unitType, "beds_single", updatedItem.beds_single);
+                onItemChange(unitType, "beds_double", updatedItem.beds_double);
+            }
+        }
+
+        return updated;
+    });
   };
 
    const data = React.useMemo(() => {
@@ -96,13 +185,20 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
       let beds = totalBeds / (unitCount || 1);
       const rentPerBed = avgMarketRent / (beds || 1);
 
+      // Prioritize localRentRoll if we have values (especially during editing)
+      // Otherwise fall back to config
+      const sampleItem = items[0]; // All items in this group should have same type-level config
+      
       const conf_obj = studentHousingConfig?.unit_type_configs.find(c => c.unit_type === unitType);
-      const occupancy = conf_obj?.occupancy_type || "Single";
-      const label = conf_obj?.unit_config_label || "Single";
-      const beds_s = conf_obj?.beds_single ?? 0;
-      const beds_d = conf_obj?.beds_double ?? 0;
-      const price_s = conf_obj?.market_rent_single ?? 0;
-      const price_d = conf_obj?.market_rent_double ?? 0;
+      
+      const occupancy = sampleItem?.occupancy_type || conf_obj?.occupancy_type || "Single";
+      const label = sampleItem?.unit_config_label || conf_obj?.unit_config_label || "Single";
+      const bed_count = sampleItem?.bed_count || conf_obj?.bed_count || 0;
+      
+      const beds_s = sampleItem?.beds_single ?? (conf_obj?.beds_single ?? 0);
+      const beds_d = sampleItem?.beds_double ?? (conf_obj?.beds_double ?? 0);
+      const price_s = sampleItem?.market_rent_single ?? (conf_obj?.market_rent_single ?? 0);
+      const price_d = sampleItem?.market_rent_double ?? (conf_obj?.market_rent_double ?? 0);
 
       if (beds_s > 0 || beds_d > 0) {
         beds = beds_s + beds_d;
@@ -133,9 +229,11 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
         price_s,
         price_d,
         config_str,
+        occupancy,
+        bed_count
       };
     });
-  }, [rentRoll, studentHousingConfig]);
+  }, [rentRoll, studentHousingConfig, localRentRoll, isEditing]);
 
   const totals = React.useMemo(() => {
     const totalUnits = data.reduce((sum, row) => sum + row.unitCount, 0);
@@ -177,13 +275,60 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
             <th className="px-4 py-3">Unit Type</th>
             <th className="px-4 py-3 text-right">Pro Forma Rent</th>
             <th className="px-4 py-3 text-right">Size</th>
-            <th className="px-4 py-3 text-right">Total SF</th>
-            <th className="px-4 py-3 text-right">Rent / SF</th>
+            <th className="px-4 py-3 text-right">
+              <div className="flex items-center justify-end">
+                Total SF
+                <WidgetTooltip
+                  title="Total Square Feet"
+                  description="The total square footage for all units of this type."
+                  formulas={[{ label: "Total SF", formula: "Average Size * Unit Count" }]}
+                />
+              </div>
+            </th>
+            <th className="px-4 py-3 text-right">
+              <div className="flex items-center justify-end">
+                Rent / SF
+                <WidgetTooltip
+                  title="Rent per Square Foot"
+                  description="The average pro forma monthly rent calculated on a per-square-foot basis."
+                  formulas={[{ label: "Rent / SF", formula: "Average Market Rent / Average Size" }]}
+                />
+              </div>
+            </th>
             <th className="px-4 py-3 text-center">Units</th>
-            <th className="px-4 py-3 text-center">Mix %</th>
-            <th className="px-4 py-3 text-center">SF %</th>
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center">
+                Mix %
+                <WidgetTooltip
+                  title="Unit Mix Percentage"
+                  description="The percentage of this unit type relative to the total number of units."
+                  formulas={[{ label: "Mix %", formula: "(Unit Count / Total Units) * 100" }]}
+                />
+              </div>
+            </th>
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center">
+                SF %
+                <WidgetTooltip
+                  title="Square Footage Percentage"
+                  description="The percentage of total square footage for this unit type relative to the overall total square footage."
+                  formulas={[{ label: "SF %", formula: "(Total SF / Total SF Overall) * 100" }]}
+                />
+              </div>
+            </th>
             <th className="px-4 py-3 text-center">Beds</th>
-            <th className="px-4 py-3 text-right">$/Beds</th>
+            <th className="px-4 py-3 text-right">
+              <div className="flex items-center justify-end">
+                $/Beds
+                <WidgetTooltip
+                  title="Rent per Bed"
+                  description="The average pro forma monthly rent calculated on a per-bed basis."
+                  formulas={[{ label: "$/Beds", formula: "Average Market Rent / Beds" }]}
+                />
+              </div>
+            </th>
+            <th className="px-4 py-3 text-center">Bed Count</th>
+            <th className="px-4 py-3 text-center">Occupancy Type</th>
             <th className="px-4 py-3 text-center">Single</th>
             <th className="px-4 py-3 text-center">Double</th>
             <th className="px-4 py-3 text-right">Single $</th>
@@ -227,29 +372,80 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
               <td className="px-4 py-2.5 text-center">{row.beds}</td>
               <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerBed)}</td>
               <td className="px-4 py-2.5 text-center">
+                  {isEditing && onItemChange ? (
+                      <input
+                        type="text"
+                        value={localRentRoll.find(item => item.unit_type === row.unit_type)?.bed_count || ''}
+                        onChange={(e) => handleLocalChange(row.unit_type, "bed_count" as any, parseInt(e.target.value) || 0)}
+                        className="w-16 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                      />
+                  ) : (
+                      row.bed_count || "-"
+                  )}
+              </td>
+              <td className="px-4 py-2.5 text-center">
+                   {isEditing && onItemChange ? (
+                      <select
+                          value={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single'}
+                          onChange={(e) => handleLocalChange(row.unit_type, "occupancy_type" as any, e.target.value)}
+                          className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                      >
+                          <option value="Single">Single</option>
+                          <option value="Double">Double</option>
+                          <option value="Mixed">Mixed</option>
+                      </select>
+                  ) : (
+                      row.occupancy || "Single"
+                  )}
+              </td>
+              <td className="px-4 py-2.5 text-center">
                 {isEditing && onItemChange ? (
-                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_single || ''} onChange={(e) => handleLocalChange(row.unit_type, "beds_single" as any, e.target.value)} className="w-16 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_single || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "beds_single" as any, parseInt(e.target.value) || 0)}
+                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double"}
+                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                  />
                 ) : (
                   row.beds_s > 0 ? row.beds_s : "-"
                 )}
               </td>
               <td className="px-4 py-2.5 text-center">
                 {isEditing && onItemChange ? (
-                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_double || ''} onChange={(e) => handleLocalChange(row.unit_type, "beds_double" as any, e.target.value)} className="w-16 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.beds_double || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "beds_double" as any, parseInt(e.target.value) || 0)}
+                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single"}
+                    className={`w-16 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                  />
                 ) : (
                   row.beds_d > 0 ? row.beds_d : "-"
                 )}
               </td>
               <td className="px-4 py-2.5 text-right">
                 {isEditing && onItemChange ? (
-                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_single || ''} onChange={(e) => handleLocalChange(row.unit_type, "market_rent_single" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_single || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "market_rent_single" as any, parseFloat(e.target.value) || 0)}
+                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double"}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                  />
                 ) : (
                   row.price_s > 0 ? formatCurrency(row.price_s) : (row.beds_s > 0 ? formatCurrency(row.rentPerBed) : "-")
                 )}
               </td>
               <td className="px-4 py-2.5 text-right">
                 {isEditing && onItemChange ? (
-                  <input type="text" value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_double || ''} onChange={(e) => handleLocalChange(row.unit_type, "market_rent_double" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                  <input
+                    type="text"
+                    value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_double || ''}
+                    onChange={(e) => handleLocalChange(row.unit_type, "market_rent_double" as any, parseFloat(e.target.value) || 0)}
+                    disabled={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single"}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                  />
                 ) : (
                   row.price_d > 0 ? formatCurrency(row.price_d) : (row.beds_d > 0 ? formatCurrency(row.rentPerBed) : "-")
                 )}
