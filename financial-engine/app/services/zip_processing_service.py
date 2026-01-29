@@ -5,7 +5,7 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
