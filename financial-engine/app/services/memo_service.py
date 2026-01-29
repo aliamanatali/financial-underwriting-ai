@@ -144,11 +144,13 @@ class MemoService:
                 pdf.cell(0, 6, line.replace('### ', ''), 0, 1, 'L')
             elif line.startswith('- '):
                  pdf.set_font('Helvetica', '', 11)
+                 pdf.set_x(pdf.l_margin)
                  pdf.multi_cell(0, 6, f"  - {line[2:]}")
             else:
                 pdf.set_font('Helvetica', '', 11)
                 # Remove bold markers for PDF (simple cleanup)
                 clean_line = line.replace('**', '')
+                pdf.set_x(pdf.l_margin)
                 pdf.multi_cell(0, 6, clean_line)
                 
         # In fpdf2, pdf.output() returns bytearray if no arguments are passed
