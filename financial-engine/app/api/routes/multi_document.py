@@ -1299,14 +1299,28 @@ async def analyze_deal_package(
     # Check for existing analysis to preserve persistent configurations (like student housing config)
     existing_analysis_dict = await storage_service.get_analysis_result(package_id)
     existing_student_config = None
-    if existing_analysis_dict and "student_housing_config" in existing_analysis_dict:
+    
+    # Priority 1: Check Manual Overrides (from Frontend Save)
+    if package.manual_overrides and "student_housing_config" in package.manual_overrides:
+        try:
+            from app.models.schemas import StudentHousingConfig
+            config_data = package.manual_overrides["student_housing_config"]
+            if config_data:
+                existing_student_config = StudentHousingConfig(**config_data)
+                logger.info("Restored student housing config from Manual Overrides")
+        except Exception as e:
+            logger.warning(f"Failed to restore student housing config from overrides: {e}")
+
+    # Priority 2: Check Existing Analysis (Fallback)
+    if not existing_student_config and existing_analysis_dict and "student_housing_config" in existing_analysis_dict:
         try:
             # Parse it to ensure validity
             from app.models.schemas import StudentHousingConfig
             if existing_analysis_dict["student_housing_config"]:
                 existing_student_config = StudentHousingConfig(**existing_analysis_dict["student_housing_config"])
+                logger.info("Restored student housing config from Previous Analysis")
         except Exception as e:
-            logger.warning(f"Failed to restore student housing config: {e}")
+            logger.warning(f"Failed to restore student housing config from analysis: {e}")
 
     # Create analysis object
     analysis = UnderwritingAnalysis(

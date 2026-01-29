@@ -85,6 +85,18 @@ async def export_rent_roll(
         }
     )
 
+@router.post("/export/rent-roll/preview")
+async def preview_rent_roll(
+    analysis_data: UnderwritingAnalysis,
+    excel_service: ExcelService = Depends(get_excel_service),
+):
+    """
+    Returns preview data for the Rent Roll (columns + rows) in JSON format.
+    Used for frontend grid display before downloading Excel.
+    """
+    preview_data = excel_service.get_rent_roll_preview_data(analysis_data)
+    return preview_data
+
 @router.post("/export/memo")
 async def export_memo(
     analysis_data: UnderwritingAnalysis,

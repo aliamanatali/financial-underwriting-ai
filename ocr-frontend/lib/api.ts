@@ -439,6 +439,28 @@ class ApiClient {
     a.remove();
     window.URL.revokeObjectURL(url);
   }
+
+  async getRentRollPreview(analysisData: UnderwritingAnalysis): Promise<{
+    columns: any[],
+    rows: any[],
+    summary_columns?: any[],
+    summary_rows?: any[],
+    stabilized_columns?: any[],
+    stabilized_rows?: any[]
+  }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/export/rent-roll/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(analysisData),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
 }
 
 export const apiClient = new ApiClient();
