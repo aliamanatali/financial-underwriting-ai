@@ -402,7 +402,7 @@ class ApiClient {
             break;
         case 'memo':
             endpoint = 'export/memo';
-            filename = `investment_memo_${analysisData.document_id}.md`;
+            filename = `investment_memo_${analysisData.document_id}.pdf`;
             break;
         case 'om-proforma':
             endpoint = 'export/om-proforma';

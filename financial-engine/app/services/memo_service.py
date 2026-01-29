@@ -1,8 +1,20 @@
 from typing import Dict, Any
 from app.models.schemas import UnderwritingAnalysis
 import logging
+from fpdf import FPDF
 
 logger = logging.getLogger(__name__)
+
+class PDF(FPDF):
+    def header(self):
+        self.set_font('Helvetica', 'B', 15)
+        self.cell(0, 10, 'Investment Memo', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Helvetica', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 class MemoService:
     def __init__(self, gemini_service: "GeminiService" = None):
@@ -78,6 +90,48 @@ class MemoService:
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             raise
+
+    def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
+        """
+        Generates a PDF investment memo.
+        """
+        if analysis_data.investment_memo:
+            content = analysis_data.investment_memo
+        else:
+            content = self.generate_investment_memo(analysis_data)
+        
+        pdf = PDF()
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                pdf.ln(2)
+                continue
+                
+            if line.startswith('# '):
+                pdf.set_font('Helvetica', 'B', 16)
+                pdf.cell(0, 10, line.replace('# ', ''), 0, 1, 'L')
+            elif line.startswith('## '):
+                pdf.set_font('Helvetica', 'B', 14)
+                pdf.cell(0, 8, line.replace('## ', ''), 0, 1, 'L')
+            elif line.startswith('### '):
+                pdf.set_font('Helvetica', 'B', 12)
+                pdf.cell(0, 6, line.replace('### ', ''), 0, 1, 'L')
+            elif line.startswith('- '):
+                 pdf.set_font('Helvetica', '', 11)
+                 pdf.multi_cell(0, 6, f"  • {line[2:]}")
+            else:
+                pdf.set_font('Helvetica', '', 11)
+                # Remove bold markers for PDF (simple cleanup)
+                clean_line = line.replace('**', '')
+                pdf.multi_cell(0, 6, clean_line)
+                
+        # In fpdf2, pdf.output() returns bytearray if no arguments are passed
+        # But to be safe and explicit, let's use the recommended approach for returning bytes
+        return pdf.output(dest='S').encode('latin-1')
 
     def _generate_memo_template(self, analysis_data: UnderwritingAnalysis) -> str:
         """
