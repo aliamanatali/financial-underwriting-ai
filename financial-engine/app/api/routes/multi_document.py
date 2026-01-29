@@ -1543,6 +1543,7 @@ async def delete_deal_package(package_id: str):
 async def get_package_document_content(package_id: str, document_id: str):
     """
     Get the raw content of a document within a package.
+    Returns a signed URL if GCP is configured, otherwise returns base64-encoded content.
     """
     # Check cache first
     if package_id in deal_packages_cache:
@@ -1567,15 +1568,64 @@ async def get_package_document_content(package_id: str, document_id: str):
     if not target_doc:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
 
-    # Generate a signed URL for the document
+    extension = Path(target_doc.filename).suffix
+    storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
+    
+    # Try to generate a signed URL first (preferred method)
     try:
-        extension = Path(target_doc.filename).suffix
-        storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
-        signed_url = await storage_service.get_signed_url(storage_path)
-        if not signed_url:
-            raise HTTPException(status_code=404, detail="Could not generate download link.")
-        
-        return {"signed_url": signed_url}
+        if storage_service.use_gcp:
+            signed_url = await storage_service.get_signed_url(storage_path)
+            if signed_url:
+                logger.info(f"Generated signed URL for document {document_id}")
+                return {"signed_url": signed_url}
+            else:
+                logger.warning(f"Signed URL generation returned None for {storage_path}")
+        else:
+            logger.warning("GCP not configured, cannot generate signed URL")
     except Exception as e:
-        logger.error(f"Error generating signed URL for {storage_path}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve document URL.")
+        logger.error(f"Error generating signed URL for {storage_path}: {e}", exc_info=True)
+    
+    # Fallback: Try to get document from cache
+    if document_id in file_storage_cache:
+        try:
+            import base64
+            file_data = file_storage_cache[document_id]
+            content = file_data.get("content")
+            if content:
+                # Return base64-encoded content for frontend to decode
+                encoded_content = base64.b64encode(content).decode('utf-8')
+                logger.info(f"Returning cached content for document {document_id} (base64)")
+                return {
+                    "content": encoded_content,
+                    "filename": target_doc.filename,
+                    "content_type": storage_service._get_content_type(target_doc.filename),
+                    "encoding": "base64"
+                }
+        except Exception as e:
+            logger.error(f"Error retrieving from cache: {e}", exc_info=True)
+    
+    # Fallback: Try to download from GCP storage directly
+    if storage_service.use_gcp:
+        try:
+            import base64
+            file_content = await storage_service.get_document_file(storage_path)
+            if file_content:
+                # Return base64-encoded content
+                encoded_content = base64.b64encode(file_content).decode('utf-8')
+                logger.info(f"Downloaded and returning content for document {document_id} (base64)")
+                return {
+                    "content": encoded_content,
+                    "filename": target_doc.filename,
+                    "content_type": storage_service._get_content_type(target_doc.filename),
+                    "encoding": "base64"
+                }
+            else:
+                logger.error(f"Document file not found in storage: {storage_path}")
+        except Exception as e:
+            logger.error(f"Error downloading from GCP: {e}", exc_info=True)
+    
+    # All methods failed
+    raise HTTPException(
+        status_code=404,
+        detail=f"Document file not accessible. Path: {storage_path}. Check GCP configuration and file existence."
+    )
