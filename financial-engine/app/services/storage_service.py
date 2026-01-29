@@ -458,6 +458,40 @@ class StorageService:
             logger.error(f"Failed to retrieve document file: {str(e)}")
             return None
     
+    async def get_signed_url(self, storage_path: str, expiration_minutes: int = 15) -> Optional[str]:
+        """
+        Generate a signed URL for a document in GCP Cloud Storage.
+        
+        Args:
+            storage_path: Path to the file in storage
+            expiration_minutes: URL validity in minutes
+            
+        Returns:
+            Signed URL string or None if failed
+        """
+        if not self.use_gcp:
+            return None
+        
+        try:
+            blob = self.bucket.blob(storage_path)
+            if not blob.exists():
+                logger.warning(f"Cannot generate signed URL, blob not found: {storage_path}")
+                return None
+            
+            # Generate signed URL
+            signed_url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(minutes=expiration_minutes),
+                method="GET"
+            )
+            
+            logger.info(f"Generated signed URL for: {storage_path}")
+            return signed_url
+            
+        except Exception as e:
+            logger.error(f"Failed to generate signed URL for {storage_path}: {str(e)}")
+            return None
+
     def _get_content_type(self, filename: str) -> str:
         """
         Determine content type based on file extension.

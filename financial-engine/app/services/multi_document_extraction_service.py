@@ -6,6 +6,7 @@ Handles extraction of financial data from PDFs and Excel files in deal packages.
 import io
 import logging
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
@@ -277,7 +278,16 @@ class MultiDocumentExtractionService:
                 # Upload the file to Gemini
                 uploaded_file = genai.upload_file(tmp_path, mime_type=mime_type)
                 logger.info(f"Uploaded file to Gemini: {uploaded_file.name} ({mime_type})")
+
+                # Wait for file to be active
+                while uploaded_file.state.name == "PROCESSING":
+                    logger.info(f"Waiting for file processing: {uploaded_file.name}")
+                    await asyncio.sleep(2)
+                    uploaded_file = genai.get_file(uploaded_file.name)
                 
+                if uploaded_file.state.name == "FAILED":
+                    raise Exception(f"File processing failed on Gemini side: {uploaded_file.name}")
+
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
                 
@@ -297,6 +307,8 @@ class MultiDocumentExtractionService:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable.
                 3. The item type: "revenue", "expense", "property_info", "capex".
+                4. The page number where this item is found.
+                5. The bounding box of the area containing this item (text + value).
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -304,7 +316,9 @@ class MultiDocumentExtractionService:
                         "raw_text": "Exact description",
                         "amount": 12345.67, // or null
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue" // or "expense", "property_info", "capex"
+                        "type": "revenue", // or "expense", "property_info", "capex"
+                        "page_number": 1, // Integer, 1-based page number
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000. Ensure the box fully encompasses the text value with a small margin.
                     }
                 ]
                 
@@ -437,6 +451,16 @@ class MultiDocumentExtractionService:
             
             try:
                 uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                
+                # Wait for file to be active
+                while uploaded_file.state.name == "PROCESSING":
+                    logger.info(f"Waiting for OM file processing: {uploaded_file.name}")
+                    await asyncio.sleep(2)
+                    uploaded_file = genai.get_file(uploaded_file.name)
+                
+                if uploaded_file.state.name == "FAILED":
+                    raise Exception(f"OM File processing failed on Gemini side: {uploaded_file.name}")
+
                 response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
                 
                 response_text = response.text.strip()
@@ -668,11 +692,17 @@ class MultiDocumentExtractionService:
         
         logger.info(f"Starting to process {len(documents)} documents")
         
+        # Create mapping of filename to document_id for later association
+        filename_to_doc_id = {}
+        # We need to extract document_id from the document input if available
+        # The input 'documents' is constructed in multi_document.py
+        
         # Extract from each document
         for idx, doc in enumerate(documents):
             file_content = doc.get("content")
             filename = doc.get("filename", "unknown")
             file_type = doc.get("type", "").lower()
+            document_id = doc.get("document_id")  # This needs to be passed from the route
             
             if progress_service and task_id:
                 # Calculate progress based on files processed
@@ -738,13 +768,19 @@ class MultiDocumentExtractionService:
                     expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
                     logger.info(f"Extracted {len(expenses)} expenses from {filename}")
                     
+                    # Attach document_id to expenses if available
+                    if document_id:
+                        for exp in expenses:
+                            exp["document_id"] = document_id
+
                     # If extraction returned empty, create a placeholder entry
                     if not expenses:
                         logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
                         expenses = [{
                             "raw_text": f"Document - {filename} (No expenses extracted)",
                             "amount": 0.0,
-                            "source_document": filename
+                            "source_document": filename,
+                            "document_id": document_id
                         }]
                 else:
                     logger.warning(f"Unsupported file type for {filename}")
@@ -842,6 +878,18 @@ class MultiDocumentExtractionService:
                             except:
                                 group_enum = CategoryGroup.OTHER
                             
+                        # Ensure metadata includes document_id
+                        meta = {
+                            "amount": amount,
+                            "reasoning": normalization.get("reasoning", ""),
+                            "row_count": expense.get("row_count"),
+                            "categories_found": expense.get("categories_found"),
+                            "original_type": item_type,
+                            "page_number": expense.get("page_number"),
+                            "bbox": expense.get("bbox"),
+                            "document_id": expense.get("document_id")  # Pass document_id
+                        }
+
                         item = NormalizedDataItem(
                             id=f"item_{len(normalized_items)}",
                             raw_text=raw_text,
@@ -852,13 +900,7 @@ class MultiDocumentExtractionService:
                             confidence=normalization.get("confidence", 0.5),
                             user_verified=False,
                             source_document=expense.get("source_document", "Unknown"),
-                            metadata={
-                                "amount": amount,
-                                "reasoning": normalization.get("reasoning", ""),
-                                "row_count": expense.get("row_count"),
-                                "categories_found": expense.get("categories_found"),
-                                "original_type": item_type
-                            }
+                            metadata=meta
                         )
                         normalized_items.append(item)
                         

@@ -7,6 +7,7 @@ from celery.result import AsyncResult
 import asyncio
 import json
 
+import urllib.parse
 from app.models.document import (
     DocumentUploadResponse,
     DocumentResponse,
@@ -203,10 +204,14 @@ async def get_document_content(document_id: str):
             )
 
         from io import BytesIO
+        # URL encode the filename to handle special characters (spaces, commas, etc.)
+        encoded_filename = urllib.parse.quote(doc['filename'])
         return StreamingResponse(
             BytesIO(file_data),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename={doc['filename']}"}
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{doc['filename']}\"; filename*=UTF-8''{encoded_filename}"
+            }
         )
     except HTTPException:
         raise
