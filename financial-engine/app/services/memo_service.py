@@ -91,6 +91,26 @@ class MemoService:
             logger.error(f"LLM generation failed: {e}")
             raise
 
+    def _sanitize_for_pdf(self, text: str) -> str:
+        """
+        Sanitizes text to ensure it is compatible with Latin-1 encoding used by FPDF standard fonts.
+        """
+        replacements = {
+            '\u2022': '-',  # bullet
+            '\u2013': '-',  # en dash
+            '\u2014': '--', # em dash
+            '\u2018': "'",  # left single quote
+            '\u2019': "'",  # right single quote
+            '\u201c': '"',  # left double quote
+            '\u201d': '"',  # right double quote
+            '\u2026': '...', # ellipsis
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+            
+        # Final safety check: replace any other non-latin-1 characters with ?
+        return text.encode('latin-1', 'replace').decode('latin-1')
+
     def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """
         Generates a PDF investment memo.
@@ -99,6 +119,8 @@ class MemoService:
             content = analysis_data.investment_memo
         else:
             content = self.generate_investment_memo(analysis_data)
+            
+        content = self._sanitize_for_pdf(content)
         
         pdf = PDF()
         pdf.add_page()
@@ -122,7 +144,7 @@ class MemoService:
                 pdf.cell(0, 6, line.replace('### ', ''), 0, 1, 'L')
             elif line.startswith('- '):
                  pdf.set_font('Helvetica', '', 11)
-                 pdf.multi_cell(0, 6, f"  • {line[2:]}")
+                 pdf.multi_cell(0, 6, f"  - {line[2:]}")
             else:
                 pdf.set_font('Helvetica', '', 11)
                 # Remove bold markers for PDF (simple cleanup)
