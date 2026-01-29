@@ -29,6 +29,7 @@ local_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8000",
+    "http://localhost:8001",
     "http://127.0.0.1:8000"
 ]
 for origin in local_origins:
@@ -38,7 +39,8 @@ for origin in local_origins:
 # Always include production URLs if not already present
 production_urls = [
     "https://financial-underwriting-ai.onrender.com",
-    "https://financial-underwriting-financial-engine.onrender.com"
+    "https://financial-underwriting-financial-engine.onrender.com",
+    "https://staging-financial-underwriting-ai.onrender.com"
 ]
 for url in production_urls:
     if url not in origins:

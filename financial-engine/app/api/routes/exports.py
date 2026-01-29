@@ -104,7 +104,7 @@ async def export_memo(
     memo_service: MemoService = Depends(get_memo_service),
 ):
     """
-    Generates and returns an investment memo as markdown/HTML.
+    Generates and returns an investment memo as PDF.
     
     Includes:
     - Executive Summary
@@ -115,18 +115,13 @@ async def export_memo(
     
     Uses LLM to generate sophisticated narrative or falls back to template.
     """
-    # Use pre-generated memo if available to save time
-    if analysis_data.investment_memo:
-        memo_content = analysis_data.investment_memo
-    else:
-        memo_content = memo_service.generate_investment_memo(analysis_data)
+    pdf_content = memo_service.generate_investment_memo_pdf(analysis_data)
     
-    # Return as markdown text with proper encoding
-    filename = "investment_memo.md"
+    filename = "investment_memo.pdf"
     encoded_filename = urllib.parse.quote(filename)
     return Response(
-        content=memo_content,
-        media_type="text/markdown; charset=utf-8",
+        content=pdf_content,
+        media_type="application/pdf",
         headers={
             "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{encoded_filename}"
         }

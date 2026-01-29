@@ -13,3 +13,4 @@ google-cloud-storage
 pandas
 python-multipart
 numpy-financial
+fpdf2

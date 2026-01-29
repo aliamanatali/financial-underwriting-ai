@@ -96,8 +96,8 @@ export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButt
   const handleExport = async (type: "excel" | "memo" | "om-proforma" | "rent-roll") => {
     
     // Validation for Excel Export regarding Student Housing / Unit Stabilized Info
-    // Applies to both Main Excel Model and standalone Rent Roll Export
-    if (type === "excel" || type === "rent-roll") {
+    // Applies only to standalone Rent Roll Export
+    if (type === "rent-roll") {
         const isValid = validateStudentHousingConfig(analysis);
         
         if (!isValid) {
@@ -241,7 +241,7 @@ export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButt
               </div>
               <div className="text-left">
                   <div className="text-sm font-bold">Investment Memo</div>
-                  <div className="text-[10px] text-slate-500 font-normal mt-0.5">Word Document</div>
+                  <div className="text-[10px] text-slate-500 font-normal mt-0.5">PDF Document</div>
               </div>
             </>
           )}
