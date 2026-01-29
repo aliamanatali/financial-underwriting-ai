@@ -7,14 +7,23 @@ logger = logging.getLogger(__name__)
 
 class PDF(FPDF):
     def header(self):
-        self.set_font('Helvetica', 'B', 15)
-        self.cell(0, 10, 'Investment Memo', 0, 1, 'C')
+        self.set_font('Helvetica', 'B', 10)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, 'CONFIDENTIAL INVESTMENT MEMO', 0, 0, 'R')
+        self.ln(12)
+        # Draw a line separator
+        self.set_draw_color(200, 200, 200)
+        self.line(10, 22, 200, 22)
         self.ln(5)
+        self.set_text_color(0, 0, 0)
+        self.set_draw_color(0, 0, 0)
 
     def footer(self):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(128, 128, 128)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        self.set_text_color(0, 0, 0)
 
 class MemoService:
     def __init__(self, gemini_service: "GeminiService" = None):
@@ -44,6 +53,9 @@ class MemoService:
         historical_cap_rate = analysis_data.historical_cap_rate * 100 if analysis_data.historical_cap_rate else 0
         occupancy_rate = analysis_data.rent_roll_summary.occupancy_rate * 100
         upside = cap_rate - historical_cap_rate
+
+        # Ensure distinct status
+        deal_status = 'PASS' if analysis_data.pass_fail_status == 'PASS' else 'FAIL'
         
         prompt = f"""
         Write a professional investment memo for a real estate deal with the following details:
@@ -56,8 +68,8 @@ class MemoService:
         Pro Forma Cap Rate: {cap_rate:.2f}%
         Upside Potential: {upside:.2f}%
         
-        Deal Status: {'PASS' if analysis_data.pass_fail_status == 'PASS' else 'FAIL'}
-
+        Deal Status: {deal_status}
+        
         Investment Checklist:
         - Multifamily? {analysis_data.conclusion.investment_checklist.is_multifamily if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
         - Near Campus? {analysis_data.conclusion.investment_checklist.near_campus if analysis_data.conclusion and analysis_data.conclusion.investment_checklist else 'Unknown'}
@@ -70,7 +82,7 @@ class MemoService:
         
         Include the following sections:
         1. Executive Summary (2-3 sentences)
-        2. Investment Checklist & Questions (Address the items above)
+        2. Investment Checklist & Questions (Address the items above in a table). DO NOT include the Deal Status or Recommendation in this table.
         3. Key Questions:
            - Is there upside potential? (Answer: Yes, upside of {upside:.2f}%)
            - What are the primary risks?
@@ -82,6 +94,11 @@ class MemoService:
         Write in professional, concise language suitable for an investment committee.
         
         IMPORTANT: Return ONLY the memo content in valid Markdown. Do not include any introductory text like "Here is the memo" or "Based on the details provided". Start directly with the # INVESTMENT MEMO title.
+        
+        The final section MUST be exactly:
+        ## RECOMMENDATION
+        
+        **Status:** {deal_status}
         """
         
         try:
@@ -113,6 +130,104 @@ class MemoService:
         # Final safety check: replace any remaining non-latin-1 chars with ?
         return text.encode('latin-1', 'replace').decode('latin-1')
 
+    def _render_table(self, pdf, lines):
+        """
+        Renders a Markdown table into the PDF.
+        """
+        data = []
+        headers = []
+        
+        for i, line in enumerate(lines):
+            line = self._sanitize_text_for_pdf(line).strip()
+            if not line: continue
+            
+            # Split by pipe and remove empty first/last elements
+            parts = [p.strip() for p in line.split('|')]
+            if len(parts) < 3: continue # Not a valid table row | a |
+            
+            row_data = parts[1:-1]
+            
+            if i == 0:
+                headers = row_data
+            elif set(line) <= set('|- :'): # Separator line
+                continue
+            else:
+                data.append(row_data)
+        
+        if not headers and not data:
+            return
+
+        # Config
+        page_width = pdf.w - 2 * pdf.l_margin
+        col_width = page_width / len(headers)
+        line_height = 6
+        
+        # Render Headers
+        pdf.set_font('Helvetica', 'B', 10)
+        pdf.set_fill_color(240, 240, 240) # Light gray
+        for header in headers:
+            pdf.cell(col_width, 8, header, 1, 0, 'L', True)
+        pdf.ln()
+        
+        # Render Data
+        pdf.set_font('Helvetica', '', 10)
+        pdf.set_fill_color(255, 255, 255)
+        
+        for row in data:
+            # Ensure row has same number of columns as headers
+            if len(row) < len(headers):
+                row.extend([''] * (len(headers) - len(row)))
+            elif len(row) > len(headers):
+                row = row[:len(headers)]
+
+            # Calculate max height for this row
+            max_height = line_height
+            
+            # First pass: calculate height needed for largest cell
+            # We use a temporary check. fpdf2 has dry_run=True, output="LINES"
+            # Fallback for older fpdf versions or safety: simple length heuristic or just fixed height
+            # Given we want robustness, we'll try the modern way first
+            
+            row_heights = []
+            for item in row:
+                try:
+                    # Modern fpdf2 approach
+                    multi_cell_lines = pdf.multi_cell(col_width, line_height, item, dry_run=True, output="LINES")
+                    height = len(multi_cell_lines) * line_height
+                except:
+                    # Fallback or if method signature differs
+                    # Simple heuristic: ~50 chars per line for this width?
+                    # Let's assume approx width.
+                    # Better fallback: use get_string_width
+                    text_width = pdf.get_string_width(item)
+                    lines_count = int(text_width / (col_width - 2)) + 1
+                    height = lines_count * line_height
+                
+                row_heights.append(height)
+            
+            if row_heights:
+                max_height = max(row_heights)
+                
+            # Check for page break
+            if pdf.get_y() + max_height > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                # Reprint headers on new page? Optional, skipping for now
+
+            # Save start position
+            x_start = pdf.get_x()
+            y_start = pdf.get_y()
+            
+            # Print cells
+            for i, item in enumerate(row):
+                pdf.set_xy(x_start + (i * col_width), y_start)
+                # Write text without border
+                pdf.multi_cell(col_width, line_height, item, border=0)
+                # Draw border rectangle with max_height to ensure uniform row height
+                pdf.rect(x_start + (i * col_width), y_start, col_width, max_height)
+                
+            # Move to next line
+            pdf.set_y(y_start + max_height)
+
     def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """
         Generates a PDF investment memo.
@@ -127,22 +242,48 @@ class MemoService:
         pdf.set_auto_page_break(auto=True, margin=15)
         
         lines = content.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
-                pdf.ln(2)
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Detect Table Start
+            if line.startswith('|') and i + 1 < len(lines) and set(lines[i+1].strip()) <= set('|- :'):
+                # Gather table lines
+                table_lines = []
+                while i < len(lines) and lines[i].strip().startswith('|'):
+                    table_lines.append(lines[i])
+                    i += 1
+                self._render_table(pdf, table_lines)
+                pdf.ln(5) # Space after table
                 continue
-                
+
             # Sanitize line before processing
             line = self._sanitize_text_for_pdf(line)
 
+            # Skip the main title as it is covered by the header
+            if line.strip().upper() == '# INVESTMENT MEMO':
+                i += 1
+                continue
+
+            if not line:
+                pdf.ln(2)
+                i += 1
+                continue
+
             if line.startswith('# '):
+                pdf.ln(5)
                 pdf.set_font('Helvetica', 'B', 16)
+                pdf.set_text_color(44, 62, 80) # Dark blue/gray
                 pdf.cell(0, 10, line.replace('# ', ''), 0, 1, 'L')
+                pdf.set_text_color(0, 0, 0)
             elif line.startswith('## '):
+                pdf.ln(4)
                 pdf.set_font('Helvetica', 'B', 14)
+                pdf.set_text_color(44, 62, 80)
                 pdf.cell(0, 8, line.replace('## ', ''), 0, 1, 'L')
+                pdf.set_text_color(0, 0, 0)
             elif line.startswith('### '):
+                pdf.ln(2)
                 pdf.set_font('Helvetica', 'B', 12)
                 pdf.cell(0, 6, line.replace('### ', ''), 0, 1, 'L')
             elif line.startswith('- '):
@@ -157,6 +298,8 @@ class MemoService:
                 if pdf.get_x() > 15:
                     pdf.ln()
                 pdf.multi_cell(0, 6, clean_line)
+            
+            i += 1
                 
         # In fpdf2, pdf.output() returns bytearray if dest='S'
         output = pdf.output(dest='S')
@@ -179,6 +322,9 @@ class MemoService:
         upside = cap_rate - historical_cap_rate
         noi = analysis_data.pro_forma_noi if analysis_data.pro_forma_noi else 0
         
+        # Ensure clean status
+        deal_status = 'PASS' if analysis_data.pass_fail_status == 'PASS' else 'FAIL'
+
         memo = f"""# INVESTMENT MEMO
 
 ## Property: {analysis_data.property_meta.address}
@@ -259,7 +405,9 @@ This {analysis_data.property_meta.total_units}-unit multifamily asset presents a
 
 ---
 
-## DEAL STATUS: {analysis_data.pass_fail_status}
+## RECOMMENDATION
+
+**Status:** {deal_status}
 
 {f'**GATING CONCERNS**: {", ".join(analysis_data.gating_reasons)}' if analysis_data.gating_reasons else '✓ Deal passes all gating criteria'}
 
