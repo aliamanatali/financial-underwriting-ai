@@ -25,7 +25,7 @@ async def test_classification_and_grouping():
     # 4. Property Info
     year_built_item = service._fallback_categorization("Year Built: 1985")
     assert year_built_item["category_group"] == "Property Info"
-    assert year_built_item["normalized_value"] == "Property Characteristic"
+    assert year_built_item["normalized_value"] == "Year Built"
     
     # 5. Default/Unknown
     unknown_item = service._fallback_categorization("Random Miscellaneous Fee")

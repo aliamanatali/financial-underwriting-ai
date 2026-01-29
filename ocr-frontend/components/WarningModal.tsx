@@ -42,7 +42,7 @@ export default function WarningModal({ isOpen, onClose, title, message }: Warnin
             onClick={onClose}
             className="w-full sm:w-auto min-w-[120px] px-6 py-2.5 bg-gray-900 text-white text-sm font-semibold rounded-lg hover:bg-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-900"
           >
-            Okay, got it
+            Okay
           </button>
         </div>
       </div>

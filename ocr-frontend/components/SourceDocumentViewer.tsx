@@ -1,0 +1,292 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { apiClient } from "@/lib/api";
+import { Document, Page, pdfjs } from "react-pdf";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
+
+// Set worker source
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
+interface Bbox {
+  0: number; // ymin
+  1: number; // xmin
+  2: number; // ymax
+  3: number; // xmax
+}
+
+interface SourceDocumentViewerProps {
+  documentId: string;
+  filename: string;
+  packageId?: string;
+  pageNumber?: number;
+  bbox?: number[]; // [ymin, xmin, ymax, xmax] normalized to 0-1000
+  onClose: () => void;
+}
+
+export default function SourceDocumentViewer({
+  documentId,
+  filename,
+  packageId,
+  pageNumber = 1,
+  bbox,
+  onClose,
+}: SourceDocumentViewerProps) {
+  const [numPages, setNumPages] = useState<number>(0);
+  const [scale, setScale] = useState(1.2);
+  const [pageWidth, setPageWidth] = useState<number>(0);
+  const [pageHeight, setPageHeight] = useState<number>(0);
+
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  // Determine file type
+  const extension = filename.split('.').pop()?.toLowerCase() || '';
+  const isPdf = extension === 'pdf';
+  const isImage = ['jpg', 'jpeg', 'png', 'webp'].includes(extension);
+
+  // Fetch the PDF as a blob first to handle CORS and errors better
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchAndSetUrl = async () => {
+      if (packageId) {
+        try {
+          const { signed_url } = await apiClient.getDocumentContentUrl(packageId, documentId);
+          // Use local proxy to bypass CORS issues with GCS
+          const proxyUrl = `/api/proxy-pdf?url=${encodeURIComponent(signed_url)}`;
+          setDownloadUrl(proxyUrl);
+        } catch (err) {
+          console.error("Error fetching signed URL:", err);
+          setLoadingError("Could not retrieve document URL.");
+        }
+      } else {
+        // Fallback or direct URL construction for non-packaged documents
+        const baseUrl = process.env.NEXT_PUBLIC_OCR_API_URL;
+        const downloadEndpoint = `/api/documents/${documentId}/content`;
+        setDownloadUrl(`${baseUrl}${downloadEndpoint}`);
+      }
+    };
+
+    fetchAndSetUrl();
+  }, [documentId, packageId]);
+
+  useEffect(() => {
+    if (!isPdf || !downloadUrl) return;
+
+    const fetchPdf = async () => {
+      try {
+        const response = await fetch(downloadUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        setPdfBlobUrl(url);
+        setLoadingError(null);
+      } catch (err: any) {
+        console.error("Error fetching PDF blob:", err);
+        setLoadingError(err.message || "Failed to load document");
+      }
+    };
+
+    fetchPdf();
+
+    return () => {
+      if (pdfBlobUrl) {
+        URL.revokeObjectURL(pdfBlobUrl);
+      }
+    };
+  }, [downloadUrl, isPdf]);
+
+  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
+    setNumPages(numPages);
+  }
+
+  function onDocumentLoadError(error: Error) {
+    // Log meaningful error but avoid spamming console for expected 404s in dev
+    if (error.message && error.message.includes('404')) {
+       console.warn(`Document not found: ${filename} (${documentId})`);
+    } else {
+       console.error(`Error loading PDF document from ${downloadUrl}:`, error);
+    }
+  }
+
+  function onPageLoadSuccess(page: any) {
+    setPageWidth(page.width);
+    setPageHeight(page.height);
+  }
+
+  // Calculate highlight box style
+  const getHighlightStyle = () => {
+    if (!bbox || bbox.length !== 4) return null;
+
+    // Gemini returns bbox as [ymin, xmin, ymax, xmax] normalized to 0-1000
+    // We need to convert this to PDF coordinates
+    // PDF coordinates usually start from bottom-left, but react-pdf might handle it differently.
+    // Let's assume standard top-left origin for CSS positioning on the rendered page.
+    
+    // De-normalize coordinates (0-1000 -> 0-1)
+    const [ymin, xmin, ymax, xmax] = bbox.map(coord => coord / 1000);
+    
+    // Width and Height of the box
+    const widthPct = (xmax - xmin) * 100;
+    const heightPct = (ymax - ymin) * 100;
+    
+    // Top and Left position
+    const topPct = ymin * 100;
+    const leftPct = xmin * 100;
+
+    // Add a small padding to ensure the text is fully covered (robustness improvement)
+    const padding = 0.5; // 0.5% padding
+
+    return {
+      top: `${Math.max(0, topPct - padding)}%`,
+      left: `${Math.max(0, leftPct - padding)}%`,
+      width: `${Math.min(100, widthPct + (padding * 2))}%`,
+      height: `${Math.min(100, heightPct + (padding * 2))}%`,
+    };
+  };
+
+  const highlightStyle = getHighlightStyle();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">{filename}</h3>
+            <p className="text-sm text-gray-500">
+              Page {pageNumber} of {numPages || "--"}
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
+              <button
+                onClick={() => setScale((s) => Math.max(0.5, s - 0.1))}
+                className="p-1.5 hover:bg-gray-100 rounded text-gray-600"
+                title="Zoom Out"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              </button>
+              <span className="text-xs font-medium w-12 text-center">
+                {Math.round(scale * 100)}%
+              </span>
+              <button
+                onClick={() => setScale((s) => Math.min(3, s + 0.1))}
+                className="p-1.5 hover:bg-gray-100 rounded text-gray-600"
+                title="Zoom In"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              </button>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-gray-200 rounded-full text-gray-500 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Document Content */}
+        <div className="flex-1 overflow-auto bg-gray-100 p-4 flex justify-center">
+          <div className="relative shadow-lg bg-white min-h-[400px] min-w-[600px] flex flex-col items-center justify-center">
+            {isPdf ? (
+              <>
+                {loadingError ? (
+                   <div className="flex flex-col items-center justify-center h-96 w-[600px] bg-white p-6 text-center">
+                    <p className="text-red-500 font-medium mb-2">Failed to load document.</p>
+                    <p className="text-sm text-gray-500 mb-4">{loadingError}</p>
+                    {downloadUrl && <a
+                     href={downloadUrl}
+                     download={filename}
+                     className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline"
+                    >
+                     Try Direct Download
+                    </a>}
+                  </div>
+                ) : !pdfBlobUrl ? (
+                   <div className="flex items-center justify-center h-96 w-[600px] bg-white">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                  </div>
+                ) : (
+                  <Document
+                    file={pdfBlobUrl}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    loading={
+                      <div className="flex items-center justify-center h-96 w-[600px] bg-white">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                      </div>
+                    }
+                    error={
+                      <div className="flex flex-col items-center justify-center h-96 w-[600px] bg-white p-6 text-center">
+                        <p className="text-red-500 font-medium mb-2">Failed to load document.</p>
+                        <p className="text-sm text-gray-500 mb-4">The file might be missing or inaccessible.</p>
+                        {downloadUrl && <a
+                         href={downloadUrl}
+                         download={filename}
+                         className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline"
+                       >
+                         Try Direct Download
+                       </a>}
+                      </div>
+                    }
+                  >
+                    <Page
+                      pageNumber={pageNumber}
+                      scale={scale}
+                      onLoadSuccess={onPageLoadSuccess}
+                      className="bg-white shadow-md relative"
+                      renderTextLayer={true}
+                      renderAnnotationLayer={true}
+                    >
+                      {/* Highlight Overlay */}
+                      {highlightStyle && (
+                        <div
+                          className="absolute border-2 border-yellow-500 bg-yellow-400/40 transition-all duration-300 mix-blend-multiply z-20 pointer-events-none"
+                          style={highlightStyle}
+                        >
+                          <div className="absolute -top-7 left-0 bg-yellow-500 text-white text-[11px] px-2 py-0.5 rounded-sm shadow-sm whitespace-nowrap font-bold z-30">
+                            Source Value
+                          </div>
+                        </div>
+                      )}
+                    </Page>
+                  </Document>
+                )}
+              </>
+            ) : isImage ? (
+              <div className="relative" style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}>
+                {downloadUrl && <img
+                  src={downloadUrl}
+                  alt={filename}
+                  className="max-w-full h-auto"
+                />}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center p-12 text-center">
+                <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 mb-6">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 mx-auto mb-4"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <p className="text-lg font-medium text-gray-900 mb-1">Preview not available</p>
+                  <p className="text-sm text-gray-500">This file type ({extension}) cannot be previewed directly.</p>
+                </div>
+                {downloadUrl && <a
+                  href={downloadUrl}
+                  download={filename}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-sm"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Download File
+                </a>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -154,6 +154,11 @@ class ApiClient {
     // No content expected on successful deletion
   }
 
+  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{ signed_url: string }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/content`);
+    return this.handleResponse<{ signed_url: string }>(response);
+  }
+
   // --- Financial Engine Methods ---
 
   async startAnalysis(documentId: string, params: DealParameters): Promise<UnderwritingAnalysis> {
@@ -229,7 +234,8 @@ class ApiClient {
   async uploadZipChunked(
     file: File,
     onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void,
-    onProcessingProgress?: (progress: { percentage: number; message: string }) => void
+    onProcessingProgress?: (progress: { percentage: number; message: string }) => void,
+    isSmartUpload: boolean = false
   ): Promise<DealPackage> {
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -287,6 +293,10 @@ class ApiClient {
     completeFormData.append("upload_id", upload_id);
     completeFormData.append("original_filename", fileName);
     
+    if (isSmartUpload) {
+      completeFormData.append("is_smart_upload", "true");
+    }
+
     // Extract property name from filename (remove .zip and _Inputs suffix)
     const propertyName = fileName
       .replace('.zip', '')
@@ -344,6 +354,25 @@ class ApiClient {
             eventSource.close();
         }
     }
+  }
+
+  async uploadAdditionalDocuments(packageId: string, files: File[]): Promise<DealPackage> {
+    const formData = new FormData();
+    files.forEach((file) => {
+        formData.append('files', file);
+    });
+
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents`, {
+        method: 'POST',
+        body: formData,
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "Upload failed" }));
+        throw new Error(error.detail || "Upload failed");
+    }
+
+    return response.json();
   }
 
   async startUnderwritingAnalysis(documentId: string): Promise<UnderwritingAnalysis> {

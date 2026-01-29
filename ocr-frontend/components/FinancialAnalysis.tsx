@@ -64,7 +64,7 @@ export default function FinancialAnalysis({ documentId }: FinancialAnalysisProps
           <UnderwritingDashboard analysis={analysis} />
           {analysis.audit_trail && (
             <div className="mt-6">
-              <AuditTrailWidget auditTrail={analysis.audit_trail} />
+              <AuditTrailWidget auditTrail={analysis.audit_trail} packageId={analysis.document_id} />
             </div>
           )}
           <div className="mt-6 text-right">
