@@ -7,7 +7,6 @@ import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
-import RentRollExportModal from "@/components/RentRollExportModal";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 
@@ -81,18 +80,32 @@ export default function AnalysisResultPage() {
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
   const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const [isRentRollModalOpen, setIsRentRollModalOpen] = useState(false);
+  const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
+  const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
+  const [validationTrigger, setValidationTrigger] = useState<number>(0);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
-    const openModal = searchParams.get("openRentRollModal");
+    const rentRollTab = searchParams.get("rentRollTab");
+    const rentRollEditMode = searchParams.get("rentRollEditMode");
+    const trigger = searchParams.get("validationTrigger");
 
     if (tab === "export") {
       setActiveTab("export");
+    } else if (tab === "dashboard") {
+      setActiveTab("dashboard");
+    }
+    
+    if (rentRollTab) {
+        setInitialRentRollTab(rentRollTab as any);
+    }
+    
+    if (rentRollEditMode === "true") {
+        setInitialRentRollEditMode(true);
     }
 
-    if (openModal === "true") {
-      setIsRentRollModalOpen(true);
+    if (trigger) {
+        setValidationTrigger(Number(trigger));
     }
   }, [searchParams]);
   
@@ -491,11 +504,14 @@ export default function AnalysisResultPage() {
               <UnderwritingDashboard
                 analysis={analysis}
                 onReanalyze={handleReanalyze}
+                initialRentRollTab={initialRentRollTab}
+                initialRentRollEditMode={initialRentRollEditMode}
+                validationTrigger={validationTrigger}
               />
             )}
 
             {activeTab === "audit" && (
-              <AuditTrailWidget auditTrail={analysis.audit_trail || []} />
+              <AuditTrailWidget auditTrail={analysis.audit_trail || []} packageId={id} />
             )}
 
             {activeTab === "export" && (
@@ -512,16 +528,6 @@ export default function AnalysisResultPage() {
           </div>
         </main>
       </div>
-
-      <RentRollExportModal
-        isOpen={isRentRollModalOpen}
-        onClose={() => setIsRentRollModalOpen(false)}
-        analysis={analysis}
-        onAnalysisUpdate={(newAnalysis) => {
-            console.log("Updating analysis state from global modal", newAnalysis);
-            setAnalysis(newAnalysis);
-        }}
-      />
 
       <style jsx global>{`
         .no-scrollbar::-webkit-scrollbar {

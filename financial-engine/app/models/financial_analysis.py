@@ -22,6 +22,9 @@ class AuditLog(BaseModel):
     confidence_score: float
     method: str
     timestamp: Optional[str] = None
+    document_id: Optional[str] = None
+    page_number: Optional[int] = None
+    bbox: Optional[List[float]] = None
 
 # --- 3. Rent Roll Schema ---
 class RentRollItem(BaseModel):

@@ -1,17 +1,25 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import { AuditEntry } from "@/lib/types";
+
+const SourceDocumentViewer = dynamic(() => import("./SourceDocumentViewer"), {
+  ssr: false,
+});
 
 interface AuditTrailWidgetProps {
   auditTrail: AuditEntry[];
   title?: string;
+  packageId?: string;
 }
 
 export default function AuditTrailWidget({
   auditTrail,
   title = "Explainability - Audit Trail",
+  packageId
 }: AuditTrailWidgetProps) {
+  const [viewingItem, setViewingItem] = useState<AuditEntry | null>(null);
   const getConfidenceBadgeColor = (score?: number) => {
     if (!score) return "bg-neutral-50 text-neutral-700 border-neutral-100";
     if (score >= 0.90) return "bg-emerald-50 text-emerald-700 border-emerald-100";
@@ -228,7 +236,21 @@ export default function AuditTrailWidget({
               {/* Document Column */}
               <div className="col-span-3 flex items-center gap-2 text-neutral-600 text-xs">
                 {getDocumentIcon(entry.source)}
-                {entry.source}
+                <div className="flex items-center gap-2">
+                  <span className="truncate max-w-[120px]" title={entry.source}>{entry.source}</span>
+                  {entry.document_id && (
+                    <button
+                      onClick={() => setViewingItem(entry)}
+                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                      title="View Source Document"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Method Column */}
@@ -237,9 +259,26 @@ export default function AuditTrailWidget({
               {/* Value Column */}
               <div className="col-span-2 pl-4">
                 {typeof entry.extracted_value === "object" ? (
-                  <div className="bg-neutral-100 rounded-md p-2 border border-neutral-200 font-mono text-[10px] text-neutral-600 leading-relaxed overflow-x-auto whitespace-pre-wrap">
-                    {formatValue(entry.extracted_value)}
-                  </div>
+                  entry.field_name === "Rent Roll Summary" ? (
+                    <div className="flex flex-col gap-1 text-xs">
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-neutral-500">Units:</span>
+                        <span className="font-medium text-neutral-900">{entry.extracted_value?.total_units}</span>
+                      </div>
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-neutral-500">Occupancy:</span>
+                        <span className="font-medium text-neutral-900">{entry.extracted_value?.occupancy_rate}</span>
+                      </div>
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="text-neutral-500">Ann. Rent:</span>
+                        <span className="font-medium text-neutral-900">{entry.extracted_value?.total_annual_rent}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-neutral-100 rounded-md p-2 border border-neutral-200 font-mono text-[10px] text-neutral-600 leading-relaxed overflow-x-auto whitespace-pre-wrap">
+                      {formatValue(entry.extracted_value)}
+                    </div>
+                  )
                 ) : (
                   <span className={`font-medium ${isNegativeValue(entry.extracted_value) ? "text-rose-600" : "text-neutral-900"}`}>
                     {entry.field_name.toLowerCase().includes("status") || entry.field_name.toLowerCase().includes("viability") ? (
@@ -270,6 +309,16 @@ export default function AuditTrailWidget({
         <div className="text-center py-12 bg-neutral-50 rounded-lg border-2 border-dashed border-neutral-200 text-neutral-500">
           <p>No audit trail data available</p>
         </div>
+      )}
+      {viewingItem && viewingItem.document_id && (
+        <SourceDocumentViewer
+          documentId={viewingItem.document_id}
+          packageId={packageId}
+          filename={viewingItem.source || "Document"}
+          pageNumber={viewingItem.page_number}
+          bbox={viewingItem.bbox}
+          onClose={() => setViewingItem(null)}
+        />
       )}
     </div>
   );

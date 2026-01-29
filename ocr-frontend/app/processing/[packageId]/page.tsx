@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
@@ -24,9 +24,28 @@ function ProcessingContent() {
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Starting normalization..." });
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
+  const [missingDocs, setMissingDocs] = useState<string[]>([]);
+  const [isUploadingMissing, setIsUploadingMissing] = useState(false);
+  const missingFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded);
+  };
+
+  const handleMissingFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const files = Array.from(e.target.files);
+      setIsUploadingMissing(true);
+      try {
+        await apiClient.uploadAdditionalDocuments(packageId, files);
+        // Reload page to restart processing with new files
+        window.location.reload();
+      } catch (err) {
+        console.error("Failed to upload additional documents:", err);
+        alert("Failed to upload documents. Please try again.");
+        setIsUploadingMissing(false);
+      }
+    }
   };
 
   useEffect(() => {
@@ -48,6 +67,23 @@ function ProcessingContent() {
           }));
           setCategories(cats);
           
+          // Check for missing critical documents
+          const requiredDocs = ["Offering Memorandum", "Rent Roll", "Financials"];
+          const missing = requiredDocs.filter(req => {
+              const hasDocs = Object.entries(data.documents).some(([key, docs]) =>
+                  key.includes(req) && Array.isArray(docs) && docs.length > 0
+              );
+              return !hasDocs;
+          });
+          
+          if (missing.length > 0) {
+              setMissingDocs(missing);
+              // If missing docs, pause here (don't redirect even if completed)
+              // But we should allow user to proceed if they want?
+              // For now, let's block auto-redirect.
+              return true; // Return true to signal "stop/handled", effectively pausing normalization loop start if we wanted
+          }
+
           // Check if package is already normalized
           if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
             console.log("Package already normalized, redirecting to analysis page...");
@@ -302,6 +338,60 @@ function ProcessingContent() {
               </div>
             </div>
 
+            {/* Missing Documents Alert */}
+            {missingDocs.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-amber-800 font-semibold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                      <line x1="12" y1="9" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    Missing Required Information
+                  </h3>
+                  <p className="text-amber-700 text-sm mt-1">
+                    To ensure accurate analysis, please upload the following documents:
+                    <span className="font-semibold ml-1">{missingDocs.join(", ")}</span>
+                  </p>
+                </div>
+                <div>
+                  <input
+                    type="file"
+                    multiple
+                    ref={missingFileInputRef}
+                    className="hidden"
+                    onChange={handleMissingFileSelect}
+                    disabled={isUploadingMissing}
+                  />
+                  <button
+                    onClick={() => missingFileInputRef.current?.click()}
+                    disabled={isUploadingMissing}
+                    className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center gap-2"
+                  >
+                    {isUploadingMissing ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                          <polyline points="17 8 12 3 7 8"></polyline>
+                          <line x1="12" x2="12" y1="3" y2="15"></line>
+                        </svg>
+                        Upload Files
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
@@ -379,7 +469,7 @@ function ProcessingContent() {
                   
                   <div className="divide-y divide-neutral-100">
                     {categories.map((category, index) => (
-                      <div 
+                      <div
                         key={category.name}
                         className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors ${
                           category.status === 'processing' ? 'bg-neutral-50/80 border-l-2 border-l-neutral-900' : ''
@@ -391,10 +481,17 @@ function ProcessingContent() {
                             category.status === 'processing' ? 'bg-white border border-neutral-200 text-neutral-900 shadow-sm' :
                             'bg-neutral-100 text-neutral-400'
                           }`}>
-                            {category.status === 'completed' && (
+                            {category.status === 'completed' && category.count > 0 && (
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <path d="M20 6 9 17l-5-5"></path>
                               </svg>
+                            )}
+                            {category.status === 'completed' && category.count === 0 && (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg>
                             )}
                             {category.status === 'processing' && (
                               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -414,8 +511,11 @@ function ProcessingContent() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          {category.status === 'completed' && (
+                          {category.status === 'completed' && category.count > 0 && (
                             <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-medium bg-green-50 text-green-700">Analyzed</span>
+                          )}
+                          {category.status === 'completed' && category.count === 0 && (
+                            <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-medium bg-amber-50 text-amber-700">Missing</span>
                           )}
                           {category.status === 'processing' && (
                             <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-medium bg-neutral-200 text-neutral-800">Processing</span>

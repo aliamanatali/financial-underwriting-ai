@@ -1,11 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { NormalizedDataItem, CategoryGroup, DataClassification } from "@/lib/types";
+import dynamic from "next/dynamic";
+import { NormalizedDataItem, CategoryGroup, DocumentMetadata } from "@/lib/types";
+
+const SourceDocumentViewer = dynamic(() => import("./SourceDocumentViewer"), {
+  ssr: false,
+});
 
 interface DataVerificationTableProps {
   items: NormalizedDataItem[];
   availableCategories: string[];
+  documents: Record<string, DocumentMetadata[]>;
+  packageId?: string;
   onVerify: (itemId: string, userCorrection?: string) => void;
   onVerifyAll: () => void;
 }
@@ -13,11 +20,14 @@ interface DataVerificationTableProps {
 export default function DataVerificationTable({
   items,
   availableCategories,
+  documents,
+  packageId,
   onVerify,
   onVerifyAll,
 }: DataVerificationTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
+  const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
 
   const handleEdit = (item: NormalizedDataItem) => {
     setEditingId(item.id);
@@ -45,15 +55,6 @@ export default function DataVerificationTable({
     "Other"
   ];
 
-  const getClassificationColor = (classification: DataClassification) => {
-    switch (classification) {
-        case "Sourced": return "bg-#FFE5D9 text-blue-800 border-#FFCBB3";
-        case "Assumption": return "bg-amber-100 text-amber-800 border-amber-200";
-        case "Recommendation": return "bg-purple-100 text-purple-800 border-purple-200";
-        default: return "bg-gray-100 text-gray-800 border-gray-200";
-    }
-  };
-
   const handleSave = (itemId: string) => {
     const originalItem = items.find((i) => i.id === itemId);
     if (originalItem && editValue !== originalItem.normalized_value) {
@@ -76,52 +77,21 @@ export default function DataVerificationTable({
     return "text-rose-700 bg-rose-50 border border-rose-100";
   };
 
-  const verifiedCount = items.filter((item) => item.user_verified).length;
-  const totalCount = items.length;
-  const progressPercentage = totalCount > 0 ? (verifiedCount / totalCount) * 100 : 0;
+
+  const getDocumentId = (item: NormalizedDataItem): string | undefined => {
+    if (!documents) return undefined;
+
+    // Flatten all documents from the documents object
+    const allDocuments = Object.values(documents).flat();
+    
+    // Find the document that matches the source_document filename
+    const doc = allDocuments.find(d => d.filename === item.source_document);
+
+    return doc?.document_id;
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header with Progress */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">
-              Data Verification
-            </h2>
-            <p className="text-base text-slate-500 mt-1">
-              Review and correct AI-mapped categories
-            </p>
-          </div>
-          <button
-            onClick={onVerifyAll}
-            disabled={verifiedCount === totalCount}
-            className={`px-6 py-2.5 rounded-lg font-medium transition-colors ${
-              verifiedCount === totalCount
-                ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                : "bg-[#FF5E00] text-white hover:bg-[#E65400] shadow-md hover:shadow-lg"
-            }`}
-          >
-            Verify All
-          </button>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="space-y-3">
-          <div className="flex justify-between text-sm font-medium text-slate-600">
-            <span>
-              Verified: <span className="text-slate-900">{verifiedCount}</span> / {totalCount}
-            </span>
-            <span className="text-slate-900">{progressPercentage.toFixed(0)}%</span>
-          </div>
-          <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-            <div
-              className="bg-[#FF5E00] h-3 rounded-full transition-all duration-500 ease-out"
-              style={{ width: `${progressPercentage}%` }}
-            />
-          </div>
-        </div>
-      </div>
 
       {/* Grouped Tables */}
       <div className="space-y-8">
@@ -148,9 +118,6 @@ export default function DataVerificationTable({
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                             Mapped Category
                             </th>
-                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                            Classification
-                            </th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                             Confidence
                             </th>
@@ -169,11 +136,25 @@ export default function DataVerificationTable({
                             >
                             {/* Source Document */}
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                                <div className="flex items-center" title={item.source_document}>
-                                    <svg className="w-4 h-4 mr-2 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                    <span className="truncate max-w-[150px]">{item.source_document}</span>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center flex-1 min-w-0" title={item.source_document}>
+                                      <svg className="w-4 h-4 mr-2 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                      </svg>
+                                      <span className="truncate max-w-[120px]">{item.source_document}</span>
+                                  </div>
+                                  {item.metadata?.page_number && getDocumentId(item) && (
+                                    <button
+                                      onClick={() => setViewingItem(item)}
+                                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                      title="View Source Document"
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                      </svg>
+                                    </button>
+                                  )}
                                 </div>
                             </td>
 
@@ -221,12 +202,6 @@ export default function DataVerificationTable({
                                 )}
                             </td>
 
-                            {/* Classification */}
-                            <td className="px-6 py-4 whitespace-nowrap">
-                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getClassificationColor(item.data_classification || 'Sourced')}`}>
-                                    {item.data_classification || 'Sourced'}
-                                </span>
-                            </td>
 
                             {/* Confidence */}
                             <td className="px-6 py-4 whitespace-nowrap">
@@ -314,6 +289,16 @@ export default function DataVerificationTable({
           </div>
         </div>
       </div>
+      {viewingItem && getDocumentId(viewingItem) && (
+        <SourceDocumentViewer
+          documentId={getDocumentId(viewingItem)!}
+          packageId={packageId}
+          filename={viewingItem.source_document}
+          pageNumber={viewingItem.metadata?.page_number}
+          bbox={viewingItem.metadata?.bbox}
+          onClose={() => setViewingItem(null)}
+        />
+      )}
     </div>
   );
 }

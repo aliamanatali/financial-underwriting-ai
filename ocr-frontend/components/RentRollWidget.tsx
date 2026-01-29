@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { RentRollItem, RentRollSummary, UnderwritingAnalysis, StudentHousingConfig } from "@/lib/types";
 import { apiClient } from "@/lib/api";
 import WarningModal from "./WarningModal";
+import UnitBreakdownTable from "./UnitBreakdownTable";
+import UnitBreakdownStabilizedTable from "./UnitBreakdownStabilizedTable";
 import {
   DndContext,
   closestCenter,
@@ -22,6 +24,8 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import WidgetTooltip from "./WidgetTooltip";
+import RentRollPreviewModal from "./RentRollPreviewModal";
 
 type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
   id: string;
@@ -29,6 +33,13 @@ type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "s
   current_rent: string | number;
   stabilized_rent: string | number;
   market_rent: string | number;
+  beds_single?: number;
+  beds_double?: number;
+  market_rent_single?: number;
+  market_rent_double?: number;
+  unit_config_label?: string;
+  bed_count?: number;
+  occupancy_type?: string;
 };
 
 interface RentRollWidgetProps {
@@ -38,9 +49,18 @@ interface RentRollWidgetProps {
   onUpdate?: () => void;
   studentHousingConfig?: StudentHousingConfig;
   onOpenConfig?: () => void;
+  initialTab?: "details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized";
+  initialEditMode?: boolean;
+  fullAnalysis?: UnderwritingAnalysis; // Add optional full analysis prop
+  validationTrigger?: number;
 }
 
 // Helpers for date input conversion (YYYY-MM-DD <-> MM/DD/YYYY)
+/**
+ * Converts a date string from MM/DD/YYYY format to YYYY-MM-DD format for date inputs.
+ * @param {string | undefined | null} displayDate - The date string to convert.
+ * @returns {string} The formatted date string or an empty string if invalid.
+ */
 const toInputDate = (displayDate: string | undefined | null) => {
   if (!displayDate) return "";
   
@@ -67,6 +87,11 @@ const toInputDate = (displayDate: string | undefined | null) => {
   return "";
 };
 
+/**
+ * Converts a date string from YYYY-MM-DD format to MM/DD/YYYY format for display.
+ * @param {string} inputDate - The date string to convert.
+ * @returns {string} The formatted date string.
+ */
 const fromInputDate = (inputDate: string) => {
   if (!inputDate) return "";
   const parts = inputDate.split('-');
@@ -77,29 +102,124 @@ const fromInputDate = (inputDate: string) => {
   return inputDate;
 };
 
+function getBedCountFromUnitType(unit_type: string): number {
+  if (!unit_type) return 1;
+
+  // Heuristic 1: Bed/Bath format "0/1.00", "2/1"
+  const match_slash = unit_type.match(/^(\d+)\s*\//);
+  if (match_slash) {
+    const val = parseInt(match_slash[1], 10);
+    return val > 0 ? val : 1; // Treat 0 beds (Studio) as 1 bed
+  }
+
+  // Heuristic 2: "2bd", "2 br"
+  const match_bd = unit_type.toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
+  if (match_bd) {
+    return parseInt(match_bd[1], 10);
+  }
+
+  if (unit_type.toLowerCase().includes("studio")) {
+    return 1;
+  }
+
+  // Fallback: Look for first digit
+  const match = unit_type.match(/\d+/);
+  if (match) {
+    return parseInt(match[0], 10);
+  }
+
+  return 1;
+}
+
+/**
+ * A component that displays and allows editing of a rent roll, with different views and export functionalities.
+ * @param {RentRollWidgetProps} props - The props for the component.
+ * @returns {JSX.Element} The rendered RentRollWidget component.
+ */
 export default function RentRollWidget({
   rentRoll,
   summary,
   packageId,
+  // Using partial because we might not have the full object in the widget props,
+  // but we need it for export. If it's not passed, we'll try to fetch or construct it.
+  // Ideally, the parent should pass the full analysis object.
+  fullAnalysis,
   onUpdate,
   studentHousingConfig,
   onOpenConfig,
+  initialTab = "details",
+  initialEditMode = false,
+  validationTrigger,
 }: RentRollWidgetProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  // Initialize with IDs
+  const [activeTab, setActiveTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">(initialTab);
+  const [isEditing, setIsEditing] = useState({
+    details: false,
+    omExport: false,
+    unitBreakdown: false,
+    unitBreakdownStabilized: initialEditMode && initialTab === "unitBreakdownStabilized",
+  });
+  
+  const componentRef = React.useRef<HTMLDivElement>(null);
+
+  // Effect to handle initial props changes if they come from parent updates (e.g. URL param changes)
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+    if (initialEditMode && initialTab) {
+      setIsEditing(prev => ({ ...prev, [initialTab]: true }));
+    }
+    
+    // Scroll to the widget if triggered
+    if (validationTrigger && componentRef.current) {
+        componentRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [initialTab, initialEditMode, validationTrigger]);
+
+  // Initialize with IDs and merge Student Housing Config
+  const initializeItems = (items: RentRollItem[], config?: StudentHousingConfig): EditableRentRollItem[] => {
+    console.log("RentRollWidget: Initializing Items. Config present:", !!config);
+    return items.map(item => {
+      // Robust matching: trim and lowercase
+      const typeConfig = config?.unit_type_configs.find(c =>
+        c.unit_type?.trim().toLowerCase() === item.unit_type?.trim().toLowerCase()
+      );
+      
+      if (config && !typeConfig) {
+          console.warn(`RentRollWidget: No config found for unit type: '${item.unit_type}'`);
+      }
+
+      return {
+        ...item,
+        id: item.unit_number || `unit-${Math.random()}`,
+        // Merge config values if they exist
+        beds_single: typeConfig?.beds_single,
+        beds_double: typeConfig?.beds_double,
+        market_rent_single: typeConfig?.market_rent_single,
+        market_rent_double: typeConfig?.market_rent_double,
+        unit_config_label: typeConfig?.unit_config_label,
+        bed_count: typeConfig?.bed_count,
+        occupancy_type: typeConfig?.occupancy_type
+      };
+    });
+  };
+
   const [items, setItems] = useState<EditableRentRollItem[]>(
-    rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` }))
+    initializeItems(rentRoll, studentHousingConfig)
   );
 
   useEffect(() => {
-    setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
-  }, [rentRoll]);
+    setItems(initializeItems(rentRoll, studentHousingConfig));
+  }, [rentRoll, studentHousingConfig]);
 
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
   const [warningMessage, setWarningMessage] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
+  const [pendingExportData, setPendingExportData] = useState<UnderwritingAnalysis | null>(null);
+
   // Map of Row ID -> { fieldName: errorMessage }
   const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>({});
 
@@ -191,18 +311,37 @@ export default function RentRollWidget({
       });
     }
   };
+ 
+  const handleNumericChange = (index: number, field: keyof EditableRentRollItem, value: string) => {
+    const numericValue = value.replace(/[^0-9.]/g, '');
+    handleItemChange(index, field, numericValue);
+  };
 
   const handleEdit = () => {
-    setIsEditing(true);
-    // Validate all items when entering edit mode
-    const initialErrors: Record<string, Record<string, string>> = {};
-    items.forEach(item => {
-      const errors = validateItem(item);
-      if (Object.keys(errors).length > 0) {
-        initialErrors[item.id] = errors;
+    setIsEditing(prev => ({ ...prev, [activeTab]: true }));
+    if (activeTab === 'details') {
+      // Validate all items when entering edit mode for details tab
+      const initialErrors: Record<string, Record<string, string>> = {};
+      items.forEach(item => {
+        const errors = validateItem(item);
+        if (Object.keys(errors).length > 0) {
+          initialErrors[item.id] = errors;
+        }
+      });
+      setRowErrors(initialErrors);
+    }
+  };
+
+  const handleUnitBreakdownChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
+    setItems(prevItems => prevItems.map(item => {
+      if (item.unit_type === unitType) {
+        return {
+          ...item,
+          [field]: value,
+        };
       }
-    });
-    setRowErrors(initialErrors);
+      return item;
+    }));
   };
 
   const handleSave = async () => {
@@ -216,33 +355,80 @@ export default function RentRollWidget({
       market_rent: parseFloat(String(rest.market_rent)) || 0,
     }));
 
-    let errorCount = 0;
-    const newRowErrors: Record<string, Record<string, string>> = {};
+    if (activeTab === 'details') {
+      let errorCount = 0;
+      const newRowErrors: Record<string, Record<string, string>> = {};
 
-    items.forEach((item) => {
-        const errors = validateItem(item);
-        if (Object.keys(errors).length > 0) {
-            newRowErrors[item.id] = errors;
-            errorCount++;
-        }
-    });
+      items.forEach((item) => {
+          const errors = validateItem(item);
+          if (Object.keys(errors).length > 0) {
+              newRowErrors[item.id] = errors;
+              errorCount++;
+          }
+      });
 
-    setRowErrors(newRowErrors); // Update state with all current errors
+      setRowErrors(newRowErrors); // Update state with all current errors
 
-    if (errorCount > 0) {
-        setWarningMessage(
-            `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
-        );
-        setShowWarning(true);
-        setIsSaving(false);
-        return;
+      if (errorCount > 0) {
+          setWarningMessage(
+              `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
+          );
+          setShowWarning(true);
+          setIsSaving(false);
+          return;
+      }
     }
 
     setRowErrors({});
 
     try {
-      await apiClient.updateManualOverrides(packageId, { rent_roll: cleanItems });
-      setIsEditing(false);
+      const payload: any = { rent_roll: cleanItems };
+      
+      // Construct unit_type_configs from current items to ensure we capture all unit types
+      // even if they weren't in the original config or if it was empty.
+      const uniqueUnitTypes = Array.from(new Set(items.map(i => i.unit_type)));
+      
+      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
+          const item = items.find(i => i.unit_type === unitType);
+          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
+            c.unit_type?.trim().toLowerCase() === unitType?.trim().toLowerCase()
+          );
+          
+          if (item) {
+              // Priority: Item values > Existing Config > Defaults
+              return {
+                  unit_type: unitType,
+                  beds_single: item.beds_single ?? existingConfig?.beds_single,
+                  beds_double: item.beds_double ?? existingConfig?.beds_double,
+                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
+                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
+                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
+                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
+                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
+              };
+          }
+          return existingConfig || {
+              unit_type: unitType,
+              bed_count: 1,
+              occupancy_type: "Single",
+              unit_config_label: "Single"
+          };
+      });
+
+      const updatedConfig = {
+          ...(studentHousingConfig || { unit_type_configs: [] }),
+          unit_type_configs: newUnitTypeConfigs
+      };
+      
+      payload.student_housing_config = updatedConfig;
+
+      await apiClient.updateManualOverrides(packageId, payload);
+      setIsEditing({
+        details: false,
+        omExport: false,
+        unitBreakdown: false,
+        unitBreakdownStabilized: false,
+      });
       if (onUpdate) {
         onUpdate();
       }
@@ -254,15 +440,122 @@ export default function RentRollWidget({
     }
   };
 
-  const handleExport = () => {
-    // Redirect to export page with modal open query param
-    router.push(`/analysis/${packageId}?tab=export&openRentRollModal=true`);
+  const validateConfigForExport = (): boolean => {
+      // Logic mirrors the strict checks in ExportButtons.tsx
+      if (!studentHousingConfig?.unit_type_configs) return false;
+
+      // Get unique unit types from current items
+      const unitTypes = Array.from(new Set(items.map(i => i.unit_type)));
+      
+      for (const unitType of unitTypes) {
+          // Check against the merged item state first (as it reflects unsaved edits or current view)
+          // OR check against the config object.
+          // Since we are exporting what is currently in 'items' (plus config for fields not in items),
+          // we should verify the data we are about to export.
+          
+          // However, handleExport constructs exportData using studentHousingConfig.
+          // We should validate the studentHousingConfig we are about to send (or the items if merged).
+          // Let's check the items directly as they are the source of truth for the export payload
+          
+          // Actually, handleExport uses 'items' for rent_roll lines, but 'studentHousingConfig' for the config object.
+          // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
+          // So we must validate 'studentHousingConfig'.
+          
+          const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type?.trim() === unitType?.trim());
+          
+          if (!config) {
+              console.log(`Validation Failed: No config for ${unitType}`);
+              return false;
+          }
+          
+          if (!config.bed_count || config.bed_count <= 0) {
+               console.log(`Validation Failed: Invalid bed count for ${unitType}`);
+               return false;
+          }
+          
+          const occupancy = config.occupancy_type;
+          if (!occupancy) {
+               console.log(`Validation Failed: No occupancy for ${unitType}`);
+               return false;
+          }
+          
+          if (occupancy === "Single") {
+              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
+          } else if (occupancy === "Double") {
+              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
+          } else if (occupancy === "Mixed") {
+              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
+              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
+          }
+      }
+      return true;
+  };
+
+  const handleExport = async () => {
+    // Validate before export
+    if (!validateConfigForExport()) {
+        setWarningMessage("Cannot export Rent Roll.\n\nUnit Breakdown Stabilized information is incomplete.\nPlease ensure Bed Counts, Occupancy Types, and corresponding Prices are fully configured for all unit types.");
+        setShowWarning(true);
+        // Switch to the tab to help user
+        setActiveTab("unitBreakdownStabilized");
+        setIsEditing(prev => ({ ...prev, unitBreakdownStabilized: true }));
+        return;
+    }
+
+    // Construct the full analysis object needed for export
+    // The backend expects an UnderwritingAnalysis object
+    // Start with the full analysis object if available, or a minimal one
+    const baseAnalysis = fullAnalysis || {
+        document_id: packageId,
+        pass_fail_status: "PENDING", // Default values to satisfy validation
+        property_meta: {
+            address: "Unknown",
+            year_built: 0,
+            purchase_price: 0,
+            total_units: 0
+        },
+        historical_expenses: [],
+        rent_roll: [],
+        rent_roll_summary: summary || localSummary,
+    };
+
+    const exportData = {
+        ...baseAnalysis,
+        document_id: packageId,
+        rent_roll: items.map(({ id, ...rest }) => ({
+            ...rest,
+            unit_size: parseFloat(String(rest.unit_size)) || 0,
+            current_rent: parseFloat(String(rest.current_rent)) || 0,
+            stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+            market_rent: parseFloat(String(rest.market_rent)) || 0,
+        })),
+        rent_roll_summary: summary || localSummary,
+        student_housing_config: studentHousingConfig
+    };
+
+    setPendingExportData(exportData as any);
+    setShowPreview(true);
+  };
+
+  const confirmDownload = async () => {
+    if (!pendingExportData) return;
+    
+    setIsExporting(true);
+    try {
+        await apiClient.downloadExport(pendingExportData, "rent-roll");
+        setShowPreview(false);
+    } catch (error) {
+        console.error("Error exporting rent roll:", error);
+        alert("Failed to export rent roll.");
+    } finally {
+        setIsExporting(false);
+    }
   };
 
   const handleCancel = () => {
     setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
     setRowErrors({});
-    setIsEditing(false);
+    setIsEditing(prev => ({ ...prev, [activeTab]: false }));
   };
 
   const addItem = () => {
@@ -406,7 +699,7 @@ export default function RentRollWidget({
     })).sort((a, b) => b.count - a.count); // Sort by count descending
   }, [items]);
 
-  const displaySummary = isEditing ? localSummary : (summary || localSummary);
+  const displaySummary = isEditing.details ? localSummary : (summary || localSummary);
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
@@ -416,226 +709,425 @@ export default function RentRollWidget({
 
   return (
     <>
+      <div ref={componentRef} className="scroll-mt-20">
       <WarningModal
         isOpen={showWarning}
         onClose={() => setShowWarning(false)}
         title="Incomplete Data"
         message={warningMessage}
       />
+      
+      {pendingExportData && (
+        <RentRollPreviewModal
+            isOpen={showPreview}
+            onClose={() => setShowPreview(false)}
+            analysisData={pendingExportData}
+            onConfirmDownload={confirmDownload}
+            isDownloading={isExporting}
+        />
+      )}
 
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden mb-6">
-      <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
-        <h3 className="text-lg font-bold text-neutral-900 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="3" y1="9" x2="21" y2="9"></line>
-            <line x1="9" y1="21" x2="9" y2="9"></line>
-          </svg>
-          Rent Roll Detail
-        </h3>
-        {!isEditing ? (
-          <div className="flex gap-2">
-            <button
-              onClick={handleExport}
-              disabled={isExporting}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
-            >
-              {isExporting ? (
-                <span>Exporting...</span>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                  </svg>
-                  Download Rent Roll
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleEdit}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
-              Edit Rent Roll
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-             <button
-              onClick={addItem}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
-            >
-              + Add Unit
-            </button>
-            <button
-              onClick={handleCancel}
-              className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="text-xs font-medium bg-neutral-900 text-white px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {isSaving ? "Saving..." : "Save Changes"}
-            </button>
-          </div>
-        )}
-      </div>
-
-      <div className="overflow-x-auto">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
-                <th className="px-4 py-3">Unit #</th>
-                <th className="px-4 py-3 text-right">Unit Size</th>
-                <th className="px-4 py-3">Unit Type</th>
-                <th className="px-4 py-3 text-right">Current Rent</th>
-                <th className="px-4 py-3 text-right">Stabilized Rent</th>
-                <th className="px-4 py-3 text-right">Market Rent</th>
-                <th className="px-4 py-3 text-center">Move-In Date</th>
-                <th className="px-4 py-3 text-center">Lease Start</th>
-                <th className="px-4 py-3 text-center">Lease End</th>
-                {isEditing && <th className="px-4 py-3 text-center">Action</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100">
-              <SortableContext
-                items={items.map((item) => item.id)}
-                strategy={verticalListSortingStrategy}
+        <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/50">
+          <div className="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
+            <div className="flex items-center border border-neutral-200 rounded-lg p-0.5 bg-white shadow-inner">
+              <button
+                onClick={() => setActiveTab("details")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "details" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
               >
-                {items.map((item, idx) => (
-                  <SortableRow
-                    key={item.id}
-                    item={item}
-                    idx={idx}
-                    isEditing={isEditing}
-                    errors={rowErrors[item.id]}
-                    handleItemChange={handleItemChange}
-                    formatCurrency={formatCurrency}
-                    removeItem={removeItem}
-                  />
-                ))}
-              </SortableContext>
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan={isEditing ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
-                    No rent roll data available.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
-             {/* Header Row */}
-             <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
-               <td className="px-4 py-3 text-center">Total Units</td>
-               <td className="px-4 py-3 text-right">Avg Unit Size</td>
-               <td className="px-4 py-3"></td>
-               <td className="px-4 py-3 text-right">Current Rent</td>
-               <td className="px-4 py-3 text-right">Stabilized Rent</td>
-               <td className="px-4 py-3 text-right">Market Rent</td>
-               <td colSpan={isEditing ? 4 : 3}></td>
-             </tr>
-             {/* Data Row */}
-             <tr className="border-b border-neutral-800/50 align-top">
-               <td className="px-4 py-3 text-center">
-                 <div className="font-bold text-lg">{displaySummary.total_units}</div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
-               </td>
-               <td className="px-4 py-3"></td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td className="px-4 py-3 text-right">
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_market_per_unit)}</span></div>
-                    <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
-                  </div>
-               </td>
-               <td colSpan={isEditing ? 4 : 3}></td>
-             </tr>
-          </tfoot>
-          </table>
-        </DndContext>
-      </div>
-     </div>
-
-      {/* Rent Roll Summary Table */}
-      <div className="mt-8">
-        <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
-        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
-          <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
-            <h3 className="text-white font-medium">Rent Roll Summary</h3>
+                Rent Roll Information
+              </button>
+              <button
+                onClick={() => setActiveTab("omExport")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "omExport" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+              >
+                Rent Roll Detailed
+             </button>
+             <button
+               onClick={() => setActiveTab("unitBreakdown")}
+               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdown" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+             >
+               Unit Breakdown - Existing
+             </button>
+             <button
+               onClick={() => setActiveTab("unitBreakdownStabilized")}
+               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdownStabilized" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+             >
+               Unit Breakdown Stabilized
+             </button>
+           </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
-                  <th className="px-6 py-3">Unit Mix</th>
-                  <th className="px-6 py-3 text-center">Unit Count</th>
-                  <th className="px-6 py-3 text-center">%</th>
-                  <th className="px-6 py-3 text-right">Avg. Current Rent</th>
-                  <th className="px-6 py-3 text-right">Stabilized Rent</th>
-                  <th className="px-6 py-3 text-right">Market Rent</th>
-                  <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+          {!isEditing[activeTab] ? (
+            <div className="flex gap-2">
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Preview Rent Roll
+              </button>
+              <button
+                onClick={handleEdit}
+                className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm flex items-center gap-1.5"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                Edit {activeTab === "details" ? "Rent Roll" : activeTab === "omExport" ? "OM Export" : "Unit Breakdown"}
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <>
+                {activeTab === 'details' && (
+                  <button
+                    onClick={addItem}
+                    className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+                  >
+                    + Add Unit
+                  </button>
+                )}
+                <button
+                  onClick={handleCancel}
+                  className="text-xs font-medium text-neutral-600 hover:text-neutral-900 border border-neutral-200 px-3 py-1.5 rounded-lg bg-white hover:bg-neutral-50 transition-all shadow-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="text-xs font-medium bg-neutral-900 text-white px-3 py-1.5 rounded-lg hover:bg-neutral-800 transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSaving ? "Saving..." : "Save Changes"}
+                </button>
+              </>
+            </div>
+          )}
+        </div>
+
+        {activeTab === 'details' && (
+           <div className="overflow-x-auto">
+           <DndContext
+             sensors={sensors}
+             collisionDetection={closestCenter}
+             onDragEnd={handleDragEnd}
+           >
+             <table className="w-full text-left text-sm">
+               <thead>
+                 <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
+                   <th className="px-4 py-3">Unit #</th>
+                   <th className="px-4 py-3 text-right">Unit Size</th>
+                   <th className="px-4 py-3">Unit Type</th>
+                   <th className="px-4 py-3 text-right">Current Rent</th>
+                   <th className="px-4 py-3 text-right">Stabilized Rent</th>
+                   <th className="px-4 py-3 text-right">Market Rent</th>
+                   <th className="px-4 py-3 text-center">Move-In Date</th>
+                   <th className="px-4 py-3 text-center">Lease Start</th>
+                   <th className="px-4 py-3 text-center">Lease End</th>
+                   {isEditing.details && <th className="px-4 py-3 text-center">Action</th>}
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-neutral-100">
+                 <SortableContext
+                   items={items.map((item) => item.id)}
+                   strategy={verticalListSortingStrategy}
+                 >
+                   {items.map((item, idx) => (
+                     <SortableRow
+                       key={item.id}
+                       item={item}
+                       idx={idx}
+                       isEditing={isEditing.details}
+                       errors={rowErrors[item.id]}
+                       handleItemChange={handleItemChange}
+                       formatCurrency={formatCurrency}
+                       removeItem={removeItem}
+                     />
+                   ))}
+                 </SortableContext>
+                 {items.length === 0 && (
+                   <tr>
+                     <td colSpan={isEditing.details ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
+                       No rent roll data available.
+                     </td>
+                   </tr>
+                 )}
+               </tbody>
+               <tfoot className="bg-neutral-900 text-white border-t border-neutral-800">
+                {/* Header Row */}
+                <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
+                  <td className="px-4 py-3 text-center">Total Units</td>
+                  <td className="px-4 py-3 text-right">Avg Unit Size</td>
+                  <td className="px-4 py-3"></td>
+                  <td className="px-4 py-3 text-right">Current Rent</td>
+                  <td className="px-4 py-3 text-right">Stabilized Rent</td>
+                  <td className="px-4 py-3 text-right">Market Rent</td>
+                  <td colSpan={isEditing.details ? 4 : 3}></td>
+                </tr>
+                {/* Data Row */}
+                <tr className="border-b border-neutral-800/50 align-top">
+                  <td className="px-4 py-3 text-center">
+                    <div className="font-bold text-lg">{displaySummary.total_units}</div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
+                  </td>
+                  <td className="px-4 py-3"></td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                     <div className="text-xs space-y-1">
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_market_per_unit)}</span></div>
+                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
+                     </div>
+                  </td>
+                  <td colSpan={isEditing.details ? 4 : 3}></td>
+                </tr>
+             </tfoot>
+             </table>
+           </DndContext>
+         </div>
+        )}
+        {activeTab === 'omExport' && (
+          <div className="overflow-x-auto horizontal-scrollbar">
+            <table className="min-w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
+                <tr>
+                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
+                  <th colSpan={5} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
+                  <th colSpan={1} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
+                  <th colSpan={3} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Pro Forma Rents</th>
+                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Pro Forma Rent Comparison</th>
+                  <th colSpan={6} className="px-4 py-2 text-center border-b border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
+                </tr>
+                <tr className="tracking-wider">
+                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10">Count</th>
+                  <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10">Unit</th>
+                  <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10">Occupancy Type</th>
+                  <th className="px-4 py-3 border-r">Beds</th>
+                  <th className="px-4 py-3 border-r">Size</th>
+                  <th className="px-4 py-3 border-r">$/Month</th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $/SF
+                      <WidgetTooltip
+                        title="Rent per Square Foot (Annual)"
+                        description="The annualized rent calculated on a per-square-foot basis."
+                        formulas={[{ label: "$/SF", formula: "(Current Rent * 12) / Unit Size" }]}
+                      />
+                    </div>
+                </th>
+                <th className="px-4 py-3 border-r">$/Month</th>
+                <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $/SqFt
+                      <WidgetTooltip
+                        title="Pro Forma Rent per Square Foot (Annual)"
+                        description="The annualized pro forma market rent calculated on a per-square-foot basis."
+                        formulas={[{ label: "$/SqFt", formula: "(Market Rent * 12) / Unit Size" }]}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      $ Increase
+                      <WidgetTooltip
+                        title="Rent Increase ($)"
+                        description="The dollar amount difference between the pro forma market rent and the current rent."
+                        formulas={[{ label: "$ Increase", formula: "Market Rent - Current Rent" }]}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-r">
+                    <div className="flex items-center justify-end">
+                      % Increase
+                      <WidgetTooltip
+                        title="Rent Increase (%)"
+                        description="The percentage increase from the current rent to the pro forma market rent."
+                        formulas={[{ label: "% Increase", formula: "((Market Rent - Current Rent) / Current Rent) * 100" }]}
+                      />
+                    </div>
+                  </th>
+                  <th className="px-4 py-3 border-r">Pro Forma Unit Type</th>
+                  <th className="px-4 py-3 border-r">Unit Config</th>
+                  <th className="px-4 py-3 border-r">Beds</th>
+                  <th className="px-4 py-3 border-r">RC</th>
+                  <th className="px-4 py-3 border-r">Start Date</th>
+                  <th className="px-4 py-3">End Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {summaryGroups.map((group, idx) => (
-                  <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
-                    <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
-                    <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
-                    <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
-                    <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
-                  </tr>
-                ))}
-                {/* Totals Row */}
-                <tr className="border-t-2 border-neutral-900 font-bold bg-white">
-                  <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
-                  <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
-                  <td className="px-6 py-4 text-center text-neutral-900">100%</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">
-                    {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
-                  </td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
-                  <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
-                </tr>
+                {items.map((item, idx) => {
+                  const config = studentHousingConfig?.unit_type_configs.find(c => c.unit_type === item.unit_type);
+                  // Prioritize bed_count from the item, fall back to config, then to 1.
+                  const bedCount = (item as any).bed_count || config?.bed_count || getBedCountFromUnitType(item.unit_type);
+                  return (
+                    <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-4 py-2.5 text-center sticky left-0 bg-white group-hover:bg-neutral-50/50">{idx + 1}</td>
+                      <td className="px-4 py-2.5 sticky left-[3rem] bg-white group-hover:bg-neutral-50/50">
+                        {isEditing.omExport ? (
+                          <input type="text" value={item.unit_number} onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          item.unit_number
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 sticky left-[7rem] bg-white group-hover:bg-neutral-50/50">
+                        {isEditing.omExport ? (
+                          <input type="text" value={item.unit_type} onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          item.unit_type
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">{bedCount}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {isEditing.omExport ? (
+                          <input type="text" value={item.unit_size} onChange={(e) => handleNumericChange(idx, "unit_size", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          item.unit_size
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        {isEditing.omExport ? (
+                          <input type="text" value={item.current_rent} onChange={(e) => handleNumericChange(idx, "current_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          formatCurrency(Number(item.current_rent))
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">${(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {isEditing.omExport ? (
+                          <input type="text" value={item.market_rent} onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          formatCurrency(Number(item.market_rent))
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">${(Number(item.market_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-right">{formatCurrency(Number(item.market_rent) - Number(item.current_rent))}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        {Number(item.current_rent) > 0 ? `${(((Number(item.market_rent) - Number(item.current_rent)) / Number(item.current_rent)) * 100).toFixed(0)}%` : "0%"}
+                      </td>
+                      <td className="px-4 py-2.5">{item.unit_type}</td>
+                      <td className="px-4 py-2.5">{config?.unit_config_label || item.unit_type}</td>
+                      <td className="px-4 py-2.5 text-center">{bedCount}</td>
+                      <td className="px-4 py-2.5 text-center">{item.unit_type?.toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
+                      <td className="px-4 py-2.5">
+                        {isEditing.omExport ? (
+                          <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          item.lease_start
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {isEditing.omExport ? (
+                          <input type="date" value={toInputDate(item.lease_end)} onChange={(e) => handleItemChange(idx, "lease_end", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                        ) : (
+                          item.lease_end
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        )}
+       {activeTab === 'unitBreakdown' && (
+          <UnitBreakdownTable
+            rentRoll={items}
+            studentHousingConfig={studentHousingConfig}
+            isEditing={isEditing.unitBreakdown}
+            onItemChange={handleUnitBreakdownChange}
+            formatCurrency={formatCurrency}
+          />
+       )}
+       {activeTab === 'unitBreakdownStabilized' && (
+         <UnitBreakdownStabilizedTable
+            rentRoll={items}
+            studentHousingConfig={studentHousingConfig}
+            isEditing={isEditing.unitBreakdownStabilized}
+            onItemChange={handleUnitBreakdownChange}
+          />
+       )}
+      </div>
+
+      {/* Rent Roll Summary Table */}
+      {activeTab === 'details' && (
+        <div className="mt-8">
+          <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
+          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+            <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
+              <h3 className="text-white font-medium">Rent Roll Summary</h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
+                    <th className="px-6 py-3">Unit Mix</th>
+                    <th className="px-6 py-3 text-center">Unit Count</th>
+                    <th className="px-6 py-3 text-center">%</th>
+                    <th className="px-6 py-3 text-right">Avg. Current Rent</th>
+                    <th className="px-6 py-3 text-right">Stabilized Rent</th>
+                    <th className="px-6 py-3 text-right">Market Rent</th>
+                    <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {summaryGroups.map((group, idx) => (
+                    <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
+                      <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
+                    </tr>
+                  ))}
+                  {/* Totals Row */}
+                  <tr className="border-t-2 border-neutral-900 font-bold bg-white">
+                    <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">100%</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">
+                      {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
+                    </td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
+                    <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
+      )}
       </div>
     </>
   );

@@ -24,6 +24,17 @@ except json.JSONDecodeError:
     # Fallback to default if JSON parsing fails
     origins = ["http://localhost:3000"]
 
+# Add 127.0.0.1 variants to ensure local development works smoothly
+local_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000"
+]
+for origin in local_origins:
+    if origin not in origins:
+        origins.append(origin)
+
 # Always include production URLs if not already present
 production_urls = [
     "https://financial-underwriting-ai.onrender.com",
@@ -37,7 +48,7 @@ logger.info(f"CORS enabled for origins: {origins}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=".*",  # Allow all origins via regex to support credentials
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

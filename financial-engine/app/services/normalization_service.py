@@ -32,7 +32,7 @@ class NormalizationService:
                 return 0.0
         return 0.0
 
-    def normalize_expenses(self, raw_expenses: List[Dict]) -> List[StandardizedExpense]:
+    def normalize_expenses(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
         """
         Normalizes a list of raw expense data into StandardizedExpense objects.
         Each expense includes:
@@ -69,12 +69,19 @@ class NormalizationService:
 
                 # Build audit log for this normalized expense
                 # Updated to match new schema: source_doc -> source, reasoning -> method
+                # Retrieve document_id, page_number, and bbox from item if available (passed from raw_expenses/LLM)
+                # Currently raw_expenses might not have bbox/page yet as we use text-only extraction for now.
+                # But we pass document_id explicitly.
+                
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
                     extracted_value=parsed_amount,
                     source="T12 Income Statement",
                     confidence_score=item.get("confidence", 0.85),
-                    method=f"LLM mapped '{item.get('original_text', '')}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence"
+                    method=f"LLM mapped '{item.get('original_text', '')}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence",
+                    document_id=document_id,
+                    page_number=item.get("page_number"),
+                    bbox=item.get("bbox")
                 )
 
                 normalized_expenses.append(
@@ -91,13 +98,13 @@ class NormalizationService:
         except (ValueError, json.JSONDecodeError) as e:
             logger.error(f"Error processing LLM response for expense normalization: {e}")
             # Fallback to simple mapping if LLM fails
-            return self._fallback_simple_mapping(raw_expenses)
+            return self._fallback_simple_mapping(raw_expenses, document_id)
         except Exception as e:
             logger.error(f"An unexpected error occurred during expense normalization: {e}")
             # Fallback for any other unexpected errors
-            return self._fallback_simple_mapping(raw_expenses)
+            return self._fallback_simple_mapping(raw_expenses, document_id)
 
-    def _fallback_simple_mapping(self, raw_expenses: List[Dict]) -> List[StandardizedExpense]:
+    def _fallback_simple_mapping(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
         """A simple keyword-based mapping as a fallback when LLM fails."""
         normalized_expenses = []
         for expense in raw_expenses:
@@ -130,7 +137,8 @@ class NormalizationService:
                 extracted_value=amount,
                 source="T12 Income Statement",
                 confidence_score=0.65,  # Lower confidence for fallback
-                method=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching"
+                method=f"Fallback mapping: '{description}' matched to {mapped_category.value} via keyword matching",
+                document_id=document_id
             )
             
             normalized_expenses.append(

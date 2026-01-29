@@ -13,7 +13,7 @@ class AuditLogService:
     Provides provenance information for all extracted and calculated fields.
     """
     
-    def add_log(self, analysis: UnderwritingAnalysis, field_name: str, extracted_value: Any, source_doc: str, reasoning: str, confidence_score: float = 1.0, additional_data: Optional[Dict[str, Any]] = None):
+    def add_log(self, analysis: UnderwritingAnalysis, field_name: str, extracted_value: Any, source_doc: str, reasoning: str, confidence_score: float = 1.0, additional_data: Optional[Dict[str, Any]] = None, document_id: Optional[str] = None, page_number: Optional[int] = None, bbox: Optional[List[float]] = None):
         """
         Logs a new event to the audit trail of the analysis using the standardized schema.
         """
@@ -34,13 +34,20 @@ class AuditLogService:
             "confidence_score": confidence_score,
             "timestamp": datetime.now().isoformat()
         }
+
+        if document_id:
+            entry["document_id"] = document_id
+        if page_number:
+            entry["page_number"] = page_number
+        if bbox:
+            entry["bbox"] = bbox
         
         if additional_data:
             entry.update(additional_data)
             
         analysis.audit_trail.append(entry)
 
-    def add_ingestion_logs(self, analysis: UnderwritingAnalysis):
+    def add_ingestion_logs(self, analysis: UnderwritingAnalysis, document_id: Optional[str] = None):
         """
         Adds initial ingestion logs (Property Meta, Rent Roll, Historical Expenses) to the audit trail.
         Call this before running financial calculations.
@@ -57,7 +64,8 @@ class AuditLogService:
             "source": "Offering Memorandum (OM)",
             "method": "LLM extraction from OM",
             "confidence_score": 0.95,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         analysis.audit_trail.append({
@@ -66,7 +74,8 @@ class AuditLogService:
             "source": "Offering Memorandum",
             "method": "Extracted from property description section",
             "confidence_score": 0.98,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         analysis.audit_trail.append({
@@ -75,7 +84,8 @@ class AuditLogService:
             "source": "Rent Roll",
             "method": "Counted from rent roll entries",
             "confidence_score": 1.0,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         purchase_price = analysis.property_meta.purchase_price or 0.0
@@ -85,7 +95,8 @@ class AuditLogService:
             "source": "Offering Memorandum (Deal Terms)",
             "method": "Extracted from executive summary",
             "confidence_score": 0.99,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         # Rent Roll Audits
@@ -114,7 +125,8 @@ class AuditLogService:
             "source": "Rent Roll Document",
             "method": "Aggregated from individual unit entries",
             "confidence_score": 0.99,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         # Expense Audits (High Level)
@@ -128,7 +140,8 @@ class AuditLogService:
             "source": "T12 P&L Statement",
             "method": "Aggregated from normalized expense categories",
             "confidence_score": 0.92,
-            "timestamp": now
+            "timestamp": now,
+            "document_id": document_id
         })
         
         # Normalized Expense Details
@@ -143,14 +156,21 @@ class AuditLogService:
             if math.isnan(exp_amount) or math.isinf(exp_amount):
                 exp_amount = 0.0
             
-            analysis.audit_trail.append({
+            entry = {
                 "field_name": f"Expense: {category_name}",
                 "extracted_value": f"${exp_amount:,.0f}",
                 "source": "T12 P&L Statement",
                 "method": f"Original: '{expense.original_text}' mapped to {category_name}",
                 "confidence_score": expense.confidence,
-                "timestamp": now
-            })
+                "timestamp": now,
+                "document_id": document_id
+            }
+            if expense.audit_log.bbox:
+                entry["bbox"] = expense.audit_log.bbox
+            if expense.audit_log.page_number:
+                entry["page_number"] = expense.audit_log.page_number
+                
+            analysis.audit_trail.append(entry)
 
     def generate_audit_trail(self, analysis: UnderwritingAnalysis) -> List[Dict[str, Any]]:
         """
