@@ -6,6 +6,7 @@ Handles extraction of financial data from PDFs and Excel files in deal packages.
 import io
 import logging
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
@@ -277,7 +278,16 @@ class MultiDocumentExtractionService:
                 # Upload the file to Gemini
                 uploaded_file = genai.upload_file(tmp_path, mime_type=mime_type)
                 logger.info(f"Uploaded file to Gemini: {uploaded_file.name} ({mime_type})")
+
+                # Wait for file to be active
+                while uploaded_file.state.name == "PROCESSING":
+                    logger.info(f"Waiting for file processing: {uploaded_file.name}")
+                    await asyncio.sleep(2)
+                    uploaded_file = genai.get_file(uploaded_file.name)
                 
+                if uploaded_file.state.name == "FAILED":
+                    raise Exception(f"File processing failed on Gemini side: {uploaded_file.name}")
+
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
                 
@@ -441,6 +451,16 @@ class MultiDocumentExtractionService:
             
             try:
                 uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                
+                # Wait for file to be active
+                while uploaded_file.state.name == "PROCESSING":
+                    logger.info(f"Waiting for OM file processing: {uploaded_file.name}")
+                    await asyncio.sleep(2)
+                    uploaded_file = genai.get_file(uploaded_file.name)
+                
+                if uploaded_file.state.name == "FAILED":
+                    raise Exception(f"OM File processing failed on Gemini side: {uploaded_file.name}")
+
                 response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
                 
                 response_text = response.text.strip()
