@@ -18,48 +18,74 @@ logger = logging.getLogger(__name__)
 
 # Folder name to DocumentType mapping
 FOLDER_MAPPING = {
-    "01 - Offering Memorandum": DocumentType.OFFERING_MEMORANDUM,
-    "01-Offering Memorandum": DocumentType.OFFERING_MEMORANDUM,
-    "1. Offering Memorandum": DocumentType.OFFERING_MEMORANDUM,
-    "Offering Memorandum": DocumentType.OFFERING_MEMORANDUM,
-    
-    "02 - Rent Roll": DocumentType.RENT_ROLL,
-    "02-Rent Roll": DocumentType.RENT_ROLL,
-    "2. Rent Roll": DocumentType.RENT_ROLL,
-    "Rent Roll": DocumentType.RENT_ROLL,
-    
-    "03 - Leases": DocumentType.LEASES,
-    "03-Leases": DocumentType.LEASES,
-    "3. Leases": DocumentType.LEASES,
-    "Leases": DocumentType.LEASES,
-    
-    "04 - Financials": DocumentType.FINANCIALS,
-    "04-Financials": DocumentType.FINANCIALS,
-    "4. Financials": DocumentType.FINANCIALS,
-    "Financials": DocumentType.FINANCIALS,
-    
-    "05 - Building Plans & Permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "05-Building Plans & Permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "5. Building Plans & Permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "5. Building plans and permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "Building Plans & Permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "Building Plans and Permits": DocumentType.BUILDING_PLANS_PERMITS,
-    "Building Plans": DocumentType.BUILDING_PLANS_PERMITS,
-    
-    "06 - Disclosures": DocumentType.DISCLOSURES,
-    "06-Disclosures": DocumentType.DISCLOSURES,
-    "6. Disclosures": DocumentType.DISCLOSURES,
-    "Disclosures": DocumentType.DISCLOSURES,
-    
-    "07 - Tax Bills": DocumentType.TAX_BILLS,
-    "07-Tax Bills": DocumentType.TAX_BILLS,
-    "7. Tax Bills": DocumentType.TAX_BILLS,
-    "Tax Bills": DocumentType.TAX_BILLS,
-    
-    "08 - Utilities": DocumentType.UTILITIES,
-    "08-Utilities": DocumentType.UTILITIES,
-    "8. Utilities": DocumentType.UTILITIES,
-    "Utilities": DocumentType.UTILITIES,
+    # Offering Memorandum
+    "offering memorandum": DocumentType.OFFERING_MEMORANDUM,
+    "om": DocumentType.OFFERING_MEMORANDUM,
+    "marketing": DocumentType.OFFERING_MEMORANDUM,
+    "flyer": DocumentType.OFFERING_MEMORANDUM,
+    "appraisal": DocumentType.OFFERING_MEMORANDUM,
+    "setup": DocumentType.OFFERING_MEMORANDUM,
+    "executive summary": DocumentType.OFFERING_MEMORANDUM,
+
+    # Rent Roll
+    "rent roll": DocumentType.RENT_ROLL,
+    "rentroll": DocumentType.RENT_ROLL,
+    "rr": DocumentType.RENT_ROLL,
+
+    # Leases
+    "leases": DocumentType.LEASES,
+    "lease": DocumentType.LEASES,
+    "tenancy agreements": DocumentType.LEASES,
+
+    # Financials
+    "financials": DocumentType.FINANCIALS,
+    "financial": DocumentType.FINANCIALS,
+    "t12": DocumentType.FINANCIALS,
+    "trailing 12": DocumentType.FINANCIALS,
+    "p&l": DocumentType.FINANCIALS,
+    "profit & loss": DocumentType.FINANCIALS,
+    "profit and loss": DocumentType.FINANCIALS,
+    "income statement": DocumentType.FINANCIALS,
+    "operating statement": DocumentType.FINANCIALS,
+    "balance sheet": DocumentType.FINANCIALS,
+    "historical": DocumentType.FINANCIALS,
+    "expenses": DocumentType.FINANCIALS,
+    "insurance": DocumentType.FINANCIALS,
+
+    # Building Plans & Permits
+    "building plans": DocumentType.BUILDING_PLANS_PERMITS,
+    "plans": DocumentType.BUILDING_PLANS_PERMITS,
+    "permits": DocumentType.BUILDING_PLANS_PERMITS,
+    "survey": DocumentType.BUILDING_PLANS_PERMITS,
+    "zoning": DocumentType.BUILDING_PLANS_PERMITS,
+    "floor plans": DocumentType.BUILDING_PLANS_PERMITS,
+    "site plan": DocumentType.BUILDING_PLANS_PERMITS,
+
+    # Disclosures
+    "disclosures": DocumentType.DISCLOSURES,
+    "reports": DocumentType.DISCLOSURES,
+    "environmental": DocumentType.DISCLOSURES,
+    "phase i": DocumentType.DISCLOSURES,
+    "phase 1": DocumentType.DISCLOSURES,
+    "pca": DocumentType.DISCLOSURES,
+
+    # Tax Bills
+    "tax bills": DocumentType.TAX_BILLS,
+    "tax bill": DocumentType.TAX_BILLS,
+    "property tax": DocumentType.TAX_BILLS,
+    "taxes": DocumentType.TAX_BILLS,
+    "tax returns": DocumentType.TAX_BILLS,
+    "assessor": DocumentType.TAX_BILLS,
+
+    # Utilities
+    "utilities": DocumentType.UTILITIES,
+    "utility": DocumentType.UTILITIES,
+    "bills": DocumentType.UTILITIES,
+    "water": DocumentType.UTILITIES,
+    "electric": DocumentType.UTILITIES,
+    "gas": DocumentType.UTILITIES,
+    "sewer": DocumentType.UTILITIES,
+    "trash": DocumentType.UTILITIES,
 }
 
 
@@ -68,17 +94,29 @@ def get_document_type_from_folder(folder_path: str) -> Optional[DocumentType]:
     Determine document type based on folder name.
     Supports various naming conventions (with/without numbers, with/without dashes).
     """
-    folder_name = os.path.basename(folder_path)
+    folder_name = os.path.basename(folder_path).lower().strip()
     
-    # Direct match
+    # 1. Direct match (normalized)
     if folder_name in FOLDER_MAPPING:
         return FOLDER_MAPPING[folder_name]
+
+    # 2. Heuristic: Remove common numbering prefixes (e.g., "01 - ", "1. ", "01-")
+    # This helps matching "01 - Offering Memorandum" to "offering memorandum"
+    cleaned_name = folder_name
+    for i in range(10):
+        cleaned_name = cleaned_name.replace(f"{i}", "").strip()
+    cleaned_name = cleaned_name.replace("-", "").replace(".", "").strip()
     
-    # Fuzzy match - check if any key is in the folder name
-    for key, doc_type in FOLDER_MAPPING.items():
-        if key.lower() in folder_name.lower():
-            return doc_type
-    
+    if cleaned_name in FOLDER_MAPPING:
+        return FOLDER_MAPPING[cleaned_name]
+
+    # 3. Fuzzy match: Check if any key is contained in the folder name
+    # We prioritize longer keys to avoid false positives (e.g., "tax" in "taxi")
+    sorted_keys = sorted(FOLDER_MAPPING.keys(), key=len, reverse=True)
+    for key in sorted_keys:
+        if key in folder_name:
+            return FOLDER_MAPPING[key]
+            
     return None
 
 
