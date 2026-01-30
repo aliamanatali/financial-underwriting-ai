@@ -298,17 +298,40 @@ class MultiDocumentExtractionService:
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 
                 CRITICAL RULES TO AVOID ERRORS:
-                1. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma", or "Stabilized" vs "Market"), extract ONLY the "Current" or "Actual" or "T-12" column. Do NOT extract "Pro Forma" or "Market" scenarios as additional items. If only Pro Forma is available, extract the "Stabilized" version only.
-                2. NO SISTER PROPERTIES: If the document lists expenses for multiple properties (e.g. a portfolio), extract ONLY the expenses for the subject property if identifiable. Do not sum up expenses from different properties.
-                3. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines (e.g. "Total Repairs & Maintenance", "Total Operating Expenses") if you are also extracting the individual line items. We want the granular line items, NOT the subtotals. Only extract a Total if granular items are not available.
-                4. NO ASSESSED VALUES: Do NOT extract "Assessed Value" or "Appraised Value" as a Tax Expense. Only extract the actual Ad Valorem Tax amount due.
+                
+                1. PAST DUE / RECEIVABLES HANDLING:
+                   - "Past Due", "Delinquent Rent", "Arrears", "Outstanding Balance" should be type: "receivable" NOT "revenue"
+                   - These represent uncollected amounts, not actual income
+                   - Only extract actual rent payments as revenue
+                
+                2. REVENUE STREAM SEPARATION:
+                   - "Rent", "Monthly Rent", "Rental Income" → type: "revenue", subtype: "rent"
+                   - "Late Fee", "Late Charge", "Penalty" → type: "revenue", subtype: "late_fee"
+                   - "Laundry Income", "Parking Income", "Pet Fee" → type: "revenue", subtype: "other_income"
+                   - "Check Return Fee", "NSF Fee" → type: "revenue", subtype: "other_income"
+                   - "Utility Reimbursement", "CAM Reimbursement" → type: "revenue", subtype: "reimbursement"
+                
+                3. CAPITAL VS OPERATING EXPENSES:
+                   - Capital items (>$5,000, extends useful life): "New Roof", "HVAC Replacement", "Electrical Upgrade", "Major Renovation" → type: "capex"
+                   - Operating items: "Roof Repair", "HVAC Maintenance", "Minor Repairs" → type: "expense"
+                   - Permit fees for capital work → type: "capex"
+                   - Permit fees for repairs → type: "expense"
+                
+                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
+                
+                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
+                
+                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                
+                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
                 
                 For each item, provide:
                 1. The exact text/description as it appears in the document
-                2. The amount (annual or monthly) if applicable.
-                3. The item type: "revenue", "expense", "property_info", "capex".
-                4. The page number where this item is found.
-                5. The bounding box of the area containing this item (text + value).
+                2. The amount (annual or monthly) if applicable
+                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
+                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
+                5. The page number where this item is found
+                6. The bounding box of the area containing this item
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -316,16 +339,19 @@ class MultiDocumentExtractionService:
                         "raw_text": "Exact description",
                         "amount": 12345.67, // or null
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue", // or "expense", "property_info", "capex"
+                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
+                        "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
                         "page_number": 1, // Integer, 1-based page number
-                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000. Ensure the box fully encompasses the text value with a small margin.
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
                     }
                 ]
                 
                 IMPORTANT:
-                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses.
-                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses.
-                - If the document is a Rent Roll or Lease, capture the Rental Income.
+                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses
+                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses
+                - Do NOT categorize Past Due amounts as Revenue - they are Receivables
+                - Separate late fees from rent
+                - If the document is a Rent Roll or Lease, capture the Rental Income as type: "revenue", subtype: "rent"
                 
                 Return ONLY the JSON array, no additional text or explanation.
                 """
@@ -488,15 +514,74 @@ class MultiDocumentExtractionService:
             logger.error(f"Error extracting OM Proforma from {filename}: {str(e)}", exc_info=True)
             return []
     
+    def _validate_and_fix_extraction(self, expenses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Post-process extracted items to fix common categorization errors.
+        """
+        fixed_expenses = []
+        
+        for exp in expenses:
+            raw_text = exp.get("raw_text", "").lower()
+            item_type = exp.get("type", "expense")
+            
+            # Fix 1: Past Due should NEVER be revenue
+            if any(keyword in raw_text for keyword in ["past due", "delinquent", "arrears", "outstanding balance", "overdue"]):
+                if item_type == "revenue":
+                    logger.warning(f"Fixing incorrect categorization: '{exp.get('raw_text')}' was marked as revenue, changing to receivable")
+                    exp["type"] = "receivable"
+                    exp["subtype"] = "past_due"
+            
+            # Fix 2: Late fees should be other_income, not rent
+            elif any(keyword in raw_text for keyword in ["late fee", "late charge", "penalty", "nsf", "check return"]):
+                if item_type == "revenue":
+                    exp["subtype"] = "late_fee"
+                    logger.info(f"Categorized '{exp.get('raw_text')}' as late_fee")
+            
+            # Fix 3: Laundry, parking, pet fees are other_income
+            elif any(keyword in raw_text for keyword in ["laundry", "parking", "garage", "pet fee", "pet rent", "storage"]):
+                if item_type == "revenue":
+                    exp["subtype"] = "other_income"
+                    logger.info(f"Categorized '{exp.get('raw_text')}' as other_income")
+            
+            # Fix 4: Utility reimbursements
+            elif any(keyword in raw_text for keyword in ["utility reimbursement", "cam reimbursement", "reimbursement"]):
+                if item_type == "revenue":
+                    exp["subtype"] = "reimbursement"
+                    logger.info(f"Categorized '{exp.get('raw_text')}' as reimbursement")
+            
+            # Fix 5: Capital expenditures (electrical upgrades, major work)
+            elif any(keyword in raw_text for keyword in ["electrical upgrade", "new service", "panel upgrade", "major renovation", "roof replacement", "hvac replacement"]):
+                if item_type == "expense":
+                    exp["type"] = "capex"
+                    logger.info(f"Recategorized '{exp.get('raw_text')}' as capital expenditure")
+            
+            # Fix 6: Permit fees for capital work
+            elif "permit" in raw_text and any(keyword in raw_text for keyword in ["electrical", "upgrade", "replacement", "new"]):
+                if item_type == "expense":
+                    exp["type"] = "capex"
+                    logger.info(f"Recategorized permit '{exp.get('raw_text')}' as capital expenditure")
+            
+            # Fix 7: Ensure rent has correct subtype
+            elif any(keyword in raw_text for keyword in ["monthly rent", "rent", "rental income"]) and "late" not in raw_text:
+                if item_type == "revenue" and not exp.get("subtype"):
+                    exp["subtype"] = "rent"
+            
+            fixed_expenses.append(exp)
+        
+        return fixed_expenses
+    
     async def normalize_expenses_batch(self, expenses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Batch normalize expenses using Gemini to reduce API calls and latency.
         """
         if not expenses:
             return []
+        
+        # First, validate and fix common errors
+        expenses = self._validate_and_fix_extraction(expenses)
             
         if not self.gemini_service:
-            return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
+            return [self._fallback_categorization(e) for e in expenses]
 
         try:
             # Prepare items for prompt
@@ -505,7 +590,8 @@ class MultiDocumentExtractionService:
                 items_payload.append({
                     "id": idx,
                     "text": exp.get("raw_text", ""),
-                    "type": exp.get("type", "expense")
+                    "type": exp.get("type", "expense"),
+                    "subtype": exp.get("subtype", "")
                 })
             
             prompt = f"""
@@ -521,24 +607,29 @@ class MultiDocumentExtractionService:
             [
                 {{
                     "id": 0,  // Must match input ID
-                    "category": "Exact category name from the list above, or 'Uncategorized'",
+                    "category": "Exact category name from the list above",
                     "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
                     "confidence": 0.95,
                     "reasoning": "Brief explanation"
                 }}
             ]
             
-            Rules:
-            - Map income/rent to Group: "Revenue".
-            - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price".
-            - Map "Price per Unit", "Cost per Unit", "Asking Price per Unit" to Group: "Property Info" and Category: "Price per Unit".
-            - Map "Units", "Total Units", "Unit Count", "Number of Units" to Group: "Property Info" and Category: "Total Units".
-            - Map "Year Built", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built".
-            - Map "Loan Balance", "Mortgage", "Existing Debt", "Principal Balance" to Group: "Debt" and Category: "Current Loan Balance".
-            - Map general property stats (Roof Age, Sq Ft) to Group: "Property Info" and Category: "Property Characteristic".
-            - Map Tax/Insurance to Group: "Tax & Insurance".
-            - Map repairs/maintenance to Group: "Operating Expense".
-            - For aggregated Excel documents (like "Rent Roll - rent_roll.xlsx" or "T12 Statement - T12_Statement.xlsx"), map to Category: "Property Characteristic" and Group: "Other".
+            CRITICAL RULES:
+            - If type is "receivable", map to Group: "Other" and Category: "Accounts Receivable" (NOT revenue - these are uncollected amounts)
+            - If type is "revenue" and subtype is "rent", map to Group: "Revenue" and Category: "Gross Potential Rent"
+            - If type is "revenue" and subtype is "late_fee", map to Group: "Revenue" and Category: "Other Income"
+            - If type is "revenue" and subtype is "other_income", map to Group: "Revenue" and Category: "Other Income"
+            - If type is "revenue" and subtype is "reimbursement", map to Group: "Revenue" and Category: "Reimbursements"
+            - If type is "capex", map to Group: "Capital Expenditure" and Category: "Capital Reserves"
+            - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price"
+            - Map "Price per Unit", "Cost per Unit" to Group: "Property Info" and Category: "Price per Unit"
+            - Map "Units", "Total Units", "Unit Count" to Group: "Property Info" and Category: "Total Units"
+            - Map "Year Built", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built"
+            - Map "Loan Balance", "Mortgage", "Existing Debt" to Group: "Debt" and Category: "Current Loan Balance"
+            - Map general property stats (Roof Age, Sq Ft) to Group: "Property Info" and Category: "Property Characteristic"
+            - Map Tax/Insurance to Group: "Tax & Insurance"
+            - Map repairs/maintenance to Group: "Operating Expense"
+            - For aggregated Excel documents, map to Category: "Property Characteristic" and Group: "Other"
             
             Use these exact group names:
             - Revenue
@@ -602,11 +693,63 @@ class MultiDocumentExtractionService:
         batch_result = await self.normalize_expenses_batch([{"raw_text": raw_text, "type": item_type}])
         return batch_result[0] if batch_result else self._fallback_categorization(raw_text)
     
-    def _fallback_categorization(self, raw_text: str) -> Dict[str, Any]:
+    def _fallback_categorization(self, expense_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         Simple keyword-based categorization fallback when Gemini is unavailable.
         """
+        raw_text = expense_dict.get("raw_text", "") if isinstance(expense_dict, dict) else str(expense_dict)
         text_lower = raw_text.lower()
+        item_type = expense_dict.get("type", "expense") if isinstance(expense_dict, dict) else "expense"
+        subtype = expense_dict.get("subtype", "") if isinstance(expense_dict, dict) else ""
+        
+        # Handle receivables (Past Due)
+        if item_type == "receivable" or any(keyword in text_lower for keyword in ["past due", "delinquent", "arrears"]):
+            return {
+                "normalized_value": "Accounts Receivable",
+                "category_group": "Other",
+                "confidence": 0.95,
+                "reasoning": "Receivable/Past Due amount - not revenue"
+            }
+        
+        # Handle revenue subtypes
+        if item_type == "revenue":
+            if subtype == "rent" or ("rent" in text_lower and "late" not in text_lower):
+                return {
+                    "normalized_value": "Gross Potential Rent",
+                    "category_group": "Revenue",
+                    "confidence": 0.9,
+                    "reasoning": "Rental income"
+                }
+            elif subtype == "late_fee" or any(keyword in text_lower for keyword in ["late fee", "late charge", "penalty"]):
+                return {
+                    "normalized_value": "Other Income",
+                    "category_group": "Revenue",
+                    "confidence": 0.9,
+                    "reasoning": "Late fee income"
+                }
+            elif subtype == "other_income" or any(keyword in text_lower for keyword in ["laundry", "parking", "pet fee"]):
+                return {
+                    "normalized_value": "Other Income",
+                    "category_group": "Revenue",
+                    "confidence": 0.9,
+                    "reasoning": "Other income source"
+                }
+            elif subtype == "reimbursement" or "reimbursement" in text_lower:
+                return {
+                    "normalized_value": "Reimbursements",
+                    "category_group": "Revenue",
+                    "confidence": 0.9,
+                    "reasoning": "Tenant reimbursement"
+                }
+        
+        # Handle capital expenditures
+        if item_type == "capex" or any(keyword in text_lower for keyword in ["electrical upgrade", "major renovation", "roof replacement"]):
+            return {
+                "normalized_value": "Capital Reserves",
+                "category_group": "Capital Expenditure",
+                "confidence": 0.85,
+                "reasoning": "Capital expenditure"
+            }
         
         # Special handling for Excel aggregated entries
         if "rent roll" in text_lower:
@@ -625,7 +768,7 @@ class MultiDocumentExtractionService:
                 "reasoning": "Financial statement document aggregation"
             }
         
-        # Keyword mapping
+        # Keyword mapping for operating expenses
         category_keywords = {
             "Purchase Price": (["purchase price","price", "asking price", "sale price"], "Property Info"),
             "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),
@@ -637,12 +780,10 @@ class MultiDocumentExtractionService:
             "Repairs & Maintenance": (["repair", "maintenance", "r&m", "plumbing", "hvac", "painting"], "Operating Expense"),
             "Management Fees": (["management", "property management", "mgmt"], "Operating Expense"),
             "Insurance": (["insurance", "liability", "property insurance"], "Tax & Insurance"),
-            "Landscaping": (["landscape", "landscaping", "gardening", "lawn"], "Operating Expense"),
+            "Contract Services": (["landscape", "landscaping", "gardening", "lawn"], "Operating Expense"),
             "Payroll": (["payroll", "salary", "wages", "employee"], "Operating Expense"),
-            "Professional Fees": (["legal", "accounting", "professional", "consultant"], "Operating Expense"),
-            "Marketing": (["marketing", "advertising", "leasing"], "Operating Expense"),
-            "Administrative": (["administrative", "office", "supplies", "postage"], "Operating Expense"),
-            "Gross Potential Rent": (["rent", "income", "revenue", "lease payment"], "Revenue"),
+            "General & Administrative": (["legal", "accounting", "professional", "consultant", "administrative", "office", "supplies"], "Operating Expense"),
+            "Advertising & Marketing": (["marketing", "advertising", "leasing"], "Operating Expense"),
             "Property Characteristic": (["roof age", "sq ft", "square feet"], "Property Info"),
         }
         

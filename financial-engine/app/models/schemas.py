@@ -39,6 +39,9 @@ class ExpenseCategory(str, Enum):
     OTHER_INCOME = "Other Income"
     REIMBURSEMENTS = "Reimbursements"
     
+    # Balance Sheet Items (Not Revenue)
+    ACCOUNTS_RECEIVABLE = "Accounts Receivable"
+    
     # Expense Categories
     REAL_ESTATE_TAXES = "Real Estate Taxes"
     INSURANCE = "Insurance"
