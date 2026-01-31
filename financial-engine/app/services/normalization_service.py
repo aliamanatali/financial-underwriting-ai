@@ -12,59 +12,120 @@ class NormalizationService:
         self.collection_name = "expense_mappings"
 
     async def _get_cached_mappings(self, descriptions: List[str]) -> Dict[str, Dict]:
-        """Retrieve cached mappings from MongoDB."""
+        """Retrieve cached mappings from Redis and MongoDB."""
         from app.db.mongodb import get_database
+        from app.db.redis import redis_client
         from app.config import settings
         
-        if not settings.use_mongodb:
-            return {}
+        cache = {}
+        missing_in_redis = []
 
-        try:
-            db = get_database()
-            # Find documents where original_text is in our list
-            cursor = db[self.collection_name].find({"original_text": {"$in": descriptions}})
-            
-            cache = {}
-            async for doc in cursor:
-                if "original_text" in doc and "mapped_category" in doc:
-                    cache[doc["original_text"]] = doc
+        # 1. Try Redis
+        if redis_client.client:
+            keys = [f"mapping:{desc}" for desc in descriptions]
+            try:
+                values = await redis_client.client.mget(keys)
+                for desc, val in zip(descriptions, values):
+                    if val:
+                        try:
+                            cache[desc] = json.loads(val)
+                        except json.JSONDecodeError:
+                            missing_in_redis.append(desc)
+                    else:
+                        missing_in_redis.append(desc)
+            except Exception as e:
+                logger.error(f"Redis get error: {e}")
+                missing_in_redis = descriptions
+        else:
+            missing_in_redis = descriptions
+
+        if not missing_in_redis:
             return cache
-        except Exception as e:
-            logger.error(f"Failed to fetch cached mappings: {e}")
-            return {}
+
+        # 2. Try MongoDB for what's missing in Redis
+        if settings.use_mongodb:
+            try:
+                db = get_database()
+                # Find documents where original_text is in our list
+                cursor = db[self.collection_name].find({"original_text": {"$in": missing_in_redis}})
+                
+                mongo_hits = []
+                async for doc in cursor:
+                    if "original_text" in doc and "mapped_category" in doc:
+                        clean_doc = {
+                            "original_text": doc["original_text"],
+                            "mapped_category": doc["mapped_category"],
+                            "confidence": doc.get("confidence", 0.85)
+                        }
+                        cache[doc["original_text"]] = clean_doc
+                        mongo_hits.append(clean_doc)
+                
+                # Populate Redis with Mongo hits
+                if redis_client.client and mongo_hits:
+                    try:
+                        pipeline = redis_client.client.pipeline()
+                        for hit in mongo_hits:
+                            pipeline.set(f"mapping:{hit['original_text']}", json.dumps(hit), ex=86400 * 30) # 30 days
+                        await pipeline.execute()
+                    except Exception as e:
+                        logger.error(f"Redis populate error: {e}")
+
+            except Exception as e:
+                logger.error(f"Failed to fetch cached mappings from Mongo: {e}")
+        
+        return cache
 
     async def _save_mappings(self, mappings: List[Dict]):
-        """Save new mappings to MongoDB."""
+        """Save new mappings to MongoDB and Redis."""
         from app.db.mongodb import get_database
+        from app.db.redis import redis_client
         from app.config import settings
         from pymongo import UpdateOne
         
-        if not settings.use_mongodb or not mappings:
+        if not mappings:
             return
 
-        try:
-            db = get_database()
-            operations = []
-            for item in mappings:
-                if "original_text" in item and "mapped_category" in item:
-                    operations.append(
-                        UpdateOne(
-                            {"original_text": item["original_text"]},
-                            {"$set": {
-                                "original_text": item["original_text"],
-                                "mapped_category": item["mapped_category"],
-                                "confidence": item.get("confidence", 0.85),
-                                "updated_at": datetime.now().isoformat()
-                            }},
-                            upsert=True
+        # 1. Save to Redis
+        if redis_client.client:
+            try:
+                pipeline = redis_client.client.pipeline()
+                for item in mappings:
+                     if "original_text" in item and "mapped_category" in item:
+                        cache_obj = {
+                            "original_text": item["original_text"],
+                            "mapped_category": item["mapped_category"],
+                            "confidence": item.get("confidence", 0.85)
+                        }
+                        pipeline.set(f"mapping:{item['original_text']}", json.dumps(cache_obj), ex=86400 * 30)
+                await pipeline.execute()
+            except Exception as e:
+                logger.error(f"Failed to save mappings to Redis: {e}")
+
+        # 2. Save to MongoDB
+        if settings.use_mongodb:
+            try:
+                db = get_database()
+                operations = []
+                for item in mappings:
+                    if "original_text" in item and "mapped_category" in item:
+                        operations.append(
+                            UpdateOne(
+                                {"original_text": item["original_text"]},
+                                {"$set": {
+                                    "original_text": item["original_text"],
+                                    "mapped_category": item["mapped_category"],
+                                    "confidence": item.get("confidence", 0.85),
+                                    "updated_at": datetime.now().isoformat()
+                                }},
+                                upsert=True
+                            )
                         )
-                    )
-            
-            if operations:
-                await db[self.collection_name].bulk_write(operations)
-                logger.info(f"Cached {len(operations)} expense mappings")
-        except Exception as e:
-            logger.error(f"Failed to save cached mappings: {e}")
+                
+                if operations:
+                    await db[self.collection_name].bulk_write(operations)
+                    logger.info(f"Cached {len(operations)} expense mappings in MongoDB")
+            except Exception as e:
+                logger.error(f"Failed to save cached mappings to Mongo: {e}")
 
     def _parse_amount(self, value: Any) -> float:
         """Helper to safely parse amount strings/floats."""

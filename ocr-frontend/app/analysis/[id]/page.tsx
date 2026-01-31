@@ -176,6 +176,11 @@ export default function AnalysisResultPage() {
     if (id) {
       const fetchAnalysis = async () => {
         try {
+          // Prevent unnecessary re-fetches if data is already loaded and valid for this ID
+          if (analysis && analysis.document_id === id && !isLoading) {
+             return;
+          }
+
           setIsLoading(true);
           setError(null);
           setProgress({ percentage: 0, message: "Starting analysis..." });
@@ -272,7 +277,7 @@ export default function AnalysisResultPage() {
     return () => {
         closeEventSource();
     };
-  }, [id, API_BASE_URL]);
+  }, [id]); // Removed API_BASE_URL from dependencies to prevent re-runs on env var ref changes
 
   if (isLoading) {
     return (

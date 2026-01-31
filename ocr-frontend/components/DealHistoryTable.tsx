@@ -23,15 +23,39 @@ export default function DealHistoryTable() {
   const [totalPackages, setTotalPackages] = useState(0);
   const [hasMore, setHasMore] = useState(false);
 
+  // Cache state
+  const [cache, setCache] = useState<Record<string, { data: any, timestamp: number }>>({});
+
   const fetchPackages = async (page: number = 1, limit: number = itemsPerPage) => {
+    const cacheKey = `page_${page}_limit_${limit}`;
+    const CACHE_DURATION = 30000; // 30 seconds
+
+    // Check cache first
+    if (cache[cacheKey] && Date.now() - cache[cacheKey].timestamp < CACHE_DURATION) {
+      const cached = cache[cacheKey].data;
+      setPackages(cached.packages);
+      setTotalPackages(cached.total);
+      setHasMore(cached.has_more);
+      setCurrentPage(page);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const offset = (page - 1) * limit;
       const data = await apiClient.getDealPackages(limit, offset);
+      
       setPackages(data.packages);
       setTotalPackages(data.total);
       setHasMore(data.has_more);
       setCurrentPage(page);
+      
+      // Update cache
+      setCache(prev => ({
+        ...prev,
+        [cacheKey]: { data, timestamp: Date.now() }
+      }));
     } catch (err) {
       setError("Failed to load deal history");
       console.error(err);
@@ -41,6 +65,8 @@ export default function DealHistoryTable() {
   };
 
   useEffect(() => {
+    // Clear cache when changing items per page to avoid stale/mismatched data logic
+    setCache({});
     fetchPackages(1, itemsPerPage);
   }, [itemsPerPage]);
 
@@ -75,6 +101,8 @@ export default function DealHistoryTable() {
     try {
       setRenaming(packageId);
       await apiClient.renameDealPackage(packageId, newName.trim());
+      // Clear cache to force refresh
+      setCache({});
       // Refresh the current page
       await fetchPackages(currentPage, itemsPerPage);
       setEditingName(null);
@@ -120,6 +148,8 @@ export default function DealHistoryTable() {
     try {
       setDeleting(packageId);
       await apiClient.deleteDealPackage(packageId);
+      // Clear cache to force refresh
+      setCache({});
       // Refresh the current page
       await fetchPackages(currentPage, itemsPerPage);
     } catch (err) {

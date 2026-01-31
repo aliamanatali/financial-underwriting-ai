@@ -4,6 +4,7 @@ import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
+from app.db.redis import redis_client
 import os
 import json
 
@@ -18,8 +19,10 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await connect_to_mongo()
+    await redis_client.connect()
     yield
     # Shutdown
+    await redis_client.close()
     await close_mongo_connection()
 
 app = FastAPI(

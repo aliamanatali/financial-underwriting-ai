@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Database settings
     mongodb_uri: Optional[str] = None
     mongodb_database: Optional[str] = None
+    
+    # Redis settings
+    redis_url: str = "redis://localhost:6379/0"
 
     @property
     def use_mongodb(self) -> bool:

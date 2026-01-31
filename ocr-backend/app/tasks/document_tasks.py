@@ -46,7 +46,8 @@ def get_redis_key(document_id: str) -> str:
     bind=True,
     name="app.tasks.document_tasks.process_document_task",
     max_retries=3,
-    default_retry_delay=60
+    default_retry_delay=60,
+# 55 minutes soft limit
 )
 def process_document_task(self, document_id: str, storage_path: str) -> Dict[str, Any]:
     """
@@ -168,7 +169,9 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
     bind=True,
     name="app.tasks.document_tasks.process_chunk_task",
     max_retries=2,
-    default_retry_delay=30
+    default_retry_delay=30,
+    time_limit=600,  # 10 minutes hard limit per chunk
+    soft_time_limit=540  # 9 minutes soft limit
 )
 def process_chunk_task(
     self,
@@ -460,6 +463,18 @@ def _process_with_parallel_chunks(
     # Use Celery chord to process chunks in parallel and aggregate results
     # group() processes tasks in parallel
     # chord() waits for all to complete then calls callback
+    
+    # Check if there are tasks to process
+    if not chunk_tasks:
+        logger.warning(f"No chunks created for document {document_id}, triggering aggregation directly")
+        aggregate_chunks_task.delay([], document_id=document_id, pdf_info=pdf_info)
+        return {
+            'document_id': document_id,
+            'status': 'processing_chunks',
+            'total_chunks': 0,
+            'message': 'No chunks to process'
+        }
+
     callback = aggregate_chunks_task.s(document_id=document_id, pdf_info=pdf_info)
     chord(chunk_tasks)(callback)
     

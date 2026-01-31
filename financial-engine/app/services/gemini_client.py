@@ -4,11 +4,13 @@ import logging
 import base64
 import asyncio
 import time
+import hashlib
 from typing import List, Dict, Optional, Type, Any
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, ValidationError
 from app.config import settings
+from app.db.redis import redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +55,39 @@ class GeminiClient:
             logger.error(f"Error generating content with Gemini: {e}")
             return f"An error occurred: {e}"
 
+    def _generate_cache_key(self, prompt: str, pdf_data: Optional[bytes], use_fast_model: bool) -> str:
+        """Generate a deterministic cache key for the request."""
+        # Base content
+        content = f"{prompt}:{use_fast_model}:{settings.gemini_model if not use_fast_model else settings.gemini_fast_model}"
+        
+        # Add PDF hash if present
+        if pdf_data:
+            # Partial hash for speed if > 10MB
+            if len(pdf_data) > 10 * 1024 * 1024:
+                chunk = pdf_data[:1024] + pdf_data[-1024:]
+                pdf_hash = hashlib.md5(chunk).hexdigest() + f":len={len(pdf_data)}"
+            else:
+                pdf_hash = hashlib.md5(pdf_data).hexdigest()
+            content += f":pdf={pdf_hash}"
+            
+        return f"gemini_cache:{hashlib.sha256(content.encode()).hexdigest()}"
+
     async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None, use_fast_model: bool = False) -> str:
         """
         Generates content using the Gemini model asynchronously, with optional PDF data.
         Includes retry logic for rate limiting and transient errors.
         """
+        # 1. Check Cache
+        cache_key = self._generate_cache_key(prompt, pdf_data, use_fast_model)
+        if redis_client.client:
+            try:
+                cached_response = await redis_client.get(cache_key)
+                if cached_response:
+                    logger.info("Gemini Cache Hit")
+                    return cached_response
+            except Exception as e:
+                logger.error(f"Redis cache get error: {e}")
+
         last_exception = None
         model_to_use = self.fast_model if use_fast_model else self.model
         
@@ -71,7 +101,15 @@ class GeminiClient:
                     response = await model_to_use.generate_content_async([prompt, pdf_part])
                 else:
                     response = await model_to_use.generate_content_async(prompt)
-                return response.text
+                
+                # Cache and return
+                result_text = response.text
+                if redis_client.client:
+                    try:
+                        await redis_client.set(cache_key, result_text, expire=86400)
+                    except Exception as e:
+                        logger.error(f"Redis cache set error: {e}")
+                return result_text
                 
             except google_exceptions.ResourceExhausted as e:
                 # Handle rate limiting (429)
