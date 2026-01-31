@@ -831,120 +831,111 @@ class MultiDocumentExtractionService:
         om_proforma_results = []
         errors = []
         
-        logger.info(f"Starting to process {len(documents)} documents")
+        logger.info(f"Starting to process {len(documents)} documents in parallel")
         
-        # Create mapping of filename to document_id for later association
-        filename_to_doc_id = {}
-        # We need to extract document_id from the document input if available
-        # The input 'documents' is constructed in multi_document.py
-        
-        # Extract from each document
-        for idx, doc in enumerate(documents):
-            file_content = doc.get("content")
-            filename = doc.get("filename", "unknown")
-            file_type = doc.get("type", "").lower()
-            document_id = doc.get("document_id")  # This needs to be passed from the route
-            
-            if progress_service and task_id:
-                # Calculate progress based on files processed
-                # Progress should be proportional to files completed
-                files_completed = idx
-                total_files = len(documents)
-                
-                # Calculate percentage: (files_completed / total_files) * 100
-                # Map to the progress range (progress_start to progress_end)
-                if total_files > 0:
-                    file_progress = (files_completed / total_files)
-                    current_pct = int(progress_start + (file_progress * (progress_end - progress_start)))
-                else:
-                    current_pct = progress_start
-                
-                await progress_service.update_progress(
-                    task_id,
-                    current_pct,
-                    f"Processing file {idx + 1} of {total_files}: {filename}",
-                    details={
-                        "current_file": filename,
-                        "file_index": idx + 1,
-                        "total_files": total_files,
-                        "file_type": file_type,
-                        "document_category": doc.get("document_category")
-                    }
-                )
-            
-            logger.info(f"Processing document {idx+1}/{len(documents)}: {filename} (type: {file_type})")
-            
-            if not file_content:
-                logger.warning(f"No content for document: {filename}")
-                continue
+        # Semaphore to limit concurrent processing (optional, but good practice)
+        sem = asyncio.Semaphore(10)  # Adjust concurrency limit as needed
 
-            # Check if this is the Offering Memorandum to run proforma extraction
-            if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
-                logger.info(f"Running OM Proforma extraction on: {filename}")
-                proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
-                if proforma_tables:
-                    om_proforma_results.extend(proforma_tables)
-                    logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
-            
-            try:
-                if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
-                    logger.info(f"Extracting from Excel file: {filename}")
-                    expenses = await self.extract_from_excel(file_content, filename)
-                    logger.info(f"Extracted {len(expenses)} expenses from Excel: {filename}")
-                elif file_type == "csv" or filename.lower().endswith(".csv"):
-                    logger.info(f"Extracting from CSV file: {filename}")
-                    expenses = await self.extract_from_csv(file_content, filename)
-                    logger.info(f"Extracted {len(expenses)} expenses from CSV: {filename}")
+        async def process_single_document(idx, doc):
+            async with sem:
+                local_expenses = []
+                local_om_results = []
+                
+                file_content = doc.get("content")
+                filename = doc.get("filename", "unknown")
+                file_type = doc.get("type", "").lower()
+                document_id = doc.get("document_id")
 
-                elif file_type == "visual" or file_type == "pdf" or filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
-                    logger.info(f"Extracting from visual file: {filename}")
+                # Progress update (approximate, since it's async)
+                if progress_service and task_id:
+                     # Just log start or update a shared counter if precise tracking needed
+                     # For simplicity, we might update periodically or just at start/end
+                     pass
+
+                logger.info(f"Processing document {idx+1}/{len(documents)}: {filename} (type: {file_type})")
+
+                if not file_content:
+                    logger.warning(f"No content for document: {filename}")
+                    return [], []
+
+                # OM Extraction
+                if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
+                    logger.info(f"Running OM Proforma extraction on: {filename}")
+                    try:
+                        proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
+                        if proforma_tables:
+                            local_om_results.extend(proforma_tables)
+                            logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
+                    except Exception as e:
+                        logger.error(f"Error extracting OM Proforma from {filename}: {e}")
+
+                try:
+                    expenses = []
+                    if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
+                        logger.info(f"Extracting from Excel file: {filename}")
+                        expenses = await self.extract_from_excel(file_content, filename)
+                        logger.info(f"Extracted {len(expenses)} expenses from Excel: {filename}")
                     
-                    # Determine MIME type
-                    mime_type = "application/pdf"
-                    if filename.lower().endswith(".png"):
-                        mime_type = "image/png"
-                    elif filename.lower().endswith((".jpg", ".jpeg")):
-                        mime_type = "image/jpeg"
+                    elif file_type == "csv" or filename.lower().endswith(".csv"):
+                        logger.info(f"Extracting from CSV file: {filename}")
+                        expenses = await self.extract_from_csv(file_content, filename)
+                        logger.info(f"Extracted {len(expenses)} expenses from CSV: {filename}")
+
+                    elif file_type == "visual" or file_type == "pdf" or filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
+                        logger.info(f"Extracting from visual file: {filename}")
                         
-                    expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
-                    logger.info(f"Extracted {len(expenses)} expenses from {filename}")
-                    
-                    # Attach document_id to expenses if available
-                    if document_id:
-                        for exp in expenses:
-                            exp["document_id"] = document_id
+                        mime_type = "application/pdf"
+                        if filename.lower().endswith(".png"):
+                            mime_type = "image/png"
+                        elif filename.lower().endswith((".jpg", ".jpeg")):
+                            mime_type = "image/jpeg"
+                            
+                        expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
+                        logger.info(f"Extracted {len(expenses)} expenses from {filename}")
+                        
+                        if document_id:
+                            for exp in expenses:
+                                exp["document_id"] = document_id
 
-                    # If extraction returned empty, create a placeholder entry
-                    if not expenses:
-                        logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
-                        expenses = [{
-                            "raw_text": f"Document - {filename} (No expenses extracted)",
-                            "amount": 0.0,
-                            "source_document": filename,
-                            "document_id": document_id
-                        }]
-                else:
-                    logger.warning(f"Unsupported file type for {filename}")
-                    continue
-                
-                all_expenses.extend(expenses)
-                
-            except Exception as e:
-                error_msg = f"Error processing {filename}: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                errors.append(error_msg)
-                
-                # Add a placeholder entry for failed documents so they still appear
-                placeholder_expense = {
-                    "raw_text": f"Document - {filename} (Processing failed: {str(e)[:100]})",
-                    "amount": 0.0,
-                    "source_document": filename,
-                    "error": str(e)
-                }
-                all_expenses.append(placeholder_expense)
-                logger.info(f"Added placeholder entry for failed document: {filename}")
-                # Continue processing other documents
+                        if not expenses:
+                            logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
+                            expenses = [{
+                                "raw_text": f"Document - {filename} (No expenses extracted)",
+                                "amount": 0.0,
+                                "source_document": filename,
+                                "document_id": document_id
+                            }]
+                    else:
+                        logger.warning(f"Unsupported file type for {filename}")
+                        return [], []
+
+                    local_expenses.extend(expenses)
+                    return local_expenses, local_om_results
+
+                except Exception as e:
+                    error_msg = f"Error processing {filename}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    errors.append(error_msg)
+                    
+                    placeholder_expense = {
+                        "raw_text": f"Document - {filename} (Processing failed: {str(e)[:100]})",
+                        "amount": 0.0,
+                        "source_document": filename,
+                        "error": str(e)
+                    }
+                    return [placeholder_expense], local_om_results
+
+        # Execute all document processing in parallel
+        tasks = [process_single_document(idx, doc) for idx, doc in enumerate(documents)]
         
+        # Use gather to wait for all
+        results = await asyncio.gather(*tasks)
+        
+        # Flatten results
+        for doc_expenses, doc_om_results in results:
+            all_expenses.extend(doc_expenses)
+            om_proforma_results.extend(doc_om_results)
+
         # Update progress after all files are processed
         if progress_service and task_id:
             await progress_service.update_progress(
@@ -952,10 +943,8 @@ class MultiDocumentExtractionService:
                 progress_end,
                 f"Completed processing {len(documents)} files",
                 details={
-                    "current_file": "All files processed",
-                    "file_index": len(documents),
                     "total_files": len(documents),
-                    "file_type": "complete"
+                    "status": "complete"
                 }
             )
         
@@ -978,12 +967,13 @@ class MultiDocumentExtractionService:
         # Process in chunks of 50 to avoid hitting token limits
         batch_size = 50
         
-        for i in range(0, len(all_expenses), batch_size):
-            chunk = all_expenses[i:i + batch_size]
-            logger.info(f"Normalizing batch {i//batch_size + 1}/{(len(all_expenses) + batch_size - 1)//batch_size + 1} ({len(chunk)} items)")
-            
+        # Create batches
+        batches = [all_expenses[i:i + batch_size] for i in range(0, len(all_expenses), batch_size)]
+        
+        async def process_normalization_batch(batch_idx, chunk):
+            local_items = []
             try:
-                # Get normalized data for the entire chunk
+                logger.info(f"Normalizing batch {batch_idx + 1}/{len(batches)} ({len(chunk)} items)")
                 batch_normalizations = await self.normalize_expenses_batch(chunk)
                 
                 for idx, (expense, normalization) in enumerate(zip(chunk, batch_normalizations)):
@@ -992,7 +982,6 @@ class MultiDocumentExtractionService:
                         amount = expense.get("amount")
                         item_type = expense.get("type", "expense")
                         
-                        # Determine field type based on the group returned
                         category_group = normalization.get("category_group", "Other")
                         field_type = "expense_category"
                         if category_group == "Property Info":
@@ -1000,11 +989,9 @@ class MultiDocumentExtractionService:
                         elif category_group == "Revenue":
                             field_type = "revenue_item"
                         
-                        # Map string group to Enum if possible, otherwise default to OTHER
                         try:
                             group_enum = CategoryGroup(category_group)
                         except ValueError:
-                            # Try to handle common variations
                             try:
                                 if "Expense" in category_group:
                                     group_enum = CategoryGroup.OPERATING_EXPENSE
@@ -1018,8 +1005,7 @@ class MultiDocumentExtractionService:
                                     group_enum = CategoryGroup.OTHER
                             except:
                                 group_enum = CategoryGroup.OTHER
-                            
-                        # Ensure metadata includes document_id
+                        
                         meta = {
                             "amount": amount,
                             "reasoning": normalization.get("reasoning", ""),
@@ -1028,11 +1014,14 @@ class MultiDocumentExtractionService:
                             "original_type": item_type,
                             "page_number": expense.get("page_number"),
                             "bbox": expense.get("bbox"),
-                            "document_id": expense.get("document_id")  # Pass document_id
+                            "document_id": expense.get("document_id")
                         }
 
+                        # Create a temp ID, we will re-index later if needed to be perfectly sequential
+                        # or just use UUIDs. Here using a placeholder index that might collide if not careful
+                        # but we are appending to a local list.
                         item = NormalizedDataItem(
-                            id=f"item_{len(normalized_items)}",
+                            id=f"item_placeholder",
                             raw_text=raw_text,
                             normalized_value=normalization.get("normalized_value", "Other Operating Expenses"),
                             field_type=field_type,
@@ -1043,15 +1032,25 @@ class MultiDocumentExtractionService:
                             source_document=expense.get("source_document", "Unknown"),
                             metadata=meta
                         )
-                        normalized_items.append(item)
-                        
+                        local_items.append(item)
                     except Exception as item_error:
                         logger.error(f"Error creating normalized item: {str(item_error)}")
                         continue
-                        
+                return local_items
             except Exception as batch_error:
-                logger.error(f"Error processing batch starting at {i}: {str(batch_error)}")
-                # Continue to next batch
+                logger.error(f"Error processing batch {batch_idx}: {str(batch_error)}")
+                return []
+
+        # Run normalization batches in parallel
+        norm_results = await asyncio.gather(*[process_normalization_batch(i, batch) for i, batch in enumerate(batches)])
+        
+        # Flatten results
+        for batch_items in norm_results:
+            normalized_items.extend(batch_items)
+            
+        # Re-assign sequential IDs
+        for idx, item in enumerate(normalized_items):
+            item.id = f"item_{idx}"
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
         logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items and {len(om_proforma_results)} OM proforma tables.")

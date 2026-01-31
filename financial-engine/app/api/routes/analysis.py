@@ -12,6 +12,7 @@ from app.dependencies import get_ingestion_service, get_financial_service, get_e
 import logging
 from datetime import datetime
 import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -110,34 +111,36 @@ async def perform_analysis(
         await progress_service.update_progress(document_id, 0, f"Calculation failed: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Financial calculation failed: {str(e)}")
     
-    # ===== STEP 3.5: GENERATE EXPLAINABILITY METADATA =====
+    # ===== STEP 3.5: GENERATE EXPLAINABILITY & OUTPUTS =====
     try:
         await progress_service.update_progress(document_id, 80, "Generating insights and explanations...")
+        
+        # 1. Deterministic Explanations (Fast, Sync)
         analysis = explainability_service.generate_explanations(analysis)
         logger.info("Explainability metadata generated successfully.")
+        
+        # 2. Parallel Generation of AI Content (Slow, Async)
+        await progress_service.update_progress(document_id, 90, "Generating AI commentary and memo...")
+        
+        async def task_commentary():
+            await explainability_service.generate_analyst_commentary(analysis)
+            
+        async def task_memo():
+            # Generate Investment Memo (Markdown)
+            memo_content = await memo_service.generate_investment_memo(analysis)
+            analysis.investment_memo = memo_content
+            
+        # Run AI tasks in parallel to save time
+        await asyncio.gather(task_commentary(), task_memo())
+        logger.info("AI content (Commentary & Memo) generated successfully.")
+        
+        # Note: Excel generation removed from critical path as it's not stored in the analysis object.
+        # It is generated on-demand via /export/excel endpoint.
+        
     except Exception as e:
-        logger.error(f"Explainability generation failed: {str(e)}")
+        logger.error(f"Explainability/Memo generation failed: {str(e)}")
         # We don't stop the pipeline, but we log it.
-        analysis.gating_reasons.append(f"Explainability generation failed: {str(e)}")
-
-    # ===== STEP 4: GENERATE OUTPUTS =====
-    try:
-        await progress_service.update_progress(document_id, 90, "Generating output models...")
-        
-        # Generate Excel model
-        pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
-        await excel_service.create_side_by_side_excel(pro_forma_entries)
-        logger.info(f"Excel model generated for document: {document_id}")
-        
-        # Generate Investment Memo
-        logger.info(f"Generating investment memo for document: {document_id}")
-        memo_content = memo_service.generate_investment_memo(analysis)
-        analysis.investment_memo = memo_content
-        logger.info("Investment memo generated successfully")
-        
-    except Exception as e:
-        logger.warning(f"Output generation had issues (non-critical): {str(e)}")
-        # Don't fail the whole analysis if Excel/Memo fails - it's a nice-to-have
+        analysis.gating_reasons.append(f"AI Generation failed: {str(e)}")
     
     # ===== STEP 5: RETURN COMPLETE ANALYSIS =====
     await progress_service.update_progress(document_id, 100, "Analysis complete!")

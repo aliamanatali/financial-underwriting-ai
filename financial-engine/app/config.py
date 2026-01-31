@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     gcp_token_uri: Optional[str] = None
     gcp_auth_provider_x509_cert_url: Optional[str] = None
     gcp_client_x509_cert_url: Optional[str] = None
+    # Database settings
+    mongodb_uri: Optional[str] = None
+    mongodb_database: Optional[str] = None
+
+    @property
+    def use_mongodb(self) -> bool:
+        return self.mongodb_uri is not None
     gcp_universe_domain: Optional[str] = None
     
     @property

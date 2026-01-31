@@ -2,8 +2,11 @@ import os
 import json
 import logging
 import base64
+import asyncio
+import time
 from typing import List, Dict, Optional, Type, Any
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -18,6 +21,8 @@ class GeminiClient:
             'gemini-2.5-pro',
             generation_config={"temperature": 0.0}
         )
+        self.max_retries = 3
+        self.base_delay = 1.0
 
     def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
         """
@@ -40,24 +45,49 @@ class GeminiClient:
     async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
         """
         Generates content using the Gemini model asynchronously, with optional PDF data.
+        Includes retry logic for rate limiting and transient errors.
         """
-        try:
-            if pdf_data:
-                pdf_part = {
-                    "mime_type": "application/pdf",
-                    "data": base64.b64encode(pdf_data).decode("utf-8")
-                }
-                response = await self.model.generate_content_async([prompt, pdf_part])
-            else:
-                response = await self.model.generate_content_async(prompt)
-            return response.text
-        except Exception as e:
-            logger.error(f"Error generating content asynchronously with Gemini: {e}")
-            return f"An error occurred: {e}"
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                if pdf_data:
+                    pdf_part = {
+                        "mime_type": "application/pdf",
+                        "data": base64.b64encode(pdf_data).decode("utf-8")
+                    }
+                    response = await self.model.generate_content_async([prompt, pdf_part])
+                else:
+                    response = await self.model.generate_content_async(prompt)
+                return response.text
+                
+            except google_exceptions.ResourceExhausted as e:
+                # Handle rate limiting (429)
+                delay = self.base_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Rate limit exceeded (attempt {attempt + 1}/{self.max_retries}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                last_exception = e
+                
+            except google_exceptions.ServiceUnavailable as e:
+                # Handle service unavailable (503)
+                delay = self.base_delay * (2 ** attempt)
+                logger.warning(f"Service unavailable (attempt {attempt + 1}/{self.max_retries}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                last_exception = e
+                
+            except Exception as e:
+                # For other errors, log and return error message immediately or maybe retry?
+                # Usually we don't retry on bad request etc.
+                logger.error(f"Error generating content asynchronously with Gemini: {e}")
+                return f"An error occurred: {e}"
+        
+        # If we exhausted retries
+        logger.error(f"Failed to generate content after {self.max_retries} attempts. Last error: {last_exception}")
+        return f"An error occurred: {last_exception}"
 
-    def map_expenses_to_categories(self, raw_expenses: List[Dict], categories: List[str]) -> List[Dict]:
+    async def map_expenses_to_categories_async(self, raw_expenses: List[Dict], categories: List[str]) -> List[Dict]:
         """
-        Maps raw expenses to predefined categories using the Gemini model.
+        Maps raw expenses to predefined categories using the Gemini model asynchronously.
         """
         prompt = f"""
         Given a list of raw expenses and a list of categories, map each expense to the most appropriate category.
@@ -68,12 +98,20 @@ class GeminiClient:
         Categories: {categories}
         """
         try:
-            response = self.model.generate_content(prompt)
-            cleaned_json = self._clean_json_string(response.text)
+            response_text = await self.generate_content_async(prompt)
+            cleaned_json = self._clean_json_string(response_text)
             return json.loads(cleaned_json)
         except Exception as e:
             logger.error(f"Error mapping expenses to categories: {e}")
             return []
+
+    def map_expenses_to_categories(self, raw_expenses: List[Dict], categories: List[str]) -> List[Dict]:
+        """
+        Maps raw expenses to predefined categories using the Gemini model.
+        DEPRECATED: Use map_expenses_to_categories_async for better performance.
+        """
+        # Kept for backward compatibility if synchronous call is absolutely needed
+        return asyncio.run(self.map_expenses_to_categories_async(raw_expenses, categories))
 
     async def generate_structured_data_async(
         self,

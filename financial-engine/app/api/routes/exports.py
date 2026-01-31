@@ -115,7 +115,7 @@ async def export_memo(
     
     Uses LLM to generate sophisticated narrative or falls back to template.
     """
-    pdf_content = memo_service.generate_investment_memo_pdf(analysis_data)
+    pdf_content = await memo_service.generate_investment_memo_pdf(analysis_data)
     
     filename = "investment_memo.pdf"
     encoded_filename = urllib.parse.quote(filename)

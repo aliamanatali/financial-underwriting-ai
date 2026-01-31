@@ -14,3 +14,4 @@ pandas
 python-multipart
 numpy-financial
 fpdf2
+motor

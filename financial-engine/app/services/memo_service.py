@@ -29,14 +29,14 @@ class MemoService:
     def __init__(self, gemini_service: "GeminiService" = None):
         self.gemini_service = gemini_service
 
-    def generate_investment_memo(self, analysis_data: UnderwritingAnalysis) -> str:
+    async def generate_investment_memo(self, analysis_data: UnderwritingAnalysis) -> str:
         """
         Generates a markdown-formatted investment memo using an LLM.
         Falls back to template if LLM is unavailable.
         """
         try:
             if self.gemini_service:
-                memo_content = self._generate_memo_with_llm(analysis_data)
+                memo_content = await self._generate_memo_with_llm(analysis_data)
             else:
                 memo_content = self._generate_memo_template(analysis_data)
             return memo_content
@@ -44,7 +44,7 @@ class MemoService:
             logger.error(f"Error generating memo: {e}. Falling back to template.")
             return self._generate_memo_template(analysis_data)
 
-    def _generate_memo_with_llm(self, analysis_data: UnderwritingAnalysis) -> str:
+    async def _generate_memo_with_llm(self, analysis_data: UnderwritingAnalysis) -> str:
         """
         Uses LLM to generate a sophisticated investment memo.
         """
@@ -102,7 +102,11 @@ class MemoService:
         """
         
         try:
-            memo = self.gemini_service.generate_content(prompt)
+            # Check if service supports async
+            if hasattr(self.gemini_service, 'generate_content_async'):
+                memo = await self.gemini_service.generate_content_async(prompt)
+            else:
+                memo = self.gemini_service.generate_content(prompt)
             return memo
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
@@ -228,14 +232,14 @@ class MemoService:
             # Move to next line
             pdf.set_y(y_start + max_height)
 
-    def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
+    async def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """
         Generates a PDF investment memo.
         """
         if analysis_data.investment_memo:
             content = analysis_data.investment_memo
         else:
-            content = self.generate_investment_memo(analysis_data)
+            content = await self.generate_investment_memo(analysis_data)
         
         pdf = PDF()
         pdf.add_page()

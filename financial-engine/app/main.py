@@ -3,6 +3,7 @@ import logging
 import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
+from app.db.mongodb import connect_to_mongo, close_mongo_connection
 import os
 import json
 
@@ -10,10 +11,22 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Lifecycle context manager
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await connect_to_mongo()
+    yield
+    # Shutdown
+    await close_mongo_connection()
+
 app = FastAPI(
     title="Valiance Financial Engine",
     description="A service for performing financial analysis on real estate deals.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Read CORS origins from environment variable

@@ -161,207 +161,208 @@ class IngestionService:
 
     async def ingest_pdf_document(self, document_id: str) -> UnderwritingAnalysis:
         """
-        Ingests a PDF document from the ocr-backend, extracts the required information,
-        and returns a complete UnderwritingAnalysis object.
+        Ingests a PDF document from the ocr-backend using parallel processing.
         """
-        # Poll for document processing completion
         import asyncio
-        max_wait_time = 300  # 5 minutes
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger(__name__)
+
+        # 1. Wait for Processing
+        max_wait_time = 300
         elapsed_time = 0
         while elapsed_time < max_wait_time:
             status = await self.ocr_backend_client.get_document_status(document_id)
             if status["status"] == "completed":
                 break
-            await asyncio.sleep(5)  # Use asyncio.sleep for non-blocking wait
+            await asyncio.sleep(5)
             elapsed_time += 5
         else:
             raise HTTPException(status_code=408, detail="Document processing timed out.")
 
-        raw_text = await self.ocr_backend_client.get_document_text(document_id)
+        # 2. Fetch Prerequisites (Text & PDF Bytes)
+        # We need these before we can start parallel tasks
+        try:
+            raw_text, pdf_bytes = await asyncio.gather(
+                self.ocr_backend_client.get_document_text(document_id),
+                self.ocr_backend_client.get_document_bytes(document_id)
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch document content: {e}")
+            raise HTTPException(status_code=500, detail="Failed to fetch document content")
 
-        # 1. Extract PropertyMeta (SAFE METHOD)
-        property_meta_prompt = """
-        Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
-        
-        CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
-        - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
-        - It is often on the cover page or Executive Summary.
-        - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
-        - If "Unpriced", "TBD", or "Best Offer", look for a "Strike Price" or "Guidance" elsewhere. If still not found, return 0.0.
-        
-        CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
-        - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
-        
-        CRITICAL INSTRUCTIONS FOR BUILDING SIZE:
-        - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
-        - This represents the total square footage of the building(s).
-        
-        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
-
-        Example:
-        {
-            "address": "123 Main St, Anytown, USA",
-            "year_built": 2022,
-            "purchase_price": 5000000.0,
-            "total_units": 50,
-            "current_loan_balance": 7200000.0,
-            "building_size": 45000
-        }
-        """
-        property_meta_data = self.gemini_client.generate_structured_data(
-            f"{property_meta_prompt}\n\n{raw_text}",
-            pydantic_schema=PropertyMeta,
-            expect_list=False
-        )
-        # --- ROBUSTNESS FIX ---
-        # If the returned data is not a valid dict, it means the LLM failed.
-        # We must stop here to prevent creating a bad analysis object.
-        if not isinstance(property_meta_data, dict) or "address" not in property_meta_data:
-            # Check for an error key in the dictionary
-            if isinstance(property_meta_data, dict) and "error" in property_meta_data:
-                raise HTTPException(status_code=422, detail=f"Failed to extract Property Meta: {property_meta_data['error']}")
-            raise HTTPException(status_code=422, detail="Failed to extract valid Property Meta from document.")
-        property_meta = PropertyMeta(**property_meta_data)
-        import logging
-        logging.basicConfig(level=logging.INFO)
-        logging.info(f"Extracted Property Meta: {property_meta}")
-
-        # 2. Extract RentRoll (SAFE METHOD)
-        rent_roll_prompt = f"""
-        Extract the rent roll from the document for {property_meta.total_units} units.
-        
-        CRITICAL FOR UNIT TYPE:
-        - Extract the Unit Type EXACTLY as it appears in the document.
-        - Do NOT normalize, translate, or convert it.
-        - Examples: Keep "0/1.00", "2/1.00", "VACANT", "1 BR", "2 BDRM" exactly as written.
-        
-        CRITICAL FOR MARKET RENT:
-        - Look for "Market Rent", "Pro Forma Rent", "Potential Rent", or "Street Rent".
-        - If Market Rent is not explicitly listed for a unit, DO NOT invent one. Return null or 0.0.
-        
-        CRITICAL FOR STABILIZED RENT:
-        - Look for "Stabilized Rent" or "Stabilized".
-        - If not explicitly listed, return 0.0.
-
-        CRITICAL FOR UNIT SIZE:
-        - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
-
-        Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end".
-        """
-        pdf_bytes = await self.ocr_backend_client.get_document_bytes(document_id)
         if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="Failed to fetch PDF content from OCR backend.")
-        rent_roll_data = self.gemini_client.generate_structured_data(
-            f"{rent_roll_prompt}\n\n{raw_text}",
-            pydantic_schema=RentRollItem,
-            pdf_data=pdf_bytes,
-            expect_list=True
+             raise HTTPException(status_code=400, detail="Failed to fetch PDF content from OCR backend.")
+
+        # 3. Define Async Tasks for Parallel Execution
+        
+        # Task A: Property Meta
+        async def task_property_meta():
+            property_meta_prompt = """
+            Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
+            
+            CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
+            - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
+            - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
+            - If "Unpriced", "TBD", or "Best Offer", return 0.0.
+            
+            CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
+            - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
+            
+            CRITICAL INSTRUCTIONS FOR BUILDING SIZE:
+            - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
+            
+            Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
+            """
+            try:
+                property_meta_data = await self.gemini_client.generate_structured_data_async(
+                    f"{property_meta_prompt}\n\n{raw_text}",
+                    pydantic_schema=PropertyMeta,
+                    expect_list=False
+                )
+                # Robustness check
+                if not isinstance(property_meta_data, dict) or "address" not in property_meta_data:
+                     # Check for dict with error
+                     if isinstance(property_meta_data, dict) and "error" in property_meta_data:
+                         logger.warning(f"Property Meta Extraction Error: {property_meta_data}")
+                     # Return default
+                     return PropertyMeta(address="Unknown", year_built=1980, purchase_price=0.0, total_units=0)
+                
+                return PropertyMeta(**property_meta_data)
+            except Exception as e:
+                logger.error(f"Failed to extract property meta: {e}")
+                return PropertyMeta(address="Unknown", year_built=1980, purchase_price=0.0, total_units=0)
+
+        # Task B: Raw Expenses (T12)
+        async def task_raw_expenses():
+            try:
+                return await self.ingest_financials_from_pdf(document_id)
+            except Exception as e:
+                logger.error(f"Failed to extract financials: {e}")
+                return []
+
+        # Task C: P&L Income (Total)
+        async def task_pnl_income():
+            try:
+                return await self.ingest_income_statement_from_pdf(document_id)
+            except Exception as e:
+                logger.error(f"Failed to extract P&L income: {e}")
+                return 0.0
+
+        # Task D: OM Proforma (Text Based)
+        async def task_om_proforma():
+            try:
+                # Use synchronous OM scraper but run in thread pool if needed,
+                # but extract_proforma is regex based so fast enough.
+                # However, if it fails, it calls gemini which is async?
+                # Wait, extract_proforma is purely regex. extract_om_proforma_from_pdf is async.
+                
+                proforma = self.om_scraper_service.extract_proforma(raw_text)
+                if not proforma:
+                    # Fallback to vision
+                    proforma = await self.om_scraper_service.extract_om_proforma_from_pdf(pdf_bytes, f"doc_{document_id}.pdf")
+                return proforma
+            except Exception as e:
+                logger.error(f"Failed to extract OM Proforma: {e}")
+                return []
+
+        # Task E: Tax Assumptions
+        async def task_tax_assumptions():
+            try:
+                return self.om_scraper_service.extract_tax_assumptions(raw_text)
+            except Exception as e:
+                logger.error(f"Failed to extract tax assumptions: {e}")
+                return None
+
+        # 4. Execute Phase 1 Parallel Tasks
+        logger.info("Starting Phase 1 Parallel Extraction...")
+        results_phase1 = await asyncio.gather(
+            task_property_meta(),
+            task_raw_expenses(),
+            task_pnl_income(),
+            task_om_proforma(),
+            task_tax_assumptions()
         )
-        rent_roll = self.normalization_service.normalize_rent_roll(rent_roll_data)
-
-        # 3. Extract Raw Expenses
-        raw_expenses = await self.ingest_financials_from_pdf(document_id)
-
-        # 4. Normalize Expenses (with audit trail integration)
-        historical_expenses = self.normalization_service.normalize_expenses(raw_expenses, document_id=document_id)
         
-        # 5. Compute Rent Roll Summary first (needed for audit trail)
+        property_meta, raw_expenses, pnl_income, om_proforma, tax_assumptions = results_phase1
+        logger.info(f"Phase 1 Complete. Extracted Property: {property_meta.address}, Expenses: {len(raw_expenses)}")
+
+        # 5. Execute Phase 2 Parallel Tasks (Dependent on Property Meta)
+        # Rent Roll extraction relies on total_units from property_meta for better context
+        
+        async def task_rent_roll():
+            rent_roll_prompt = f"""
+            Extract the rent roll from the document for {property_meta.total_units} units.
+            
+            CRITICAL FOR UNIT TYPE:
+            - Extract the Unit Type EXACTLY as it appears in the document.
+            - Do NOT normalize, translate, or convert it.
+            
+            CRITICAL FOR MARKET RENT:
+            - Look for "Market Rent", "Pro Forma Rent", "Potential Rent", or "Street Rent".
+            - If Market Rent is not explicitly listed for a unit, DO NOT invent one. Return null or 0.0.
+            
+            CRITICAL FOR STABILIZED RENT:
+            - Look for "Stabilized Rent" or "Stabilized".
+            - If not explicitly listed, return 0.0.
+
+            CRITICAL FOR UNIT SIZE:
+            - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
+
+            Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end".
+            """
+            try:
+                rent_roll_data = await self.gemini_client.generate_structured_data_async(
+                    f"{rent_roll_prompt}\n\n{raw_text}",
+                    pydantic_schema=RentRollItem,
+                    pdf_data=pdf_bytes,
+                    expect_list=True
+                )
+                return self.normalization_service.normalize_rent_roll(rent_roll_data)
+            except Exception as e:
+                logger.error(f"Failed to extract Rent Roll: {e}")
+                return []
+
+        async def task_normalize_expenses():
+            # Run normalization on the raw expenses extracted in Phase 1
+            return await self.normalization_service.normalize_expenses_async(raw_expenses, document_id=document_id)
+
+        logger.info("Starting Phase 2 Parallel Extraction (Rent Roll & Normalization)...")
+        results_phase2 = await asyncio.gather(
+            task_rent_roll(),
+            task_normalize_expenses()
+        )
+        
+        rent_roll, historical_expenses = results_phase2
+        logger.info(f"Phase 2 Complete. Rent Roll Items: {len(rent_roll)}, Normalized Expenses: {len(historical_expenses)}")
+
+        # 6. Post-Processing & Aggregation
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
-        
-        # 5.5 Extract OM Proforma
-        om_proforma = self.om_scraper_service.extract_proforma(raw_text)
-        if not om_proforma:
-            # If text-based extraction fails, try vision-based on the PDF bytes
-            om_proforma = await self.om_scraper_service.extract_om_proforma_from_pdf(pdf_bytes, f"doc_{document_id}.pdf")
-        if om_proforma:
-            logging.info(f"Successfully extracted {len(om_proforma)} OM Proforma tables.")
-        else:
-            logging.warning("Failed to extract OM Proforma data from both text and vision methods.")
 
-        # 5.6 Extract Tax Assumptions
-        tax_assumptions = self.om_scraper_service.extract_tax_assumptions(raw_text)
-        if tax_assumptions:
-             logging.info(f"Extracted Tax Assumptions: {tax_assumptions}")
-
-        # 6. Build comprehensive Audit Trail
+        # 7. Build Audit Trail
         audit_trail_entries = []
         
-        # Add Property Meta audit logs
-        audit_trail_entries.append({
-            "field_name": "Property Address",
-            "extracted_value": property_meta.address,
-            "source": "OM / PDF",
-            "confidence_score": 0.9,
-            "method": "Extracted from Operating Memorandum cover page",
-            "document_id": document_id
-        })
-        audit_trail_entries.append({
-            "field_name": "Year Built",
-            "extracted_value": property_meta.year_built,
-            "source": "OM / PDF",
-            "confidence_score": 0.9,
-            "method": "Extracted from property description section",
-            "document_id": document_id
-        })
-        audit_trail_entries.append({
-            "field_name": "Building Size (Sq Ft)",
-            "extracted_value": property_meta.building_size,
-            "source": "OM / PDF",
-            "confidence_score": 0.9,
-            "method": "Extracted from property description section (NRA/Rentable SF)",
-            "document_id": document_id
-        })
-        audit_trail_entries.append({
-            "field_name": "Purchase Price",
-            "extracted_value": property_meta.purchase_price,
-            "source": "OM / PDF",
-            "confidence_score": 0.9,
-            "method": "Extracted from offering summary",
-            "document_id": document_id
-        })
-        audit_trail_entries.append({
-            "field_name": "Total Units",
-            "extracted_value": property_meta.total_units,
-            "source": "Rent Roll / PDF",
-            "confidence_score": 0.95,
-            "method": "Counted from rent roll line items",
-            "document_id": document_id
-        })
+        # Property Meta Logs
+        audit_trail_entries.extend([
+            {"field_name": "Property Address", "extracted_value": property_meta.address, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from OM cover page", "document_id": document_id},
+            {"field_name": "Year Built", "extracted_value": property_meta.year_built, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
+            {"field_name": "Building Size (Sq Ft)", "extracted_value": property_meta.building_size, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
+            {"field_name": "Purchase Price", "extracted_value": property_meta.purchase_price, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from offering summary", "document_id": document_id},
+            {"field_name": "Total Units", "extracted_value": property_meta.total_units, "source": "Rent Roll / PDF", "confidence_score": 0.95, "method": "Counted from rent roll line items", "document_id": document_id}
+        ])
         
-        # Add Rent Roll summary audit logs
-        audit_trail_entries.append({
-            "field_name": "Occupancy Rate",
-            "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}",
-            "source": "Rent Roll / PDF",
-            "confidence_score": 0.98,
-            "method": f"Calculated from {rent_roll_summary.occupied_units} occupied units out of {rent_roll_summary.total_units} total",
-            "document_id": document_id
-        })
-        audit_trail_entries.append({
-            "field_name": "Total Annual Rent (T12)",
-            "extracted_value": rent_roll_summary.total_annual_rent,
-            "source": "Rent Roll / PDF",
-            "confidence_score": 0.98,
-            "method": "Summed current rents from all unit line items",
-            "document_id": document_id
-        })
+        # Rent Roll Logs
+        audit_trail_entries.extend([
+            {"field_name": "Occupancy Rate", "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}", "source": "Rent Roll / PDF", "confidence_score": 0.98, "method": f"Calculated from {rent_roll_summary.occupied_units} occupied / {rent_roll_summary.total_units} total", "document_id": document_id},
+            {"field_name": "Total Annual Rent (T12)", "extracted_value": rent_roll_summary.total_annual_rent, "source": "Rent Roll / PDF", "confidence_score": 0.98, "method": "Summed current rents", "document_id": document_id}
+        ])
         
-        # Add Normalized Expenses audit logs
+        # Expense Logs
         for normalized_exp in historical_expenses:
-            # FIX: Ensure we handle the object structure correctly
-            # If normalized_exp is a Pydantic model, use dot notation. If dict, use .get()
-            
-            # Assuming normalized_exp is a Pydantic model from normalization_service
-            category = getattr(normalized_exp, 'mapped_category', None)
-            amount = getattr(normalized_exp, 'amount', 0)
-            original_text = getattr(normalized_exp, 'original_text', '')
-            
-            # The previous 'audit_log' field might not exist on the Expense object itself
-            # We usually reconstruct the audit trail from the expense data
-            
-            audit_trail_entries.append(normalized_exp.audit_log.model_dump())
+            if normalized_exp.audit_log:
+                audit_trail_entries.append(normalized_exp.audit_log.model_dump())
 
-        # 7. Create UnderwritingAnalysis object
+        # 8. Create Analysis Object
         analysis = UnderwritingAnalysis(
             document_id=document_id,
             pass_fail_status="PASS",
@@ -369,18 +370,15 @@ class IngestionService:
             rent_roll=rent_roll,
             rent_roll_summary=rent_roll_summary,
             historical_expenses=historical_expenses,
-            audit_trail=audit_trail_entries,  # Pass the comprehensive audit trail
+            audit_trail=audit_trail_entries,
             om_proforma=om_proforma,
             tax_assumptions=tax_assumptions
         )
         
-        # 8. Get income from P&L and compare (add warning if mismatch)
-        pnl_income = await self.ingest_income_statement_from_pdf(document_id)
+        # 9. Income Reconciliation Warning
         rent_roll_income = analysis.rent_roll_summary.total_annual_rent
+        income_discrepancy_warning = self.compare_income_sources(rent_roll_income, pnl_income)
         
-        income_discrepancy_warning = self.compare_income_sources(
-            rent_roll_income, pnl_income
-        )
         if income_discrepancy_warning:
             analysis.gating_reasons.append(income_discrepancy_warning)
             audit_trail_entries.append({
@@ -397,13 +395,14 @@ class IngestionService:
         """
         Extracts raw T12 line items. We don't normalize yet, just get the text.
         """
+        # Note: raw_text fetching is now handled in the orchestrator if possible,
+        # but for standalone utility we keep fetching here if needed.
+        # However, to be efficient in parallel mode, this method assumes it's being called
+        # as a task where we might pass text in future.
+        # For now, fetching inside is fine as it's cached or fast.
+        
         raw_text = await self.ocr_backend_client.get_document_text(document_id)
         
-        # NOTE: We are currently using text-only prompt which doesn't return bounding boxes easily with Gemini 1.5/2.0 text mode.
-        # To get bounding boxes, we would need to use OCR results directly or a vision model that returns coordinates.
-        # For now, we will proceed without bbox for expenses, but document_id will be linked.
-        # Future improvement: Use OCR backend's word/line coordinates if available.
-
         prompt = """
         Analyze this T12 Income Statement. Extract all EXPENSE line items.
         Ignore Income line items.
@@ -416,7 +415,8 @@ class IngestionService:
         Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00}, ...]
         """
 
-        raw_expenses = self.gemini_client.generate_structured_data(f"{prompt}\n\n{raw_text}", pdf_data=None)
+        # Use async
+        raw_expenses = await self.gemini_client.generate_structured_data_async(f"{prompt}\n\n{raw_text}", pdf_data=None)
         return raw_expenses
 
     async def ingest_income_statement_from_pdf(self, document_id: str) -> float:
@@ -431,13 +431,13 @@ class IngestionService:
         Example: {"total_annual_income": 1250000.00}
         """
 
-        income_data = self.gemini_client.generate_structured_data(
+        # Use async
+        income_data = await self.gemini_client.generate_structured_data_async(
             f"{prompt}\n\n{raw_text}",
             pdf_data=None,
-            expect_list=False  # CRITICAL FIX: Expecting single dict, not list
+            expect_list=False
         )
         
-        # Now income_data is a dict, not a list
         if isinstance(income_data, dict):
             return income_data.get("total_annual_income", 0.0)
         return 0.0

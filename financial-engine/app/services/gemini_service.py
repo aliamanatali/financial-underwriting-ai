@@ -7,7 +7,7 @@ class GeminiService:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro-latest')
+        self.model = genai.GenerativeModel('gemini-3-flash-preview')
 
     def generate_content(self, prompt: str) -> str:
         """

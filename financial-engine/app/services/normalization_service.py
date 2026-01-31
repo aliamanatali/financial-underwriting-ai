@@ -32,47 +32,69 @@ class NormalizationService:
                 return 0.0
         return 0.0
 
-    def normalize_expenses(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
+    async def normalize_expenses_async(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
         """
-        Normalizes a list of raw expense data into StandardizedExpense objects.
-        Each expense includes:
-        - original_text: What the PDF said (e.g., "Repairs & Maintenance - Plumbing")
-        - mapped_category: The standardized category (e.g., ExpenseCategory.REPAIRS_MAINTENANCE)
-        - amount: The dollar amount
-        - confidence: How confident the mapping is (0.0 to 1.0)
-        - audit_log: Source and reasoning for the mapping
+        Normalizes a list of raw expense data into StandardizedExpense objects using parallel batch processing.
         """
+        import asyncio
         if not raw_expenses:
             return []
 
         categories = [e.value for e in ExpenseCategory]
         
+        # Batch size for processing
+        BATCH_SIZE = 25
+        batches = [raw_expenses[i:i + BATCH_SIZE] for i in range(0, len(raw_expenses), BATCH_SIZE)]
+        
+        logger.info(f"Normalizing {len(raw_expenses)} expenses in {len(batches)} batches")
+        
+        async def process_batch(batch):
+            try:
+                # Use the async version of map_expenses_to_categories
+                return await self.llm_service.map_expenses_to_categories_async(batch, categories)
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+                # Return partial fallback for this batch or empty list to trigger global fallback?
+                # Let's return empty list and let the validation logic handle it, or maybe implement
+                # a local fallback here. For now, returning empty will just miss these expenses in the
+                # LLM path, effectively dropping them unless we fallback entirely.
+                # Better approach: If a batch fails, we should probably fallback ONLY for that batch.
+                return []
+
+        # Execute batches in parallel
+        results = await asyncio.gather(*[process_batch(batch) for batch in batches])
+        
+        # Flatten results
+        mapped_data = []
+        failed_batches = 0
+        for i, res in enumerate(results):
+            if res:
+                mapped_data.extend(res)
+            else:
+                # If batch failed (returned empty due to error), fallback for that specific batch
+                failed_batches += 1
+                logger.warning(f"Batch {i} failed LLM processing, applying fallback mapping")
+                # We need to manually construct the "mapped" structure for fallback
+                fallback_batch = self._fallback_simple_mapping_raw(batches[i])
+                mapped_data.extend(fallback_batch)
+
+        if not mapped_data and raw_expenses:
+             logger.warning("All batches failed LLM processing. Using complete fallback.")
+             return self._fallback_simple_mapping(raw_expenses, document_id)
+
         try:
-            mapped_data = self.llm_service.map_expenses_to_categories(raw_expenses, categories)
-            
             normalized_expenses = []
             for item in mapped_data:
                 # Ensure the mapped category is a valid enum member
                 try:
                     category_enum = ExpenseCategory(item["mapped_category"])
                 except ValueError:
-                    logger.warning(
-                        f"LLM mapped to an invalid category: '{item['mapped_category']}'. "
-                        f"Defaulting to '{ExpenseCategory.UNCATEGORIZED.value}'."
-                    )
+                    # Try to fuzzy match or just default
                     category_enum = ExpenseCategory.UNCATEGORIZED
 
                 # Expenses are outflows, so we normalize them to positive magnitudes.
-                # If the OCR picked up "(500)" or "-500", parse_amount returns -500.
-                # We take abs() to ensure subtraction logic in FinancialService works correctly.
                 parsed_amount = abs(self._parse_amount(item.get("amount")))
 
-                # Build audit log for this normalized expense
-                # Updated to match new schema: source_doc -> source, reasoning -> method
-                # Retrieve document_id, page_number, and bbox from item if available (passed from raw_expenses/LLM)
-                # Currently raw_expenses might not have bbox/page yet as we use text-only extraction for now.
-                # But we pass document_id explicitly.
-                
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
                     extracted_value=parsed_amount,
@@ -95,14 +117,46 @@ class NormalizationService:
                 )
             return normalized_expenses
             
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Error processing LLM response for expense normalization: {e}")
-            # Fallback to simple mapping if LLM fails
-            return self._fallback_simple_mapping(raw_expenses, document_id)
         except Exception as e:
             logger.error(f"An unexpected error occurred during expense normalization: {e}")
-            # Fallback for any other unexpected errors
             return self._fallback_simple_mapping(raw_expenses, document_id)
+
+    def normalize_expenses(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
+        """
+        Synchronous wrapper for backward compatibility.
+        DEPRECATED: Use normalize_expenses_async.
+        """
+        import asyncio
+        return asyncio.run(self.normalize_expenses_async(raw_expenses, document_id))
+
+    def _fallback_simple_mapping_raw(self, raw_expenses: List[Dict]) -> List[Dict]:
+        """
+        Helper to generate 'mapped' structure using simple keyword matching.
+        Used when a batch fails in async processing.
+        """
+        mapped_data = []
+        for expense in raw_expenses:
+            description = expense.get("description", "").lower()
+            amount = abs(self._parse_amount(expense.get("amount")))
+            
+            # Simple keyword matching logic (duplicated from _fallback_simple_mapping but returns dicts)
+            mapped_category = ExpenseCategory.UNCATEGORIZED.value
+            if "tax" in description: mapped_category = ExpenseCategory.REAL_ESTATE_TAXES.value
+            elif "insurance" in description: mapped_category = ExpenseCategory.INSURANCE.value
+            elif "repair" in description or "maintenance" in description: mapped_category = ExpenseCategory.REPAIRS_MAINTENANCE.value
+            elif "management" in description: mapped_category = ExpenseCategory.MANAGEMENT_FEES.value
+            elif "util" in description or "gas" in description or "electric" in description or "waste" in description: mapped_category = ExpenseCategory.UTILITIES.value
+            elif "payroll" in description or "staff" in description: mapped_category = ExpenseCategory.PAYROLL.value
+            elif "contract" in description or "service" in description: mapped_category = ExpenseCategory.CONTRACT_SERVICES.value
+            elif "advertis" in description or "market" in description: mapped_category = ExpenseCategory.ADVERTISING_MARKETING.value
+            
+            mapped_data.append({
+                "original_text": description,
+                "mapped_category": mapped_category,
+                "amount": amount,
+                "confidence": 0.65
+            })
+        return mapped_data
 
     def _fallback_simple_mapping(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
         """A simple keyword-based mapping as a fallback when LLM fails."""

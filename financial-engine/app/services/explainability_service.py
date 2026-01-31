@@ -16,7 +16,7 @@ class ExplainabilityService:
     def __init__(self, gemini_client: Optional[GeminiClient] = None):
         self.gemini_client = gemini_client
 
-    async def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
+    def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
         """
         Populates the explainability metadata for all key financial metrics.
         This is run post-calculation to trace and explain the values.
@@ -57,17 +57,20 @@ class ExplainabilityService:
         # --- Conclusion ---
         self._generate_conclusion()
         
-        # --- Analyst Commentary (GenAI) ---
-        if self.gemini_client:
-            await self._generate_analyst_commentary()
+        # Note: Analyst Commentary (GenAI) is now called separately via generate_analyst_commentary
+        # to allow for parallel execution with other LLM tasks.
 
         analysis.explainability = self.explanations
         return analysis
 
-    async def _generate_analyst_commentary(self):
+    async def generate_analyst_commentary(self, analysis: UnderwritingAnalysis = None):
         """
         Generates a 3-paragraph analyst commentary using GenAI.
         """
+        if analysis:
+            self.analysis = analysis
+            self.params = analysis.deal_parameters or DealParameters()
+            
         # Prepare context
         context = {
             "address": self.analysis.property_meta.address,
