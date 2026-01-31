@@ -9,6 +9,10 @@ import "react-pdf/dist/Page/TextLayer.css";
 // Set worker source
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
+// Global cache for document blobs to prevent re-fetching
+const blobCache = new Map<string, Blob>();
+const activeFetches = new Map<string, Promise<Blob>>();
+
 interface Bbox {
   0: number; // ymin
   1: number; // xmin
@@ -50,55 +54,93 @@ export default function SourceDocumentViewer({
   const [loadingError, setLoadingError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchAndSetUrl = async () => {
-      if (packageId) {
-        try {
-          const { signed_url } = await apiClient.getDocumentContentUrl(packageId, documentId);
-          // Use local proxy to bypass CORS issues with GCS
-          const proxyUrl = `/api/proxy-pdf?url=${encodeURIComponent(signed_url)}`;
-          setDownloadUrl(proxyUrl);
-        } catch (err) {
-          console.error("Error fetching signed URL:", err);
-          setLoadingError("Could not retrieve document URL.");
+    let isActive = true;
+    let objectUrlToRevoke: string | null = null;
+
+    const loadContent = async () => {
+      setLoadingError(null);
+      setDownloadUrl(null);
+      
+      // Fast path: Check cache for PDF
+      if (isPdf && blobCache.has(documentId)) {
+        const blob = blobCache.get(documentId)!;
+        const url = URL.createObjectURL(blob);
+        objectUrlToRevoke = url;
+        if (isActive) {
+          setPdfBlobUrl(url);
         }
       } else {
-        // Fallback or direct URL construction for non-packaged documents
-        const baseUrl = process.env.NEXT_PUBLIC_OCR_API_URL;
-        const downloadEndpoint = `/api/documents/${documentId}/content`;
-        setDownloadUrl(`${baseUrl}${downloadEndpoint}`);
+        if (isActive) setPdfBlobUrl(null);
       }
-    };
 
-    fetchAndSetUrl();
-  }, [documentId, packageId]);
-
-  useEffect(() => {
-    if (!isPdf || !downloadUrl) return;
-
-    const fetchPdf = async () => {
       try {
-        const response = await fetch(downloadUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+        // 1. Get Download URL
+        let url = "";
+        if (packageId) {
+          const { signed_url } = await apiClient.getDocumentContentUrl(packageId, documentId);
+          // Use local proxy to bypass CORS issues with GCS
+          url = `/api/proxy-pdf?url=${encodeURIComponent(signed_url)}`;
+        } else {
+          // Fallback or direct URL construction for non-packaged documents
+          const baseUrl = process.env.NEXT_PUBLIC_OCR_API_URL;
+          url = `${baseUrl}/api/documents/${documentId}/content`;
         }
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        setPdfBlobUrl(url);
-        setLoadingError(null);
+
+        if (isActive) {
+          setDownloadUrl(url);
+        }
+
+        // 2. If PDF and not in cache, fetch and cache
+        if (isPdf && !blobCache.has(documentId)) {
+          let fetchPromise = activeFetches.get(documentId);
+          
+          if (!fetchPromise) {
+            fetchPromise = fetch(url).then(async (res) => {
+              if (!res.ok) {
+                throw new Error(`Failed to fetch PDF: ${res.status} ${res.statusText}`);
+              }
+              return res.blob();
+            });
+            
+            activeFetches.set(documentId, fetchPromise);
+            
+            // Handle caching upon resolution
+            fetchPromise
+              .then((blob) => {
+                blobCache.set(documentId, blob);
+                activeFetches.delete(documentId);
+              })
+              .catch(() => {
+                activeFetches.delete(documentId);
+              });
+          }
+
+          const blob = await fetchPromise;
+          
+          if (isActive) {
+            const objectUrl = URL.createObjectURL(blob);
+            objectUrlToRevoke = objectUrl;
+            setPdfBlobUrl(objectUrl);
+            setLoadingError(null);
+          }
+        }
       } catch (err: any) {
-        console.error("Error fetching PDF blob:", err);
-        setLoadingError(err.message || "Failed to load document");
+        console.error("Error loading document:", err);
+        if (isActive && !blobCache.has(documentId)) {
+          setLoadingError(err.message || "Failed to load document");
+        }
       }
     };
 
-    fetchPdf();
+    loadContent();
 
     return () => {
-      if (pdfBlobUrl) {
-        URL.revokeObjectURL(pdfBlobUrl);
+      isActive = false;
+      if (objectUrlToRevoke) {
+        URL.revokeObjectURL(objectUrlToRevoke);
       }
     };
-  }, [downloadUrl, isPdf]);
+  }, [documentId, packageId, isPdf]);
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     setNumPages(numPages);
