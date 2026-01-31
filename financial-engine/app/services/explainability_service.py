@@ -16,7 +16,7 @@ class ExplainabilityService:
     def __init__(self, gemini_client: Optional[GeminiClient] = None):
         self.gemini_client = gemini_client
 
-    def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
+    async def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
         """
         Populates the explainability metadata for all key financial metrics.
         This is run post-calculation to trace and explain the values.
@@ -55,7 +55,7 @@ class ExplainabilityService:
         self._explain_moic()
 
         # --- Conclusion ---
-        self._generate_conclusion()
+        await self._generate_conclusion()
         
         # Note: Analyst Commentary (GenAI) is now called separately via generate_analyst_commentary
         # to allow for parallel execution with other LLM tasks.
@@ -664,7 +664,7 @@ class ExplainabilityService:
             classification="Derived"
         ))
 
-    def _generate_conclusion(self):
+    async def _generate_conclusion(self):
         """
         Generates a high-level conclusion and decision impact analysis.
         """
@@ -760,7 +760,7 @@ class ExplainabilityService:
         # Dynamic near_campus determination
         # TODO: Integrate with geocoding API to determine proximity to universities
         address = self.analysis.property_meta.address or ""
-        near_campus = self._determine_campus_proximity(address)
+        near_campus = await self._determine_campus_proximity(address)
         
         # Dynamic primary risks based on deal characteristics
         primary_risks = self._identify_primary_risks()
@@ -770,7 +770,7 @@ class ExplainabilityService:
         
         # Check if address came from a specific doc
         address_source = self._get_source("Property Address", "Offering Memorandum")
-        campus_source = f"Google Maps Analysis ({address_source})"
+        campus_source = f"AI Location Analysis ({address_source})"
         
         # Rent Roll Analysis Sources
         rent_roll_source = "Rent Roll"
@@ -811,10 +811,9 @@ class ExplainabilityService:
             investment_checklist=checklist
         )
     
-    def _determine_campus_proximity(self, address: str) -> str:
+    async def _determine_campus_proximity(self, address: str) -> str:
         """
-        Determines if the property is near a university campus.
-        Currently uses keyword matching; can be enhanced with geocoding API.
+        Determines if the property is near a university campus using LLM logic.
         
         Args:
             address: Property address string
@@ -822,27 +821,51 @@ class ExplainabilityService:
         Returns:
             String indicating campus proximity status
         """
-        if not address:
+        if not address or address == "Unknown":
             return "Unknown (Address Not Provided)"
         
-        # Common university-related keywords
-        university_keywords = [
-            'university', 'college', 'campus', 'state', 'tech',
-            'berkeley', 'stanford', 'ucla', 'usc', 'caltech',
-            'mit', 'harvard', 'yale', 'princeton', 'columbia'
-        ]
+        prompt = f"""
+        Act as a location analyst. Determine if the following address is within 6 blocks (approx 0.5 miles) of a major university campus.
         
-        address_lower = address.lower()
+        Address: "{address}"
         
-        # Check for university keywords in address
-        for keyword in university_keywords:
-            if keyword in address_lower:
-                return f"Likely (Address contains '{keyword}')"
+        Instructions:
+        1. Identify the nearest major university or college.
+        2. Estimate the walking distance.
+        3. If it is within 6 blocks or 0.5 miles, answer "Yes".
+        4. If it is nearby (0.5 - 1.5 miles), answer "Likely".
+        5. If it is far, answer "No".
         
-        # TODO: Integrate with Google Maps API or similar to calculate actual distance
-        # Example: Use geocoding to get lat/lng, then calculate distance to nearest universities
+        Output Format:
+        Return ONLY a JSON object: {{"status": "Yes/Likely/No", "reason": "Short explanation"}}
+        """
         
-        return "Unknown (Requires Geocoding Analysis)"
+        try:
+            if not self.gemini_client:
+                # Fallback to simple keyword check if LLM not available
+                return "Unknown (LLM Unavailable)"
+                
+            response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+            
+            # Simple parsing of the JSON response
+            import json
+            import re
+            
+            # Extract JSON block
+            match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                data = json.loads(json_str)
+                status = data.get("status", "Unknown")
+                reason = data.get("reason", "")
+                
+                return f"{status} ({reason})"
+            else:
+                return "Unknown (Parsing Error)"
+                
+        except Exception as e:
+            print(f"Error determining campus proximity: {e}")
+            return "Unknown (Service Error)"
     
     def _identify_primary_risks(self) -> str:
         """

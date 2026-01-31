@@ -140,7 +140,7 @@ async def perform_analysis(
         await progress_service.update_progress(document_id, 80, "Generating insights and explanations...")
         
         # 1. Deterministic Explanations (Fast, Sync)
-        analysis = explainability_service.generate_explanations(analysis)
+        analysis = await explainability_service.generate_explanations(analysis)
         logger.info("Explainability metadata generated successfully.")
         
         # 2. Parallel Generation of AI Content (Slow, Async)

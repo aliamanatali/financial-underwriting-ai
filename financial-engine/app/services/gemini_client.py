@@ -24,6 +24,14 @@ class GeminiClient:
             model_name,
             generation_config={"temperature": 0.0}
         )
+        
+        # Initialize fast model for cheaper tasks
+        fast_model_name = settings.gemini_fast_model or 'gemini-3-pro-preview'
+        self.fast_model = genai.GenerativeModel(
+            fast_model_name,
+            generation_config={"temperature": 0.0}
+        )
+        
         self.max_retries = 3
         self.base_delay = 1.0
 
