@@ -51,7 +51,7 @@ class MemoService:
         # Calculate metrics
         cap_rate = analysis_data.cap_rate * 100 if analysis_data.cap_rate else 0
         historical_cap_rate = analysis_data.historical_cap_rate * 100 if analysis_data.historical_cap_rate else 0
-        occupancy_rate = analysis_data.rent_roll_summary.occupancy_rate * 100
+        occupancy_rate = analysis_data.rent_roll_summary.occupancy_rate * 100 if analysis_data.rent_roll_summary else 0
         upside = cap_rate - historical_cap_rate
 
         # Ensure distinct status
@@ -104,12 +104,16 @@ class MemoService:
         try:
             # Check if service supports async
             if hasattr(self.gemini_service, 'generate_content_async'):
-                memo = await self.gemini_service.generate_content_async(prompt)
+                # Use fast model for memo generation to speed up the process
+                memo = await self.gemini_service.generate_content_async(prompt, use_fast_model=True)
             else:
                 memo = self.gemini_service.generate_content(prompt)
             return memo
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
+            # Instead of re-raising, we should fallback to template here or in caller
+            # Caller handles it, so raising is fine if caller catches it.
+            # But let's be safe and return None to trigger fallback in generate_investment_memo
             raise
 
     def _sanitize_text_for_pdf(self, text: str) -> str:

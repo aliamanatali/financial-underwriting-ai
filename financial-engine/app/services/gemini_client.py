@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Type, Any
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, ValidationError
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,10 @@ class GeminiClient:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         genai.configure(api_key=self.api_key)
+        
+        model_name = settings.gemini_model or 'gemini-2.5-pro'
         self.model = genai.GenerativeModel(
-            'gemini-2.5-pro',
+            model_name,
             generation_config={"temperature": 0.0}
         )
         self.max_retries = 3
@@ -42,12 +45,13 @@ class GeminiClient:
             logger.error(f"Error generating content with Gemini: {e}")
             return f"An error occurred: {e}"
 
-    async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
+    async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None, use_fast_model: bool = False) -> str:
         """
         Generates content using the Gemini model asynchronously, with optional PDF data.
         Includes retry logic for rate limiting and transient errors.
         """
         last_exception = None
+        model_to_use = self.fast_model if use_fast_model else self.model
         
         for attempt in range(self.max_retries):
             try:
@@ -56,9 +60,9 @@ class GeminiClient:
                         "mime_type": "application/pdf",
                         "data": base64.b64encode(pdf_data).decode("utf-8")
                     }
-                    response = await self.model.generate_content_async([prompt, pdf_part])
+                    response = await model_to_use.generate_content_async([prompt, pdf_part])
                 else:
-                    response = await self.model.generate_content_async(prompt)
+                    response = await model_to_use.generate_content_async(prompt)
                 return response.text
                 
             except google_exceptions.ResourceExhausted as e:
@@ -88,6 +92,7 @@ class GeminiClient:
     async def map_expenses_to_categories_async(self, raw_expenses: List[Dict], categories: List[str]) -> List[Dict]:
         """
         Maps raw expenses to predefined categories using the Gemini model asynchronously.
+        Uses the fast model for cost and speed efficiency.
         """
         prompt = f"""
         Given a list of raw expenses and a list of categories, map each expense to the most appropriate category.
@@ -98,7 +103,8 @@ class GeminiClient:
         Categories: {categories}
         """
         try:
-            response_text = await self.generate_content_async(prompt)
+            # Use fast model for categorization
+            response_text = await self.generate_content_async(prompt, use_fast_model=True)
             cleaned_json = self._clean_json_string(response_text)
             return json.loads(cleaned_json)
         except Exception as e:
@@ -118,7 +124,8 @@ class GeminiClient:
         prompt: str,
         pdf_data: Optional[bytes] = None,
         pydantic_schema: Optional[Type[BaseModel]] = None,
-        expect_list: bool = True
+        expect_list: bool = True,
+        use_fast_model: bool = False
     ) -> Any:
         """
         Generates structured data asynchronously. Returns List[Dict] if expect_list=True, else Dict.
@@ -128,11 +135,12 @@ class GeminiClient:
             pdf_data: Optional PDF bytes for vision-based processing
             pydantic_schema: Optional Pydantic model for validation
             expect_list: If True, ensures output is a list. If False, expects a single dict.
+            use_fast_model: If True, uses the faster, cheaper model.
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = await self.generate_content_async(prompt, pdf_data)
+        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model)
         
         # --- FIX: Removed the strict startswith check here ---
         # We trust _clean_json_string to find the JSON logic inside Markdown

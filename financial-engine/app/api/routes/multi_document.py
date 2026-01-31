@@ -1398,7 +1398,7 @@ async def analyze_deal_package(
     # ===== STEP 4.5: GENERATE EXPLAINABILITY & CONCLUSION =====
     try:
         await progress_service.update_progress(package_id, 80, "Generating insights and explanations...")
-        analysis = await explainability_service.generate_explanations(analysis)
+        analysis = explainability_service.generate_explanations(analysis)
         logger.info("Explainability metadata and conclusion generated successfully.")
     except Exception as e:
         logger.error(f"Explainability generation failed: {str(e)}")
@@ -1416,7 +1416,7 @@ async def analyze_deal_package(
         
         # Memo
         logger.info("Generating investment memo...")
-        memo_content = memo_service.generate_investment_memo(analysis)
+        memo_content = await memo_service.generate_investment_memo(analysis)
         analysis.investment_memo = memo_content
         logger.info("Investment memo generated successfully.")
         

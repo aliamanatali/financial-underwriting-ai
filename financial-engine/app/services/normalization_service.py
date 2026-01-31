@@ -2,12 +2,69 @@ import json
 from typing import List, Dict, Any
 from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class NormalizationService:
     def __init__(self, llm_service: Any):
         self.llm_service = llm_service
+        self.collection_name = "expense_mappings"
+
+    async def _get_cached_mappings(self, descriptions: List[str]) -> Dict[str, Dict]:
+        """Retrieve cached mappings from MongoDB."""
+        from app.db.mongodb import get_database
+        from app.config import settings
+        
+        if not settings.use_mongodb:
+            return {}
+
+        try:
+            db = get_database()
+            # Find documents where original_text is in our list
+            cursor = db[self.collection_name].find({"original_text": {"$in": descriptions}})
+            
+            cache = {}
+            async for doc in cursor:
+                if "original_text" in doc and "mapped_category" in doc:
+                    cache[doc["original_text"]] = doc
+            return cache
+        except Exception as e:
+            logger.error(f"Failed to fetch cached mappings: {e}")
+            return {}
+
+    async def _save_mappings(self, mappings: List[Dict]):
+        """Save new mappings to MongoDB."""
+        from app.db.mongodb import get_database
+        from app.config import settings
+        from pymongo import UpdateOne
+        
+        if not settings.use_mongodb or not mappings:
+            return
+
+        try:
+            db = get_database()
+            operations = []
+            for item in mappings:
+                if "original_text" in item and "mapped_category" in item:
+                    operations.append(
+                        UpdateOne(
+                            {"original_text": item["original_text"]},
+                            {"$set": {
+                                "original_text": item["original_text"],
+                                "mapped_category": item["mapped_category"],
+                                "confidence": item.get("confidence", 0.85),
+                                "updated_at": datetime.now().isoformat()
+                            }},
+                            upsert=True
+                        )
+                    )
+            
+            if operations:
+                await db[self.collection_name].bulk_write(operations)
+                logger.info(f"Cached {len(operations)} expense mappings")
+        except Exception as e:
+            logger.error(f"Failed to save cached mappings: {e}")
 
     def _parse_amount(self, value: Any) -> float:
         """Helper to safely parse amount strings/floats."""
@@ -34,7 +91,7 @@ class NormalizationService:
 
     async def normalize_expenses_async(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
         """
-        Normalizes a list of raw expense data into StandardizedExpense objects using parallel batch processing.
+        Normalizes a list of raw expense data into StandardizedExpense objects using cached mappings and parallel batch processing.
         """
         import asyncio
         if not raw_expenses:
@@ -42,76 +99,131 @@ class NormalizationService:
 
         categories = [e.value for e in ExpenseCategory]
         
-        # Batch size for processing
-        BATCH_SIZE = 25
-        batches = [raw_expenses[i:i + BATCH_SIZE] for i in range(0, len(raw_expenses), BATCH_SIZE)]
+        # 1. Check Cache
+        descriptions = [item.get("description", "") for item in raw_expenses]
+        cached_mappings = await self._get_cached_mappings(descriptions)
         
-        logger.info(f"Normalizing {len(raw_expenses)} expenses in {len(batches)} batches")
+        uncached_expenses = []
+        uncached_indices = [] # Track original indices to merge back (not strictly necessary if we just list append)
         
-        async def process_batch(batch):
-            try:
-                # Use the async version of map_expenses_to_categories
-                return await self.llm_service.map_expenses_to_categories_async(batch, categories)
-            except Exception as e:
-                logger.error(f"Error processing batch: {e}")
-                # Return partial fallback for this batch or empty list to trigger global fallback?
-                # Let's return empty list and let the validation logic handle it, or maybe implement
-                # a local fallback here. For now, returning empty will just miss these expenses in the
-                # LLM path, effectively dropping them unless we fallback entirely.
-                # Better approach: If a batch fails, we should probably fallback ONLY for that batch.
-                return []
-
-        # Execute batches in parallel
-        results = await asyncio.gather(*[process_batch(batch) for batch in batches])
+        # We'll build a map of description -> mapped_item
+        final_mapped_data_dict = {}
         
-        # Flatten results
-        mapped_data = []
-        failed_batches = 0
-        for i, res in enumerate(results):
-            if res:
-                mapped_data.extend(res)
+        for i, expense in enumerate(raw_expenses):
+            desc = expense.get("description", "")
+            if desc in cached_mappings:
+                # Use cached
+                cached = cached_mappings[desc]
+                final_mapped_data_dict[desc] = {
+                    "original_text": desc,
+                    "mapped_category": cached["mapped_category"],
+                    "amount": expense.get("amount"), # Use current amount, not cached amount
+                    "confidence": cached.get("confidence", 0.95), # High confidence for cache
+                    "page_number": expense.get("page_number"),
+                    "bbox": expense.get("bbox")
+                }
             else:
-                # If batch failed (returned empty due to error), fallback for that specific batch
-                failed_batches += 1
-                logger.warning(f"Batch {i} failed LLM processing, applying fallback mapping")
-                # We need to manually construct the "mapped" structure for fallback
-                fallback_batch = self._fallback_simple_mapping_raw(batches[i])
-                mapped_data.extend(fallback_batch)
+                uncached_expenses.append(expense)
 
-        if not mapped_data and raw_expenses:
-             logger.warning("All batches failed LLM processing. Using complete fallback.")
-             return self._fallback_simple_mapping(raw_expenses, document_id)
+        logger.info(f"Normalization Cache Hit Rate: {len(final_mapped_data_dict)}/{len(raw_expenses)}")
 
+        # 2. Process Uncached in Batches
+        new_mappings_to_save = []
+        
+        if uncached_expenses:
+            BATCH_SIZE = 25
+            batches = [uncached_expenses[i:i + BATCH_SIZE] for i in range(0, len(uncached_expenses), BATCH_SIZE)]
+            
+            logger.info(f"Normalizing {len(uncached_expenses)} new expenses in {len(batches)} batches")
+            
+            async def process_batch(batch):
+                try:
+                    # Use the async version of map_expenses_to_categories - WITH FAST MODEL
+                    # Assuming map_expenses_to_categories_async eventually calls generate_content_async,
+                    # we need to ensure the fast model is used if possible.
+                    # If the service method doesn't support the flag, we rely on the implementation.
+                    # Based on my changes to gemini_client, map_expenses_to_categories_async uses use_fast_model=True.
+                    return await self.llm_service.map_expenses_to_categories_async(batch, categories)
+                except Exception as e:
+                    logger.error(f"Error processing batch: {e}")
+                    return []
+
+            # Execute batches in parallel
+            results = await asyncio.gather(*[process_batch(batch) for batch in batches])
+            
+            # Flatten results and prepare for merge
+            for i, res in enumerate(results):
+                if res:
+                    for item in res:
+                        # Ensure original amount is preserved if LLM messed it up,
+                        # but usually map_expenses_to_categories returns what we sent plus fields.
+                        # We need to link back to the raw expense to get metadata if lost.
+                        # Assuming LLM returns 'original_text' matching input 'description'.
+                        desc = item.get("original_text", "")
+                        
+                        # Find original expense for this desc to get amount/metadata if needed
+                        # (Simple lookup assumes uniqueness in batch or sufficient context)
+                        
+                        final_mapped_data_dict[desc] = item
+                        new_mappings_to_save.append(item)
+                else:
+                    logger.warning(f"Batch {i} failed LLM processing, applying fallback mapping")
+                    fallback_batch = self._fallback_simple_mapping_raw(batches[i])
+                    for item in fallback_batch:
+                        desc = item.get("original_text", "")
+                        final_mapped_data_dict[desc] = item
+                        # We don't save fallback to cache usually, or maybe we do with low confidence?
+                        # Let's NOT save fallback to cache so we retry LLM next time.
+
+            # 3. Save new mappings to cache
+            if new_mappings_to_save:
+                # Fire and forget save? Or await? Await is safer.
+                await self._save_mappings(new_mappings_to_save)
+
+        # 4. Construct Final List
         try:
             normalized_expenses = []
-            for item in mapped_data:
+            
+            # Iterate through original raw_expenses to maintain order and ensure all are covered
+            for expense in raw_expenses:
+                desc = expense.get("description", "")
+                mapped_item = final_mapped_data_dict.get(desc)
+                
+                if not mapped_item:
+                    # Should not happen if fallback logic works, but just in case
+                    # Apply single fallback
+                    fallback_list = self._fallback_simple_mapping_raw([expense])
+                    mapped_item = fallback_list[0]
+                
                 # Ensure the mapped category is a valid enum member
                 try:
-                    category_enum = ExpenseCategory(item["mapped_category"])
+                    category_enum = ExpenseCategory(mapped_item["mapped_category"])
                 except ValueError:
-                    # Try to fuzzy match or just default
                     category_enum = ExpenseCategory.UNCATEGORIZED
 
                 # Expenses are outflows, so we normalize them to positive magnitudes.
-                parsed_amount = abs(self._parse_amount(item.get("amount")))
+                # Use the amount from the raw expense (source of truth) rather than LLM output if possible,
+                # but LLM output usually echoes it. Safest is raw expense amount.
+                amount_val = expense.get("amount")
+                parsed_amount = abs(self._parse_amount(amount_val))
 
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
                     extracted_value=parsed_amount,
                     source="T12 Income Statement",
-                    confidence_score=item.get("confidence", 0.85),
-                    method=f"LLM mapped '{item.get('original_text', '')}' to {category_enum.value} with {item.get('confidence', 0.85):.0%} confidence",
+                    confidence_score=mapped_item.get("confidence", 0.85),
+                    method=f"LLM mapped '{desc}' to {category_enum.value} with {mapped_item.get('confidence', 0.85):.0%} confidence",
                     document_id=document_id,
-                    page_number=item.get("page_number"),
-                    bbox=item.get("bbox")
+                    page_number=expense.get("page_number"),
+                    bbox=expense.get("bbox")
                 )
 
                 normalized_expenses.append(
                     StandardizedExpense(
-                        original_text=item.get("original_text", ""),
+                        original_text=desc,
                         mapped_category=category_enum,
                         amount=parsed_amount,
-                        confidence=item.get("confidence", 0.85),
+                        confidence=mapped_item.get("confidence", 0.85),
                         audit_log=audit_log
                     )
                 )

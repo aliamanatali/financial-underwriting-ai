@@ -91,6 +91,61 @@ class OMScraperService:
             print(f"Error extracting OM Tax Assumptions: {e}")
             return OMTaxAssumptions()
 
+    async def extract_om_proforma_from_pdf(self, pdf_bytes: bytes, file_name: str) -> List[OMProformaTable]:
+        """
+        Async version of extract_proforma that uses PDF content directly with Gemini Vision.
+        """
+        prompt = """
+        Analyze this Offering Memorandum PDF and extract the "Proforma" or "Pro Forma" table(s).
+        This table typically lists Income, Expenses, and NOI for different scenarios (e.g., "Current", "Year 1", "Market", "Stabilized").
+
+        Task:
+        1. Identify the Proforma tables.
+        2. Extract each scenario (column) as a separate object.
+        3. For each scenario, extract all rows (Income items, Expense items, NOI, etc.).
+        
+        The structure should be:
+        [
+            {
+                "scenario_name": "Proforma at Stabilized Rent",
+                "rows": [
+                    {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "percentage": null},
+                    ...
+                ],
+                "purchase_price": 9440000,
+                "cap_rate": 0.0559,
+                "grm": 10.22
+            }
+        ]
+
+        CRITICAL RULES:
+        - Extract "Annual", "Monthly", and "Per Unit" values.
+        - Preserve the EXACT row names.
+        - Extract all rows found in the table.
+        - Look for "Asking Price", "Purchase Price", "CAP Rate", "GRM" usually at the bottom.
+
+        Return ONLY the JSON array.
+        """
+        
+        try:
+            # Check if client has async method and use FAST model for extraction if possible
+            # Proforma extraction is complex, so we might want PRO, but let's try FAST first if available
+            # Actually, for tables, PRO is much better. Let's default to standard model (Pro) for this task.
+            if hasattr(self.gemini_client, 'generate_structured_data_async'):
+                proforma_data = await self.gemini_client.generate_structured_data_async(
+                    prompt,
+                    pdf_data=pdf_bytes,
+                    expect_list=True,
+                    pydantic_schema=OMProformaTable
+                )
+                return [OMProformaTable(**item) if isinstance(item, dict) else item for item in proforma_data]
+            else:
+                return []
+                
+        except Exception as e:
+            print(f"Error extracting OM Proforma from PDF: {e}")
+            return []
+
     def extract_om_details(self, file_path: str) -> PropertyMeta:
         """
         Extracts high-level deal info from the Offering Memorandum (OM).

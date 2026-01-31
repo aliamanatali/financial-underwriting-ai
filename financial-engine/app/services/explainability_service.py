@@ -101,7 +101,8 @@ class ExplainabilityService:
         """
         
         try:
-            commentary = await self.gemini_client.generate_content_async(prompt)
+            # Use fast model for commentary
+            commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
             self.analysis.analyst_commentary = commentary
         except Exception as e:
             print(f"Failed to generate commentary: {e}")

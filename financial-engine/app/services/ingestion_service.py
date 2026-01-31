@@ -233,18 +233,18 @@ class IngestionService:
                 logger.error(f"Failed to extract property meta: {e}")
                 return PropertyMeta(address="Unknown", year_built=1980, purchase_price=0.0, total_units=0)
 
-        # Task B: Raw Expenses (T12)
+        # Task B: Raw Expenses (T12) - Use FAST Model
         async def task_raw_expenses():
             try:
-                return await self.ingest_financials_from_pdf(document_id)
+                return await self.ingest_financials_from_pdf(document_id, use_fast_model=True)
             except Exception as e:
                 logger.error(f"Failed to extract financials: {e}")
                 return []
 
-        # Task C: P&L Income (Total)
+        # Task C: P&L Income (Total) - Use FAST Model
         async def task_pnl_income():
             try:
-                return await self.ingest_income_statement_from_pdf(document_id)
+                return await self.ingest_income_statement_from_pdf(document_id, use_fast_model=True)
             except Exception as e:
                 logger.error(f"Failed to extract P&L income: {e}")
                 return 0.0
@@ -291,6 +291,9 @@ class IngestionService:
         # Rent Roll extraction relies on total_units from property_meta for better context
         
         async def task_rent_roll():
+            # Rent Roll is complex, so we stick to the PRO model for accuracy,
+            # unless we find it's too slow and simple enough for FAST.
+            # Keeping PRO for now as Rent Roll accuracy is critical.
             rent_roll_prompt = f"""
             Extract the rent roll from the document for {property_meta.total_units} units.
             
@@ -391,16 +394,10 @@ class IngestionService:
         
         return analysis
 
-    async def ingest_financials_from_pdf(self, document_id: str) -> List[Dict]:
+    async def ingest_financials_from_pdf(self, document_id: str, use_fast_model: bool = False) -> List[Dict]:
         """
         Extracts raw T12 line items. We don't normalize yet, just get the text.
         """
-        # Note: raw_text fetching is now handled in the orchestrator if possible,
-        # but for standalone utility we keep fetching here if needed.
-        # However, to be efficient in parallel mode, this method assumes it's being called
-        # as a task where we might pass text in future.
-        # For now, fetching inside is fine as it's cached or fast.
-        
         raw_text = await self.ocr_backend_client.get_document_text(document_id)
         
         prompt = """
@@ -416,10 +413,14 @@ class IngestionService:
         """
 
         # Use async
-        raw_expenses = await self.gemini_client.generate_structured_data_async(f"{prompt}\n\n{raw_text}", pdf_data=None)
+        raw_expenses = await self.gemini_client.generate_structured_data_async(
+            f"{prompt}\n\n{raw_text}",
+            pdf_data=None,
+            use_fast_model=use_fast_model
+        )
         return raw_expenses
 
-    async def ingest_income_statement_from_pdf(self, document_id: str) -> float:
+    async def ingest_income_statement_from_pdf(self, document_id: str, use_fast_model: bool = False) -> float:
         """
         Extracts the total annual income from a T12 Income Statement.
         """
@@ -435,7 +436,8 @@ class IngestionService:
         income_data = await self.gemini_client.generate_structured_data_async(
             f"{prompt}\n\n{raw_text}",
             pdf_data=None,
-            expect_list=False
+            expect_list=False,
+            use_fast_model=use_fast_model
         )
         
         if isinstance(income_data, dict):

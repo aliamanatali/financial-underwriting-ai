@@ -46,7 +46,31 @@ async def perform_analysis(
     # ===== STEP 1: INGEST & NORMALIZE =====
     try:
         await progress_service.update_progress(document_id, 20, "Extracting and normalizing data from document...")
-        analysis = await ingestion_service.ingest_pdf_document(document_id)
+        
+        # Check if analysis exists in storage to avoid re-ingestion
+        existing_analysis = await storage_service.get_analysis_result(document_id)
+        if existing_analysis:
+            logger.info(f"Found existing analysis for {document_id}, reusing ingestion data.")
+            # Rehydrate analysis object from dict
+            # We must be careful to handle any schema changes or missing fields
+            try:
+                analysis = UnderwritingAnalysis(**existing_analysis)
+                
+                # Check if we need to re-run financial calculations due to parameter changes
+                # The existing analysis might have old parameters or old calculations.
+                # We essentially want to reuse the extracted data (Rent Roll, Property Meta, Historical Expenses)
+                # but NOT the calculated fields (Pro Forma, Conclusion, etc.) unless they are still valid.
+                
+                # However, for simplicity and safety, we will just use the full object and overwrite
+                # params and re-calculate in subsequent steps.
+                # The financial_service.calculate_* methods modify the object in place.
+                
+                logger.info("Successfully rehydrated analysis object.")
+            except Exception as e:
+                logger.warning(f"Failed to rehydrate existing analysis, falling back to fresh ingestion: {e}")
+                analysis = await ingestion_service.ingest_pdf_document(document_id)
+        else:
+            analysis = await ingestion_service.ingest_pdf_document(document_id)
         
         # Apply Overrides if present
         if deal_parameters.units_override is not None:
