@@ -461,6 +461,20 @@ class ApiClient {
 
     return response.json();
   }
+  async chatWithReport(documentId: string, messages: { role: string; content: string }[]): Promise<{ response: string }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
 }
 
 export const apiClient = new ApiClient();

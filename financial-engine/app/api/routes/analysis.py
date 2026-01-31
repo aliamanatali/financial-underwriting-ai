@@ -156,8 +156,12 @@ async def perform_analysis(
             
         # Run AI tasks in parallel to save time
         await asyncio.gather(task_commentary(), task_memo())
-        logger.info("AI content (Commentary & Memo) generated successfully.")
         
+        if analysis.analyst_commentary:
+            logger.info(f"AI content generated successfully. Commentary length: {len(analysis.analyst_commentary)}")
+        else:
+            logger.warning("AI content generated, but analyst_commentary is empty.")
+            
         # Note: Excel generation removed from critical path as it's not stored in the analysis object.
         # It is generated on-demand via /export/excel endpoint.
         

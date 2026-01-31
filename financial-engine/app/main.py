@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 import logging
 import app.config  # Ensures config is loaded first
+from app.api.routes import analysis, ingest, exports, multi_document, progress, chat
 from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
@@ -86,6 +87,7 @@ app.include_router(analysis.router, prefix="/api/v1", tags=["Analysis"])
 app.include_router(ingest.router, prefix="/api", tags=["Ingestion"])
 app.include_router(exports.router, prefix="/api/v1", tags=["Exports"])
 app.include_router(multi_document.router, tags=["Multi-Document"])
+app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
 app.include_router(progress.router, prefix="/api/v1", tags=["Progress"])
 
 @app.get("/health", tags=["Health"])

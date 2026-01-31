@@ -9,6 +9,7 @@ import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
+import ReportChatWidget from "@/components/ReportChatWidget";
 
 const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, sourceContext: string) => {
   console.log(`🔍 INTERNAL AUDIT REPORT: Analysis Data Load (${sourceContext})`);
@@ -533,6 +534,9 @@ export default function AnalysisResultPage() {
           </div>
         </main>
       </div>
+
+      {/* Chat Widget */}
+      <ReportChatWidget documentId={id} />
 
       <style jsx global>{`
         .no-scrollbar::-webkit-scrollbar {

@@ -1399,7 +1399,12 @@ async def analyze_deal_package(
     try:
         await progress_service.update_progress(package_id, 80, "Generating insights and explanations...")
         analysis = await explainability_service.generate_explanations(analysis)
-        logger.info("Explainability metadata and conclusion generated successfully.")
+        
+        # Generate Analyst Commentary
+        logger.info("Generating analyst commentary...")
+        await explainability_service.generate_analyst_commentary(analysis)
+        
+        logger.info("Explainability metadata, conclusion, and commentary generated successfully.")
     except Exception as e:
         logger.error(f"Explainability generation failed: {str(e)}")
         # Don't fail the pipeline for this, but log it
