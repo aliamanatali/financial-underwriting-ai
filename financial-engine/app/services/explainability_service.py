@@ -67,46 +67,50 @@ class ExplainabilityService:
         """
         Generates a 3-paragraph analyst commentary using GenAI.
         """
-        if analysis:
-            self.analysis = analysis
-            self.params = analysis.deal_parameters or DealParameters()
-            
-        # Prepare context
-        context = {
-            "address": self.analysis.property_meta.address,
-            "purchase_price": self.analysis.property_meta.purchase_price,
-            "units": self.analysis.property_meta.total_units,
-            "noi": self.analysis.pro_forma_noi,
-            "cap_rate": self.analysis.cap_rate,
-            "dscr": self.analysis.dscr,
-            "status": self.analysis.pass_fail_status,
-            "gating_reasons": self.analysis.gating_reasons,
-            "loss_to_lease": self.analysis.loss_to_lease,
-            "growth_rate": self.params.growth_rate,
-            "irr": self.analysis.irr,
-            "moic": self.analysis.moic
-        }
-        
-        prompt = f"""
-        Context Data:
-        {context}
-
-        Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Discuss potential physical/structural considerations based on property age and highlight the upside in rent."
-        
-        Guidance for AI:
-        - If the status is PASS, you generally approve. If FAIL, you reject.
-        - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
-        - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
-        - "Upside in rent" refers to the Loss to Lease (Current vs Market).
-        """
-        
         try:
-            # Use fast model for commentary
-            commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
-            self.analysis.analyst_commentary = commentary
+            if analysis:
+                self.analysis = analysis
+                self.params = analysis.deal_parameters or DealParameters()
+                
+            # Prepare context
+            context = {
+                "address": self.analysis.property_meta.address,
+                "purchase_price": self.analysis.property_meta.purchase_price,
+                "units": self.analysis.property_meta.total_units,
+                "noi": self.analysis.pro_forma_noi,
+                "cap_rate": self.analysis.cap_rate,
+                "dscr": self.analysis.dscr,
+                "status": self.analysis.pass_fail_status,
+                "gating_reasons": self.analysis.gating_reasons,
+                "loss_to_lease": self.analysis.loss_to_lease,
+                "growth_rate": self.params.growth_rate,
+                "irr": self.analysis.irr,
+                "moic": self.analysis.moic
+            }
+            
+            prompt = f"""
+            Context Data:
+            {context}
+
+            Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Discuss potential physical/structural considerations based on property age and highlight the upside in rent."
+            
+            Guidance for AI:
+            - If the status is PASS, you generally approve. If FAIL, you reject.
+            - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
+            - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
+            - "Upside in rent" refers to the Loss to Lease (Current vs Market).
+            """
+            
+            if self.gemini_client:
+                # Use fast model for commentary
+                commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+                self.analysis.analyst_commentary = commentary
+            else:
+                self.analysis.analyst_commentary = "Analyst commentary unavailable (AI Service not initialized)."
+                
         except Exception as e:
             print(f"Failed to generate commentary: {e}")
-            self.analysis.analyst_commentary = "Analyst commentary unavailable due to service error."
+            self.analysis.analyst_commentary = f"Analyst commentary unavailable due to error: {str(e)}"
 
     def _add_explanation(self, key: str, meta: ExplainabilityMetadata):
         self.explanations[key] = meta

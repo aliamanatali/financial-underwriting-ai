@@ -1410,20 +1410,35 @@ async def analyze_deal_package(
         # Don't fail the pipeline for this, but log it
         analysis.gating_reasons.append(f"Explainability generation failed: {str(e)}")
 
-    # ===== STEP 5: GENERATE OUTPUTS (Excel & Memo) =====
+    # ===== STEP 5: GENERATE OUTPUTS (Excel, Memo & Commentary) =====
     try:
-        await progress_service.update_progress(package_id, 90, "Generating output models...")
+        import asyncio
+        await progress_service.update_progress(package_id, 90, "Generating output models and AI commentary...")
         
-        # Excel
+        # 1. Excel (Synchronous/Fast)
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
         await excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for package: {package_id}")
         
-        # Memo
-        logger.info("Generating investment memo...")
-        memo_content = await memo_service.generate_investment_memo(analysis)
-        analysis.investment_memo = memo_content
-        logger.info("Investment memo generated successfully.")
+        # 2. Parallel AI Tasks (Memo & Commentary)
+        async def task_commentary():
+            try:
+                await explainability_service.generate_analyst_commentary(analysis)
+                logger.info("Analyst commentary generated.")
+            except Exception as e:
+                logger.error(f"Commentary generation failed: {e}")
+                analysis.analyst_commentary = "Commentary unavailable."
+
+        async def task_memo():
+            try:
+                logger.info("Generating investment memo...")
+                memo_content = await memo_service.generate_investment_memo(analysis)
+                analysis.investment_memo = memo_content
+                logger.info("Investment memo generated successfully.")
+            except Exception as e:
+                logger.error(f"Memo generation failed: {e}")
+
+        await asyncio.gather(task_commentary(), task_memo())
         
     except Exception as e:
         logger.warning(f"Output generation had issues (non-critical): {str(e)}")

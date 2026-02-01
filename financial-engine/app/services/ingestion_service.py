@@ -146,7 +146,8 @@ class IngestionService:
         """
         
         try:
-            rent_roll_data = self.gemini_client.generate_structured_data(
+            # Use generate_structured_data_async instead of synchronous version
+            rent_roll_data = await self.gemini_client.generate_structured_data_async(
                 rent_roll_prompt,
                 pydantic_schema=RentRollItem,
                 pdf_data=pdf_content,
