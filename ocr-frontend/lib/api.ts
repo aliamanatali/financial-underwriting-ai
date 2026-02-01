@@ -475,6 +475,46 @@ class ApiClient {
 
     return response.json();
   }
+
+  async *chatWithReportStream(documentId: string, messages: { role: string; content: string }[]): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    if (!response.body) throw new Error("No response body");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.token) yield data.token;
+            if (data.error) throw new Error(data.error);
+          } catch (e) {
+            console.error('Error parsing stream data:', e);
+          }
+        }
+      }
+    }
+  }
 }
 
 export const apiClient = new ApiClient();

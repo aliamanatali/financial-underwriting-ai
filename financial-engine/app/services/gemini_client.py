@@ -134,6 +134,46 @@ class GeminiClient:
         # If we exhausted retries
         logger.error(f"Failed to generate content after {self.max_retries} attempts. Last error: {last_exception}")
         return f"An error occurred: {last_exception}"
+    async def generate_content_stream_async(self, prompt: str, pdf_data: Optional[bytes] = None, use_fast_model: bool = False):
+        """
+        Generates content using the Gemini model asynchronously with streaming.
+        """
+        model_to_use = self.fast_model if use_fast_model else self.model
+        
+        last_exception = None
+        for attempt in range(self.max_retries):
+            try:
+                if pdf_data:
+                    pdf_part = {
+                        "mime_type": "application/pdf",
+                        "data": base64.b64encode(pdf_data).decode("utf-8")
+                    }
+                    response = await model_to_use.generate_content_async([prompt, pdf_part], stream=True)
+                else:
+                    response = await model_to_use.generate_content_async(prompt, stream=True)
+                
+                async for chunk in response:
+                    if chunk.text:
+                        yield chunk.text
+                return
+
+            except google_exceptions.ResourceExhausted as e:
+                delay = self.base_delay * (2 ** attempt)
+                logger.warning(f"Rate limit exceeded (attempt {attempt + 1}/{self.max_retries}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                last_exception = e
+            except google_exceptions.ServiceUnavailable as e:
+                delay = self.base_delay * (2 ** attempt)
+                logger.warning(f"Service unavailable (attempt {attempt + 1}/{self.max_retries}). Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                last_exception = e
+            except Exception as e:
+                logger.error(f"Error generating content stream with Gemini: {e}")
+                yield f"An error occurred: {e}"
+                return
+
+        logger.error(f"Failed to stream content after {self.max_retries} attempts. Last error: {last_exception}")
+        yield f"Error: Service temporarily unavailable. Please try again."
 
     async def map_expenses_to_categories_async(self, raw_expenses: List[Dict], categories: List[str]) -> List[Dict]:
         """

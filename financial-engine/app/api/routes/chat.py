@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from app.services.storage_service import storage_service
@@ -223,7 +224,7 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
         logger.error(f"Error formatting context: {e}")
         return "Error extracting context from report."
 
-@router.post("/analysis/{document_id}/chat", response_model=ChatResponse)
+@router.post("/analysis/{document_id}/chat")
 async def chat_with_report(
     document_id: str,
     request: ChatRequest,
@@ -233,6 +234,7 @@ async def chat_with_report(
     Chat endpoint for a specific analysis report.
     Provides context-aware responses based on the analysis data.
     Uses Redis caching to store the formatted context for faster subsequent turns.
+    RETURNS: StreamingResponse (Server-Sent Events)
     """
     logger.info(f"Chat request for document: {document_id}")
     
@@ -296,11 +298,16 @@ async def chat_with_report(
     Assistant:
     """
     
-    # 4. Generate Response
-    # Use fast model for chat to ensure good UX
-    try:
-        response_text = await gemini_client.generate_content_async(full_prompt, use_fast_model=True)
-        return ChatResponse(response=response_text)
-    except Exception as e:
-        logger.error(f"Chat generation failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate response: {str(e)}")
+    # 4. Generate Response Stream
+    async def event_generator():
+        try:
+            async for chunk in gemini_client.generate_content_stream_async(full_prompt, use_fast_model=True):
+                 # Format as SSE data
+                 data = json.dumps({"token": chunk})
+                 yield f"data: {data}\n\n"
+        except Exception as e:
+             logger.error(f"Chat stream failed: {e}")
+             err_data = json.dumps({"error": str(e)})
+             yield f"data: {err_data}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

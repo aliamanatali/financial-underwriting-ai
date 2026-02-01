@@ -40,16 +40,39 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
     setIsLoading(true);
 
     try {
-      const response = await apiClient.chatWithReport(documentId, [...messages, userMessage]);
-      const assistantMessage: ChatMessage = { role: "assistant", content: response.response };
-      setMessages((prev) => [...prev, assistantMessage]);
+      const stream = apiClient.chatWithReportStream(documentId, [...messages, userMessage]);
+      
+      let fullResponse = "";
+      let isFirstChunk = true;
+
+      for await (const chunk of stream) {
+        fullResponse += chunk;
+
+        if (isFirstChunk) {
+            isFirstChunk = false;
+            setIsLoading(false);
+            setMessages((prev) => [...prev, { role: "assistant", content: fullResponse }]);
+        } else {
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              const lastMsg = newMessages[newMessages.length - 1];
+              if (lastMsg.role === "assistant") {
+                lastMsg.content = fullResponse;
+              }
+              return newMessages;
+            });
+        }
+      }
     } catch (error) {
       console.error("Chat error:", error);
-      const errorMessage: ChatMessage = {
-        role: "assistant",
-        content: "I apologize, but I encountered an error processing your request. Please try again.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => {
+          const newMessages = [...prev];
+          const lastMsg = newMessages[newMessages.length - 1];
+          if (lastMsg.role === "assistant" && !lastMsg.content) {
+             lastMsg.content = "I apologize, but I encountered an error processing your request. Please try again.";
+          }
+          return newMessages;
+      });
     } finally {
       setIsLoading(false);
     }
