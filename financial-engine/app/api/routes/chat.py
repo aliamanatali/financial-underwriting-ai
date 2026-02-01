@@ -76,7 +76,9 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
         # Aggregated by category to give context on "actuals" vs "pro forma"
         hist_expenses = analysis.get("historical_expenses", [])
         hist_str = "No historical expenses available."
+        hist_full_str = ""
         if hist_expenses:
+             # Aggregated View
              hist_map = {}
              for h in hist_expenses:
                  cat = h.get('mapped_category', 'Uncategorized')
@@ -86,6 +88,41 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
              hist_str = "| T12 Category | Amount |\n|---|---|\n"
              for cat, amt in hist_map.items():
                  hist_str += f"| {cat} | ${amt:,.0f} |\n"
+             
+             # Full Normalized Data View
+             hist_full_str = "| Original Text | Mapped Category | Amount | Confidence |\n|---|---|---|---|\n"
+             for h in hist_expenses:
+                 orig = str(h.get('original_text', '')).replace('|', ' ') # Sanitize for Markdown table
+                 cat = h.get('mapped_category', 'Uncategorized')
+                 amt = h.get('amount', 0)
+                 conf = h.get('confidence', 0)
+                 hist_full_str += f"| {orig} | {cat} | ${amt:,.2f} | {conf:.2f} |\n"
+
+        # --- 3b. Rent Roll (Full) ---
+        rent_roll = analysis.get("rent_roll", [])
+        rent_roll_full_str = "No individual rent roll data available."
+        if rent_roll:
+             rent_roll_full_str = "| Unit | Type | Tenant | Current Rent | Market Rent | Sq Ft |\n|---|---|---|---|---|---|\n"
+             for item in rent_roll:
+                 u = str(item.get('unit_number', 'N/A')).replace('|', ' ')
+                 t = str(item.get('unit_type', 'N/A')).replace('|', ' ')
+                 tn = str(item.get('tenant_name', 'N/A')).replace('|', ' ')
+                 cr = item.get('current_rent', 0)
+                 mr = item.get('market_rent', 0)
+                 sf = item.get('unit_size', 0)
+                 rent_roll_full_str += f"| {u} | {t} | {tn} | ${cr:,.0f} | ${mr:,.0f} | {sf} |\n"
+
+        # --- 3c. Deal Parameters (Assumptions) ---
+        params = analysis.get("deal_parameters", {})
+        params_str = "No deal parameters available."
+        if params:
+             params_str = json.dumps(params, indent=2)
+
+        # --- 3d. OM Pro Forma Data ---
+        om_data = analysis.get("om_proforma", [])
+        om_str = "No OM Pro Forma data extracted."
+        if om_data:
+             om_str = json.dumps(om_data, indent=2)
 
         # --- 4. Sensitivity Analysis Matrix ---
         sens = analysis.get("sensitivity_analysis", {})
@@ -107,6 +144,23 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
                     body += f"| {row_label} | {row_data} |\n"
             
             sens_str = header + separator + body
+
+        # --- 5. Audit Log (Data Provenance) ---
+        audit_trail = analysis.get("audit_trail", [])
+        audit_str = "No audit trail available."
+        if audit_trail:
+            audit_str = "| Field | Value | Source | Method | Confidence | Page |\n|---|---|---|---|---|---|\n"
+            for item in audit_trail:
+                field = item.get('field_name', 'Unknown')
+                val = str(item.get('extracted_value', 'N/A')).replace('|', ' ')
+                src = item.get('source', 'Unknown')
+                method = item.get('method', 'Unknown')
+                conf = item.get('confidence_score')
+                page = item.get('page_number', 'N/A')
+                
+                conf_str = f"{conf:.2f}" if isinstance(conf, (int, float)) else "N/A"
+                
+                audit_str += f"| {field} | {val} | {src} | {method} | {conf_str} | {page} |\n"
 
         # Format as readable text
         context = f"""
@@ -131,11 +185,26 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
         == PRO FORMA EXPENSES (DETAILED) ==
         {expenses_str}
 
-        == HISTORICAL EXPENSES (T12 ACTUALS) ==
+        == DEAL PARAMETERS (ASSUMPTIONS) ==
+        {params_str}
+
+        == HISTORICAL EXPENSES (AGGREGATED) ==
         {hist_str}
+
+        == HISTORICAL EXPENSES (FULL NORMALIZED DATA) ==
+        {hist_full_str}
+
+        == FULL RENT ROLL DATA ==
+        {rent_roll_full_str}
+
+        == OM PRO FORMA (EXTRACTED) ==
+        {om_str}
 
         == SENSITIVITY ANALYSIS (IRR) ==
         {sens_str}
+
+        == AUDIT LOG (DATA PROVENANCE) ==
+        {audit_str}
         
         == RENT ROLL SUMMARY ==
         Occupancy: {rent_roll_summary.get("occupancy_rate", 0):.1%}
