@@ -836,6 +836,52 @@ class MultiDocumentExtractionService:
         # Semaphore to limit concurrent processing (optional, but good practice)
         sem = asyncio.Semaphore(10)  # Adjust concurrency limit as needed
 
+        # Progress tracking variables
+        completed_count = 0
+        total_count = len(documents)
+        active_files = set()
+        completed_files = set()
+
+        async def update_progress(filename: str, status: str, category: str):
+            nonlocal completed_count
+            
+            if status == "started":
+                active_files.add(filename)
+            elif status in ["completed", "failed"]:
+                if filename in active_files:
+                    active_files.remove(filename)
+                completed_count += 1
+                completed_files.add(filename)
+            
+            if progress_service and task_id:
+                # Calculate percentage: Map 0..total to progress_start..progress_end
+                pct_range = progress_end - progress_start
+                if total_count > 0:
+                    current_pct = progress_start + int((completed_count / total_count) * pct_range)
+                else:
+                    current_pct = progress_start
+                
+                # Determine message
+                if status == "started":
+                    msg = f"Processing {filename}..."
+                else:
+                    msg = f"Processed {completed_count}/{total_count} files"
+
+                await progress_service.update_progress(
+                    task_id,
+                    current_pct,
+                    msg,
+                    details={
+                        "current_file": filename, # Most recently changed file
+                        "document_category": category,
+                        "file_index": completed_count,
+                        "total_files": total_count,
+                        "active_files": list(active_files),
+                        "completed_files": list(completed_files),
+                        "status": "processing"
+                    }
+                )
+
         async def process_single_document(idx, doc):
             async with sem:
                 local_expenses = []
@@ -845,31 +891,30 @@ class MultiDocumentExtractionService:
                 filename = doc.get("filename", "unknown")
                 file_type = doc.get("type", "").lower()
                 document_id = doc.get("document_id")
-
-                # Progress update (approximate, since it's async)
-                if progress_service and task_id:
-                     # Just log start or update a shared counter if precise tracking needed
-                     # For simplicity, we might update periodically or just at start/end
-                     pass
+                category = doc.get("document_category", "Uncategorized")
 
                 logger.info(f"Processing document {idx+1}/{len(documents)}: {filename} (type: {file_type})")
-
-                if not file_content:
-                    logger.warning(f"No content for document: {filename}")
-                    return [], []
-
-                # OM Extraction
-                if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
-                    logger.info(f"Running OM Proforma extraction on: {filename}")
-                    try:
-                        proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
-                        if proforma_tables:
-                            local_om_results.extend(proforma_tables)
-                            logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
-                    except Exception as e:
-                        logger.error(f"Error extracting OM Proforma from {filename}: {e}")
+                
+                # Notify start
+                await update_progress(filename, "started", category)
 
                 try:
+                    if not file_content:
+                        logger.warning(f"No content for document: {filename}")
+                        await update_progress(filename, "failed", category)
+                        return [], []
+
+                    # OM Extraction
+                    if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
+                        logger.info(f"Running OM Proforma extraction on: {filename}")
+                        try:
+                            proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
+                            if proforma_tables:
+                                local_om_results.extend(proforma_tables)
+                                logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
+                        except Exception as e:
+                            logger.error(f"Error extracting OM Proforma from {filename}: {e}")
+
                     expenses = []
                     if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
                         logger.info(f"Extracting from Excel file: {filename}")
@@ -907,9 +952,11 @@ class MultiDocumentExtractionService:
                             }]
                     else:
                         logger.warning(f"Unsupported file type for {filename}")
+                        await update_progress(filename, "failed", category)
                         return [], []
 
                     local_expenses.extend(expenses)
+                    await update_progress(filename, "completed", category)
                     return local_expenses, local_om_results
 
                 except Exception as e:
@@ -923,6 +970,7 @@ class MultiDocumentExtractionService:
                         "source_document": filename,
                         "error": str(e)
                     }
+                    await update_progress(filename, "failed", category)
                     return [placeholder_expense], local_om_results
 
         # Execute all document processing in parallel
@@ -943,7 +991,10 @@ class MultiDocumentExtractionService:
                 progress_end,
                 f"Completed processing {len(documents)} files",
                 details={
+                    "file_index": len(documents),
                     "total_files": len(documents),
+                    "active_files": [],
+                    "completed_files": list(completed_files),
                     "status": "complete"
                 }
             )

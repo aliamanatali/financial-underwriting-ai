@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
@@ -12,7 +12,9 @@ import { FinancialAnalysisProgress, DealPackage } from "@/lib/types";
 interface DocumentCategory {
   name: string;
   count: number;
+  completedCount: number;
   status: 'completed' | 'processing' | 'queued';
+  fileNames: string[];
 }
 
 function ProcessingContent() {
@@ -26,6 +28,7 @@ function ProcessingContent() {
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [missingDocs, setMissingDocs] = useState<string[]>([]);
   const [isUploadingMissing, setIsUploadingMissing] = useState(false);
+  const [activeFiles, setActiveFiles] = useState<string[]>([]);
   const missingFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSidebar = () => {
@@ -60,11 +63,16 @@ function ProcessingContent() {
           setDealPackage(data);
           
           // Build categories from documents
-          const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => ({
-            name: type,
-            count: Array.isArray(docs) ? docs.length : 0,
-            status: 'queued' as const
-          }));
+          const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => {
+            const docArray = Array.isArray(docs) ? docs : [];
+            return {
+              name: type,
+              count: docArray.length,
+              completedCount: 0,
+              status: 'queued' as const,
+              fileNames: docArray.map((d: any) => d.filename)
+            };
+          });
           setCategories(cats);
           
           // Check for missing critical documents
@@ -78,21 +86,21 @@ function ProcessingContent() {
           
           if (missing.length > 0) {
               setMissingDocs(missing);
-              // If missing docs, pause here (don't redirect even if completed)
-              // But we should allow user to proceed if they want?
-              // For now, let's block auto-redirect.
-              return true; // Return true to signal "stop/handled", effectively pausing normalization loop start if we wanted
+              return true; // Return true to signal "stop/handled"
           }
 
           // Check if package is already normalized
           if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
-            console.log("Package already normalized, redirecting to analysis page...");
-            // Redirect immediately to analysis page
-            router.push(`/analysis/${packageId}`);
-            return true; // Signal that we're redirecting
+            // Note: If in_progress, we might want to attach to stream instead of redirecting
+            // But if it's "completed", we redirect.
+            if (data.normalization_status === "completed") {
+                console.log("Package already normalized, redirecting to analysis page...");
+                router.push(`/analysis/${packageId}`);
+                return true; 
+            }
           }
           
-          return false; // Signal to continue with normalization
+          return false; // Signal to continue
         }
       } catch (err) {
         console.error("Failed to fetch package:", err);
@@ -105,7 +113,7 @@ function ProcessingContent() {
       // First check if already normalized
       const shouldSkip = await fetchPackage();
       if (shouldSkip) {
-        return; // Don't start normalization if already done
+        return; 
       }
       let hasRedirected = false;
       let eventSource: EventSource | null = null;
@@ -113,73 +121,56 @@ function ProcessingContent() {
       // Start progress stream
       eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
         // Only update progress if the percentage is greater or equal to current, 
-        // or if it's not the initial "Connecting..." message (which often has 0%)
-        // This prevents race conditions where a late "Connecting..." message overwrites actual progress
+        // or if it's not the initial "Connecting..." message
         setProgress(prev => {
-            // Ignore "Connecting..." if we already have progress
             if (progressUpdate.message === "Connecting..." && prev.percentage > 0) {
                 return prev;
             }
-            
-            if (progressUpdate.percentage > prev.percentage || 
-               (progressUpdate.percentage === prev.percentage) ||
-               // Always accept if we are stuck at 0
-               prev.percentage === 0
-            ) {
+            if (progressUpdate.percentage > prev.percentage || prev.percentage === 0 || progressUpdate.percentage === prev.percentage) {
                 return progressUpdate;
             }
             return prev;
         });
         
-        // Update category statuses based on progress
-        if (progressUpdate.details?.document_category) {
-          const currentCategory = progressUpdate.details.document_category;
-          
-          setCategories(prev => {
-            return prev.map(cat => {
-              // If this is the current category, mark as processing
-              if (cat.name === currentCategory) {
-                return { ...cat, status: 'processing' };
-              }
-              
-              // If this category was previously processing but is no longer current, mark as completed
-              if (cat.status === 'processing') {
-                return { ...cat, status: 'completed' };
-              }
-              
-              // Keep existing status for others (completed stay completed, queued stay queued)
-              return cat;
-            });
-          });
-        } else if (progressUpdate.details?.current_file && progressUpdate.details?.total_files) {
-          // Fallback logic for legacy backend or missing category
-          const fileIndex = progressUpdate.details.file_index || 0;
-          const totalFiles = progressUpdate.details.total_files;
-          
-          setCategories(prev => {
-            // Calculate how many categories should be completed based on file progress
-            // Distribute files evenly across categories
-            const filesPerCategory = totalFiles / prev.length;
+        // Update active files and categories
+        if (progressUpdate.details) {
+            const active = (progressUpdate.details.active_files as string[]) || [];
+            const completed = (progressUpdate.details.completed_files as string[]) || [];
             
-            return prev.map((cat, idx) => {
-              // Calculate which file range this category corresponds to
-              const categoryStartFile = Math.floor(idx * filesPerCategory) + 1;
-              const categoryEndFile = Math.floor((idx + 1) * filesPerCategory);
-              
-              // If current file is past this category's range, mark as completed
-              if (fileIndex > categoryEndFile) {
-                return { ...cat, status: 'completed' };
-              }
-              
-              // If current file is within this category's range, mark as processing
-              if (fileIndex >= categoryStartFile && fileIndex <= categoryEndFile) {
-                return { ...cat, status: 'processing' };
-              }
-              
-              // Otherwise, it's still queued
-              return { ...cat, status: 'queued' };
+            // Only update active files if the list has changed
+            // Using JSON stringify for simple array comparison
+            setActiveFiles(prev => {
+                if (JSON.stringify(prev.sort()) !== JSON.stringify(active.sort())) {
+                    return active;
+                }
+                return prev;
             });
-          });
+
+            // Update categories based on active and completed files
+            setCategories(prevCats => {
+                return prevCats.map(cat => {
+                    // Count how many of this category's files are completed
+                    const catCompletedCount = cat.fileNames.filter(f => completed.includes(f)).length;
+                    
+                    // Check if any of this category's files are active
+                    const isProcessing = cat.fileNames.some(f => active.includes(f));
+                    
+                    let newStatus = cat.status;
+                    if (catCompletedCount === cat.count && cat.count > 0) {
+                        newStatus = 'completed';
+                    } else if (isProcessing || catCompletedCount > 0) {
+                        newStatus = 'processing';
+                    } else {
+                        newStatus = 'queued';
+                    }
+
+                    return {
+                        ...cat,
+                        completedCount: catCompletedCount,
+                        status: newStatus
+                    };
+                });
+            });
         }
         
         // Check if processing is complete (100%)
@@ -188,8 +179,9 @@ function ProcessingContent() {
           console.log("Processing complete, redirecting to analysis page...");
           
           // Mark all categories as completed
-          setCategories(prev => prev.map(cat => ({ ...cat, status: 'completed' })));
-          
+          setCategories(prev => prev.map(cat => ({ ...cat, status: 'completed', completedCount: cat.count })));
+          setActiveFiles([]);
+
           // Close event source and redirect
           setTimeout(() => {
             if (eventSource) eventSource.close();
@@ -209,8 +201,6 @@ function ProcessingContent() {
         if (!response.ok) {
           throw new Error("Failed to normalize documents");
         }
-
-        // The redirect will be handled by the progress update when it reaches 100%
         
       } catch (err) {
         console.error("Normalization failed:", err);
@@ -330,7 +320,7 @@ function ProcessingContent() {
                 <h2 className="text-xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
                   Data Extraction & Categorization
                 </h2>
-                <p className="text-sm text-neutral-500">Extracting and categorizing information from your deal package.</p>
+                <p className="text-sm text-neutral-500">Extracting and categorizing information from your deal package in parallel.</p>
               </div>
               <div className="flex flex-col items-end gap-1">
                 <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wide">Package ID</span>
@@ -413,9 +403,9 @@ function ProcessingContent() {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    {/* Show "Generating Financial Report" message when processing is near completion or generating analysis */}
-                    {(progress.percentage >= 80 || progress.message?.toLowerCase().includes('generat') || progress.message?.toLowerCase().includes('analyz') || progress.message?.toLowerCase().includes('financial')) && progress.percentage < 100 && (
+                  <div className="space-y-4">
+                    {/* Status Message */}
+                    {(progress.percentage >= 80 || progress.message?.toLowerCase().includes('generat') || progress.message?.toLowerCase().includes('analyz')) && progress.percentage < 100 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">Status</span>
                         <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg">
@@ -427,25 +417,41 @@ function ProcessingContent() {
                       </div>
                     )}
                     
-                    {progress.details?.current_file && progress.details.current_file !== "All files processed" && progress.percentage < 80 && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">Currently Processing</span>
-                        <div className="flex items-center gap-2 p-2 bg-neutral-50 border border-neutral-100 rounded-lg">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-500">
-                            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
-                            <polyline points="14 2 14 8 20 8"></polyline>
-                            <line x1="16" x2="8" y1="13" y2="13"></line>
-                            <line x1="16" x2="8" y1="17" y2="17"></line>
-                            <line x1="10" x2="8" y1="9" y2="9"></line>
-                          </svg>
-                          <span className="text-xs font-mono text-neutral-700 truncate">{progress.details.current_file}</span>
+                    {/* Active Files List */}
+                    {activeFiles.length > 0 && progress.percentage < 90 && (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">
+                                Processing Queue ({activeFiles.length})
+                            </span>
+                            <span className="text-[10px] text-neutral-400 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                Live
+                            </span>
+                        </div>
+                        <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                            {activeFiles.map((file, idx) => (
+                                <div key={idx} className="flex items-center gap-3 p-2.5 bg-neutral-50 border border-neutral-100 rounded-lg">
+                                  <div className="shrink-0 w-8 h-8 rounded-lg bg-white border border-neutral-100 flex items-center justify-center shadow-sm">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500 animate-spin-slow">
+                                        <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                                    </svg>
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs font-medium text-neutral-900 truncate">{file}</span>
+                                    <span className="text-[10px] text-neutral-500">Extracting data...</span>
+                                  </div>
+                                </div>
+                            ))}
                         </div>
                       </div>
                     )}
-                    {progress.details?.total_files && progress.details.file_index && progress.details.file_index < progress.details.total_files && (
-                      <div className="flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
-                        <span>Total Files</span>
-                        <span className="font-medium text-neutral-900">{progress.details.file_index} of {progress.details.total_files} files</span>
+                    
+                    {/* Total Stats */}
+                    {progress.details?.total_files && (
+                      <div className="flex items-center justify-between text-xs text-neutral-500 pt-3 border-t border-neutral-100">
+                        <span>Overall Progress</span>
+                        <span className="font-medium text-neutral-900">{progress.details.file_index || 0} of {progress.details.total_files} files processed</span>
                       </div>
                     )}
                   </div>
@@ -468,7 +474,7 @@ function ProcessingContent() {
                   </div>
                   
                   <div className="divide-y divide-neutral-100">
-                    {categories.map((category, index) => (
+                    {categories.map((category) => (
                       <div
                         key={category.name}
                         className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors ${
@@ -507,7 +513,9 @@ function ProcessingContent() {
                           </div>
                           <div>
                             <p className={`text-sm font-medium ${category.status === 'processing' ? 'font-semibold' : ''} text-neutral-900`}>{category.name}</p>
-                            <p className="text-[10px] text-neutral-500 font-mono">{category.count} document{category.count !== 1 ? 's' : ''}</p>
+                            <p className="text-[10px] text-neutral-500 font-mono">
+                                {category.completedCount} / {category.count} processed
+                            </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -545,6 +553,16 @@ function ProcessingContent() {
           -ms-overflow-style: none;
           scrollbar-width: none;
         }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #e5e5e5;
+            border-radius: 20px;
+        }
         @keyframes progress-stripe {
           0% { background-position: 0 0; }
           100% { background-position: 24px 24px; }
@@ -562,6 +580,13 @@ function ProcessingContent() {
           );
           background-size: 24px 24px;
           animation: progress-stripe 1s linear infinite;
+        }
+        @keyframes spin-slow {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .animate-spin-slow {
+            animation: spin-slow 3s linear infinite;
         }
       `}</style>
     </div>
