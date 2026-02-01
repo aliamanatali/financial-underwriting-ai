@@ -107,7 +107,7 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
                 <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mb-3">
                   <SparklesIcon className="w-6 h-6 text-amber-600" />
                 </div>
-                <p className="text-sm font-medium text-neutral-900 mb-1">
+                <p className="text-xs font-medium text-neutral-900 mb-1">
                   How can I help with this report?
                 </p>
                 <p className="text-xs text-neutral-400 max-w-[200px]">
@@ -141,7 +141,7 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
                   }`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-xs ${
                       msg.role === "user"
                         ? "bg-neutral-900 text-white rounded-tr-none"
                         : "bg-white border border-neutral-200 text-neutral-800 shadow-sm rounded-tl-none"
@@ -178,7 +178,7 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="Ask about this report..."
-                className="w-full pl-4 pr-12 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all text-sm"
+                className="w-full pl-4 pr-12 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all text-xs"
               />
               <button
                 type="submit"

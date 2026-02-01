@@ -92,7 +92,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           key={key}
           className="overflow-x-auto mb-4 border border-neutral-200 rounded-lg"
         >
-          <table className="min-w-full divide-y divide-neutral-200 text-sm">
+          <table className="min-w-full divide-y divide-neutral-200 text-xs">
             <thead className="bg-neutral-50">
               <tr>
                 {header.map((cell, i) => (
@@ -136,7 +136,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -165,7 +165,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -178,7 +178,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h3
             key={elementKey++}
-            className="text-lg font-semibold text-neutral-900 mb-3 mt-6"
+            className="text-sm font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(4))}
           </h3>
@@ -188,7 +188,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -201,7 +201,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h2
             key={elementKey++}
-            className="text-xl font-semibold text-neutral-900 mb-3 mt-6"
+            className="text-base font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(3))}
           </h2>
@@ -211,7 +211,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -224,7 +224,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h1
             key={elementKey++}
-            className="text-2xl font-bold text-neutral-900 mb-4 mt-6"
+            className="text-lg font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(2))}
           </h1>
@@ -241,7 +241,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -259,7 +259,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -276,7 +276,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -287,7 +287,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           inList = false;
         }
         elements.push(
-          <p key={elementKey++} className="mb-4 leading-7">
+          <p key={elementKey++} className="mb-2 leading-relaxed">
             {processInlineMarkdown(trimmedLine)}
           </p>
         );
@@ -299,7 +299,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       elements.push(
         <ul
           key={`final-list-${elementKey++}`}
-          className="list-disc pl-5 mb-4 space-y-1.5"
+          className="list-disc pl-4 mb-2 space-y-1"
         >
           {listItems.map((item, i) => (
             <li key={i}>{processTextContent(item)}</li>
@@ -317,7 +317,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
   };
 
   return (
-    <div className="prose prose-neutral max-w-none">
+    <div className="text-xs leading-relaxed text-neutral-800 break-words space-y-1">
       {parseMarkdown(content)}
     </div>
   );
