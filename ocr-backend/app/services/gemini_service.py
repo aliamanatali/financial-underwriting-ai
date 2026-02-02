@@ -34,7 +34,7 @@ def get_gemini_semaphore():
 
 
 # DocuMind Extraction Prompt - Zero Hallucination Document Digitization
-DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this PDF document with ZERO hallucination.
+DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this document with ZERO hallucination.
 
 CORE PRINCIPLES:
 1. NO HALLUCINATION: Never invent, infer, or add information not present in the document
@@ -151,6 +151,64 @@ class GeminiService:
             )
         except Exception as e:
             logger.error(f"Failed to extract PDF content: {str(e)}")
+            raise
+
+    async def extract_image_content(self, image_data: bytes, mime_type: str) -> DocumentExtractionResult:
+        """
+        Extract text content from an image using Gemini API.
+        
+        Args:
+            image_data: Image file content as bytes
+            mime_type: Mime type of the image
+            
+        Returns:
+            DocumentExtractionResult with extracted text and metadata
+            
+        Raises:
+            Exception: If extraction fails
+        """
+        try:
+            logger.info(f"Starting image text extraction with Gemini ({mime_type})")
+            
+            # Create parts for multimodal input
+            parts = [
+                types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                types.Part.from_text(text=DOCUMIND_EXTRACTION_PROMPT)
+            ]
+            
+            # Generate content with Gemini
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=settings.gemini_temperature,
+                    max_output_tokens=settings.gemini_max_output_tokens
+                )
+            )
+            
+            # Extract text from response
+            extracted_text = response.text if response.text else ""
+            
+            # Parse metadata from extracted text
+            metadata = self._parse_extraction_metadata(extracted_text, len(image_data))
+            # Force page count to 1 for images if not detected correctly
+            if metadata.page_count == 0:
+                metadata.page_count = 1
+            
+            logger.info(
+                f"Successfully extracted text from image "
+                f"with {metadata.quality} confidence"
+            )
+            
+            return DocumentExtractionResult(
+                text=extracted_text,
+                page_count=metadata.page_count,
+                confidence=metadata.quality,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to extract image content: {str(e)}")
             raise
     
     async def extract_pdf_chunk(

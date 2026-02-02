@@ -17,6 +17,7 @@ class DocumentType(str, Enum):
     DISCLOSURES = "Disclosures"
     TAX_BILLS = "Tax Bills"
     UTILITIES = "Utilities"
+    IMAGES = "Images"
 
 
 class DataClassification(str, Enum):
@@ -96,9 +97,9 @@ class PropertyMeta(BaseModel):
     current_loan_balance: Optional[float] = 0.0
 
 class RentRollItem(BaseModel):
-    unit_number: str
+    unit_number: Optional[str] = "N/A"
     unit_size: Optional[int] = 0
-    unit_type: str
+    unit_type: Optional[str] = "Unknown"
     tenant_name: Optional[str] = "Unknown"
     current_rent: Optional[float] = 0.0
     stabilized_rent: Optional[float] = 0.0
@@ -106,8 +107,18 @@ class RentRollItem(BaseModel):
     move_in_date: Optional[str] = None
     lease_start: Optional[str] = None
     lease_end: Optional[str] = None
+    deposit: Optional[float] = 0.0
+    parking: Optional[str] = None
+    comments: Optional[str] = None
     
-    @validator('current_rent', 'stabilized_rent', 'market_rent', pre=True)
+    @validator('unit_number', 'unit_type', 'tenant_name', pre=True)
+    def validate_string_fields(cls, v):
+        """Handle None/Empty strings"""
+        if v is None:
+            return "Unknown"
+        return str(v)
+
+    @validator('current_rent', 'stabilized_rent', 'market_rent', 'deposit', pre=True)
     def validate_rent_fields(cls, v):
         """Ensure rent fields are valid floats, default to 0.0 if None or invalid"""
         if v is None or v == "":

@@ -3,6 +3,7 @@ import json
 from typing import Optional, List, Dict
 from app.models.schemas import DocumentType
 from app.services.gemini_service import GeminiService
+from app.services.batch_logging_service import BatchLoggingService
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +12,9 @@ class ClassificationService:
     Service for classifying documents into standard DocumentTypes using Gemini.
     """
     
-    def __init__(self, gemini_service: GeminiService):
+    def __init__(self, gemini_service: GeminiService, batch_logging_service: Optional[BatchLoggingService] = None):
         self.gemini_service = gemini_service
+        self.batch_logging_service = batch_logging_service
 
     async def classify_file(self, filename: str, content_preview: str = "") -> Optional[DocumentType]:
         """
@@ -31,6 +33,8 @@ class ClassificationService:
                 return DocumentType.LEASES
             if "tax" in filename_lower and "bill" in filename_lower:
                 return DocumentType.TAX_BILLS
+            if filename_lower.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')):
+                return DocumentType.IMAGES
             
             # 2. LLM path: Use Gemini to infer from filename (and content if provided)
             prompt = f"""
@@ -45,6 +49,7 @@ class ClassificationService:
             - {DocumentType.DISCLOSURES.value}
             - {DocumentType.TAX_BILLS.value}
             - {DocumentType.UTILITIES.value}
+            - {DocumentType.IMAGES.value}
             
             Filename: "{filename}"
             Content Preview: "{content_preview[:500] if content_preview else 'N/A'}"
@@ -58,21 +63,35 @@ class ClassificationService:
             # Match result to enum
             for doc_type in DocumentType:
                 if doc_type.value.lower() == result.lower():
+                    if self.batch_logging_service:
+                        self.batch_logging_service.log_classification(filename, doc_type.value, 1.0, "success")
                     return doc_type
             
             # Try partial matches if exact match fails
+            matched_type = None
             if "financial" in result.lower():
-                return DocumentType.FINANCIALS
-            if "rent" in result.lower() and "roll" in result.lower():
-                return DocumentType.RENT_ROLL
-            if "offering" in result.lower() or "memorandum" in result.lower():
-                return DocumentType.OFFERING_MEMORANDUM
+                matched_type = DocumentType.FINANCIALS
+            elif "rent" in result.lower() and "roll" in result.lower():
+                matched_type = DocumentType.RENT_ROLL
+            elif "offering" in result.lower() or "memorandum" in result.lower():
+                matched_type = DocumentType.OFFERING_MEMORANDUM
+            
+            if matched_type:
+                if self.batch_logging_service:
+                    self.batch_logging_service.log_classification(filename, matched_type.value, 0.8, "success_partial")
+                return matched_type
             
             logger.info(f"LLM could not confidently classify '{filename}' (Result: {result}). Defaults to Unknown.")
+            
+            if self.batch_logging_service:
+                self.batch_logging_service.log_classification(filename, "Unknown", 0.0, "low_confidence")
+            
             return None
 
         except Exception as e:
             logger.error(f"Error classifying file {filename}: {str(e)}")
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error(filename, "classify_file", str(e))
             return None
 
     async def classify_files_batch(self, filenames: List[str]) -> Dict[str, DocumentType]:
@@ -96,6 +115,7 @@ class ClassificationService:
             - {DocumentType.DISCLOSURES.value}
             - {DocumentType.TAX_BILLS.value}
             - {DocumentType.UTILITIES.value}
+            - {DocumentType.IMAGES.value}
             - Unknown
             
             Filenames to classify:
@@ -142,13 +162,20 @@ class ClassificationService:
                          final_map[fname] = DocumentType.LEASES
                     elif "memo" in cat_str.lower():
                          final_map[fname] = DocumentType.OFFERING_MEMORANDUM
+                    elif "image" in cat_str.lower() or "photo" in cat_str.lower():
+                         final_map[fname] = DocumentType.IMAGES
                     else:
-                        # Keep it as None or map to a default?
-                        # The caller handles missing keys or None
+                        if self.batch_logging_service:
+                             self.batch_logging_service.log_classification(fname, cat_str, 0.0, "unknown_category")
                         pass
+
+                if self.batch_logging_service and fname in final_map:
+                     self.batch_logging_service.log_classification(fname, final_map[fname].value, 1.0, "batch_success")
                         
             return final_map
             
         except Exception as e:
             logger.error(f"Error in batch classification: {str(e)}")
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error("batch", "classify_files_batch", str(e))
             return {}

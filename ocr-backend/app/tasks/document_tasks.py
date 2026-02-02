@@ -90,42 +90,68 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
         
         # Retrieve file from storage
         file_data = asyncio.run(storage_service.get_file(storage_path))
+
+        # Get document record to check mime_type
+        # We need to access DocumentService.get_document which is async
+        # But we are in a synchronous Celery task, so we use asyncio.run
+        # However, getting the full document record might be overkill if we just need mime_type
+        # Let's rely on checking the file header or try/except block if mime_type wasn't passed in args
+        # Ideally, mime_type should be passed to the task, but for backward compatibility we can check here.
         
-        # Get PDF info
-        pdf_info = asyncio.run(chunking_service.get_pdf_info(file_data))
+        # Since we updated DocumentService.upload_document to save mime_type, let's fetch it.
+        # We can use the _get_document_record helper we exposed (indirectly via service)
+        # But wait, we can't easily instantiate DocumentService here without circular imports or context issues
+        # Let's use the services['document'] instance we got earlier.
         
-        # Determine if chunking is needed
-        should_chunk = chunking_service.should_use_chunking(
-            page_count=pdf_info["page_count"],
-            file_size_mb=pdf_info["file_size_mb"],
-            page_threshold=settings.large_file_page_threshold,
-            size_threshold_mb=settings.large_file_threshold_mb
-        )
-        
-        if should_chunk:
-            logger.info(
-                f"Processing large document {document_id} with parallel chunking "
-                f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
-            )
-            result = _process_with_parallel_chunks(
-                self,
-                document_id,
-                file_data,
-                pdf_info,
-                chunking_service,
-                progress_tracker
-            )
+        document_service = services['document']
+        doc_record = asyncio.run(document_service._get_document_record(document_id))
+        mime_type = doc_record.get("mime_type", "application/pdf") if doc_record else "application/pdf"
+
+        if mime_type.startswith("image/"):
+             logger.info(f"Processing image document {document_id} ({mime_type})")
+             result = _process_image_document(
+                 self,
+                 document_id,
+                 file_data,
+                 mime_type
+             )
         else:
-            logger.info(
-                f"Processing small document {document_id} without chunking "
-                f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+            # Assume PDF
+            # Get PDF info
+            pdf_info = asyncio.run(chunking_service.get_pdf_info(file_data))
+            
+            # Determine if chunking is needed
+            should_chunk = chunking_service.should_use_chunking(
+                page_count=pdf_info["page_count"],
+                file_size_mb=pdf_info["file_size_mb"],
+                page_threshold=settings.large_file_page_threshold,
+                size_threshold_mb=settings.large_file_threshold_mb
             )
-            result = _process_without_chunks(
-                self,
-                document_id,
-                file_data,
-                pdf_info
-            )
+            
+            if should_chunk:
+                logger.info(
+                    f"Processing large document {document_id} with parallel chunking "
+                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+                )
+                result = _process_with_parallel_chunks(
+                    self,
+                    document_id,
+                    file_data,
+                    pdf_info,
+                    chunking_service,
+                    progress_tracker
+                )
+            else:
+                logger.info(
+                    f"Processing small document {document_id} without chunking "
+                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+                )
+                result = _process_without_chunks(
+                    self,
+                    document_id,
+                    file_data,
+                    pdf_info
+                )
         
         logger.info(f"Document processing completed for {document_id}")
         return result
@@ -485,6 +511,66 @@ def _process_with_parallel_chunks(
         'message': f'Processing {total_chunks} chunks in parallel'
     }
 
+
+def _process_image_document(
+    task,
+    document_id: str,
+    file_data: bytes,
+    mime_type: str
+) -> Dict[str, Any]:
+    """Process image document."""
+    
+    # Get services
+    services = get_services()
+    gemini_service = services['gemini']
+    progress_tracker = services['progress']
+    
+    # Get start time
+    start_time = progress_tracker.get_start_time(document_id)
+    
+    # Update progress
+    task.update_state(
+        state='PROCESSING',
+        meta={'status': 'Extracting text from image', 'progress': 50}
+    )
+    
+    # Extract text using Gemini
+    extraction_result = asyncio.run(gemini_service.extract_image_content(file_data, mime_type))
+    
+    # Calculate processing time
+    processing_time = time.time() - start_time if start_time else None
+    
+    if processing_time:
+        logger.info(f"Total processing time for {document_id}: {processing_time:.2f} seconds")
+    
+    # Update metadata with file info
+    metadata = extraction_result.metadata
+    metadata.file_size = len(file_data)
+    metadata.is_chunked = False
+    metadata.mime_type = mime_type
+    
+    # Update document with extraction results
+    asyncio.run(_update_document_final(
+        document_id,
+        ProcessingStatus.COMPLETED,
+        extraction_result.text,
+        metadata,
+        None,
+        processing_time
+    ))
+    
+    # Update progress
+    task.update_state(
+        state='SUCCESS',
+        meta={'status': 'Completed', 'progress': 100}
+    )
+    
+    return {
+        'document_id': document_id,
+        'status': 'completed',
+        'text_length': len(extraction_result.text),
+        'page_count': extraction_result.page_count
+    }
 
 def _process_without_chunks(
     task,

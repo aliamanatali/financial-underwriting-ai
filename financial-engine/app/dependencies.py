@@ -10,6 +10,7 @@ from app.services.audit_log_service import AuditLogService
 from app.services.ingestion_service import IngestionService
 from app.services.explainability_service import ExplainabilityService
 from app.services.classification_service import ClassificationService
+from app.services.batch_logging_service import BatchLoggingService
 
 def get_gemini_service():
     return GeminiClient()
@@ -35,8 +36,14 @@ def get_ingestion_service():
 def get_explainability_service(gemini_service: GeminiClient = Depends(get_gemini_service)):
     return ExplainabilityService(gemini_service)
 
-def get_classification_service(gemini_service: GeminiClient = Depends(get_gemini_service)):
-    return ClassificationService(gemini_service=gemini_service)
+def get_batch_logging_service():
+    return BatchLoggingService()
+
+def get_classification_service(
+    gemini_service: GeminiClient = Depends(get_gemini_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
+):
+    return ClassificationService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
 
 # Singleton instance
 progress_service = ProgressService()

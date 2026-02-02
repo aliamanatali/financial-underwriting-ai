@@ -30,7 +30,8 @@ from app.services.storage_service import storage_service
 from app.services.explainability_service import ExplainabilityService
 from app.services.progress_service import ProgressService
 from app.services.classification_service import ClassificationService
-from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service
+from app.services.batch_logging_service import BatchLoggingService
+from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service, get_batch_logging_service
 from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAPPING
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
@@ -51,6 +52,8 @@ os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 async def upload_zip_package(
     file: UploadFile = File(...),
     property_name: Optional[str] = Form(None),
+    classification_service: ClassificationService = Depends(get_classification_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """
     Upload a ZIP file containing the 8-folder structure.
@@ -73,7 +76,12 @@ async def upload_zip_package(
             shutil.copyfileobj(file.file, f)
             
         # Process ZIP using the service
-        package, file_data_map = await zip_service.process_zip_file(temp_zip_path, property_name)
+        package, file_data_map = await zip_service.process_zip_file(
+            temp_zip_path,
+            property_name,
+            classification_service=classification_service,
+            batch_logging_service=batch_logging_service
+        )
         
         # Update caches
         deal_packages_cache[package.package_id] = package
@@ -403,7 +411,8 @@ async def normalize_package_documents(
     document_type: Optional[DocumentType] = None,
     gemini_service: GeminiService = Depends(get_gemini_service),
     progress_service: ProgressService = Depends(get_progress_service),
-    explainability_service: ExplainabilityService = Depends(get_explainability_service)
+    explainability_service: ExplainabilityService = Depends(get_explainability_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """
     Normalize documents in a package and automatically generate financial report.
@@ -428,7 +437,7 @@ async def normalize_package_documents(
         deal_packages_cache[package_id] = package
     
     # Initialize extraction service
-    extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
+    extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
     
     # Collect documents to process
     documents_to_process = []
@@ -798,7 +807,7 @@ def _clean_address(address: str) -> str:
         return "Unknown"
     
     # Remove document type prefixes
-    address = re.sub(r'^(Rent Roll|Offering Memorandum|Financials|Tax Bills?|Utilities|Leases|Disclosures|Building Plans & Permits)[/\\]', '', address, flags=re.IGNORECASE)
+    address = re.sub(r'^(Rent Roll|Offering Memorandum|Financials|Tax Bills?|Utilities|Leases|Disclosures|Building Plans & Permits|Images)[/\\]', '', address, flags=re.IGNORECASE)
     
     # Extract street address pattern: number + street name
     # Match patterns like "2715 Dwight" or "2715 Dwight Way"
@@ -1148,6 +1157,11 @@ async def analyze_deal_package(
                     category = ExpenseCategory(item.normalized_value)
                 except ValueError:
                     category = ExpenseCategory.OTHER_OPERATING_EXPENSES
+                
+                # Fix for attribute error: type object 'ExpenseCategory' has no attribute 'MARKETING'
+                # If the normalized_value is MARKETING or ADVERTISING (legacy), remap it to ADVERTISING_MARKETING
+                if item.normalized_value in ["Marketing", "Advertising"]:
+                    category = ExpenseCategory.ADVERTISING_MARKETING
                 
                 # Use amount from metadata if available, otherwise parse from text
                 amount = 0.0

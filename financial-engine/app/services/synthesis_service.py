@@ -24,6 +24,10 @@ class SynthesisService:
         "PSA": 100,
         "PURCHASE": 100,
         "AGREEMENT": 100,
+        "MGMT AGMT": 95,
+        "MANAGEMENT AGREEMENT": 95,
+        "GRANT OF EASEMENT": 90,
+        "PRELIM": 90,
         "RENT ROLL": 80,
         "TAX BILL": 70,
         "TAX": 70,
@@ -64,7 +68,7 @@ class SynthesisService:
         return self.DOCUMENT_WEIGHTS["UNKNOWN"]
     
     def synthesize_property_metadata(
-        self, 
+        self,
         normalized_items: List[NormalizedDataItem]
     ) -> Dict[str, Any]:
         """
@@ -83,7 +87,10 @@ class SynthesisService:
             {
                 "purchase_price": {"value": float, "source": str, "score": int},
                 "total_units": {"value": int, "source": str, "score": int},
-                "year_built": {"value": int, "source": str, "score": int}
+                "year_built": {"value": int, "source": str, "score": int},
+                "rentable_area": {"value": float, "source": str, "score": int},
+                "real_estate_tax": {"value": float, "source": str, "score": int},
+                "management_fee": {"value": float, "source": str, "score": int}
             }
         """
         logger.info(f"Synthesizing property metadata from {len(normalized_items)} items")
@@ -92,7 +99,10 @@ class SynthesisService:
         best_values = {
             "purchase_price": {"value": 0.0, "source": None, "score": -1},
             "total_units": {"value": 0, "source": None, "score": -1},
-            "year_built": {"value": 0, "source": None, "score": -1}
+            "year_built": {"value": 0, "source": None, "score": -1},
+            "rentable_area": {"value": 0.0, "source": None, "score": -1},
+            "real_estate_tax": {"value": 0.0, "source": None, "score": -1},
+            "management_fee": {"value": 0.0, "source": None, "score": -1}
         }
         
         # Scan all items and pick winners based on priority
@@ -115,10 +125,14 @@ class SynthesisService:
                         amount = 0.0
             
             # PURCHASE PRICE
-            if ("purchase price" in normalized_val or 
-                "purchase price" in raw_text or 
-                "asking price" in raw_text):
-                if amount > 0 and doc_score > best_values["purchase_price"]["score"]:
+            if ("purchase price" in normalized_val or
+                "purchase price" in raw_text or
+                "sales price" in raw_text or
+                "contract price" in raw_text or
+                "price" in normalized_val):
+                
+                # Exclude obvious wrong matches for price (like small amounts)
+                if amount > 10000 and doc_score > best_values["purchase_price"]["score"]:
                     best_values["purchase_price"] = {
                         "value": amount,
                         "source": source_doc,
@@ -127,10 +141,12 @@ class SynthesisService:
                     logger.info(f"Updated Purchase Price: ${amount:,.2f} from {source_doc} (score: {doc_score})")
             
             # TOTAL UNITS
-            elif ("total units" in normalized_val or 
-                  "total units" in raw_text or 
-                  "number of units" in raw_text):
-                if amount > 0 and doc_score > best_values["total_units"]["score"]:
+            elif ("total units" in normalized_val or
+                  "total units" in raw_text or
+                  "number of units" in raw_text or
+                  "unit count" in raw_text):
+                # Valid unit count range 1-1000
+                if amount > 0 and amount < 1000 and doc_score > best_values["total_units"]["score"]:
                     best_values["total_units"] = {
                         "value": int(amount),
                         "source": source_doc,
@@ -147,6 +163,46 @@ class SynthesisService:
                         "score": doc_score
                     }
                     logger.info(f"Updated Year Built: {int(amount)} from {source_doc} (score: {doc_score})")
+                    
+            # RENTABLE AREA (SQ FT)
+            elif ("rentable area" in normalized_val or
+                  "rentable area" in raw_text or
+                  "sq ft" in raw_text or
+                  "sq. ft" in raw_text or
+                  "square feet" in raw_text or
+                  "gross area" in raw_text or
+                  "building size" in raw_text):
+                if amount > 500 and doc_score > best_values["rentable_area"]["score"]:
+                    best_values["rentable_area"] = {
+                        "value": float(amount),
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                    logger.info(f"Updated Rentable Area: {amount:,.2f} from {source_doc} (score: {doc_score})")
+
+            # REAL ESTATE TAXES
+            elif ("real estate tax" in normalized_val or
+                  "property tax" in normalized_val or
+                  "tax amount" in raw_text):
+                 if amount > 0 and doc_score > best_values["real_estate_tax"]["score"]:
+                    best_values["real_estate_tax"] = {
+                        "value": float(amount),
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                    logger.info(f"Updated Real Estate Tax: ${amount:,.2f} from {source_doc} (score: {doc_score})")
+
+            # MANAGEMENT FEE
+            elif ("management fee" in normalized_val or
+                  "mgmt fee" in raw_text):
+                 # Allow 0 for management fee (self-managed)
+                 if doc_score > best_values["management_fee"]["score"]:
+                    best_values["management_fee"] = {
+                        "value": float(amount),
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                    logger.info(f"Updated Management Fee: ${amount:,.2f} from {source_doc} (score: {doc_score})")
             
             # SPECIAL CASE: Rent Roll row count for Total Units
             if item.metadata and item.metadata.get("row_count") and "rent roll" in raw_text:

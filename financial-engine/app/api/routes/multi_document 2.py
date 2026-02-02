@@ -68,6 +68,10 @@ FOLDER_MAPPING = {
     "08 - Utilities": DocumentType.UTILITIES,
     "08-Utilities": DocumentType.UTILITIES,
     "Utilities": DocumentType.UTILITIES,
+
+    "09 - Images": DocumentType.IMAGES,
+    "09-Images": DocumentType.IMAGES,
+    "Images": DocumentType.IMAGES,
 }
 
 

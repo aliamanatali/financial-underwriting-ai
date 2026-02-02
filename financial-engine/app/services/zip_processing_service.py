@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, Tuple, List
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
 from app.services.classification_service import ClassificationService
+from app.services.batch_logging_service import BatchLoggingService
 # Avoid circular import if ProgressService is needed only for typing
 # But we need it for execution. We'll import inside the method if needed or use Any
 from app.services.progress_service import ProgressService
@@ -86,6 +87,14 @@ FOLDER_MAPPING = {
     "gas": DocumentType.UTILITIES,
     "sewer": DocumentType.UTILITIES,
     "trash": DocumentType.UTILITIES,
+
+    # Images
+    "images": DocumentType.IMAGES,
+    "image": DocumentType.IMAGES,
+    "photos": DocumentType.IMAGES,
+    "photo": DocumentType.IMAGES,
+    "pictures": DocumentType.IMAGES,
+    "picture": DocumentType.IMAGES,
 }
 
 
@@ -128,18 +137,22 @@ class ZipProcessingService:
         zip_path: str,
         property_name: str,
         progress_service: Optional[ProgressService] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        classification_service: Optional[ClassificationService] = None,
+        batch_logging_service: Optional[BatchLoggingService] = None
     ) -> Tuple[DealPackage, Dict[str, Any]]:
         """
         Process a ZIP file from disk, extract documents, creating a DealPackage,
         and saving files to storage.
         """
-        # This legacy method can now delegate to a more generic file processor if needed,
-        # but for now we keep it as is for strict backward compatibility with existing structured ZIPs,
-        # or we could enhance it to use the classifier fallback.
-        # For this update, we will simply leave it as is to ensure stability,
-        # and implement the new smart upload logic in process_smart_upload.
-        return await self._process_zip_internal(zip_path, property_name, progress_service, task_id)
+        return await self._process_zip_internal(
+            zip_path,
+            property_name,
+            progress_service,
+            task_id,
+            classification_service,
+            batch_logging_service
+        )
 
     def _should_skip_file(self, file_path: str) -> bool:
         """Check if file should be skipped (hidden files, MACOSX artifacts, etc)."""
@@ -162,7 +175,8 @@ class ZipProcessingService:
         property_name: str,
         progress_service: Optional[ProgressService] = None,
         task_id: Optional[str] = None,
-        classification_service: Optional[ClassificationService] = None
+        classification_service: Optional[ClassificationService] = None,
+        batch_logging_service: Optional[BatchLoggingService] = None
     ) -> Tuple[DealPackage, Dict[str, Any]]:
         if progress_service and task_id:
             await progress_service.update_progress(task_id, 0, "Initializing ZIP processing...")
@@ -201,6 +215,14 @@ class ZipProcessingService:
                         continue
                     
                     filename = os.path.basename(file_path)
+
+                    # --- Check for "Dublicate" or "Duplicate" in filename ---
+                    if "duplicate" in filename.lower() or "dublicate" in filename.lower():
+                        logger.warning(f"Skipping duplicate file: {filename}")
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(filename, "Skipped", 0.0, "duplicate_skipped")
+                        files_skipped += 1
+                        continue
                     
                     # Try to determine type from folder structure first
                     path_parts = Path(file_path).parts
@@ -221,7 +243,10 @@ class ZipProcessingService:
                     if not doc_type and classification_service:
                          # Read content for classification
                         file_content = zip_ref.read(file_path)
-                        if len(file_content) == 0: continue
+                        if len(file_content) == 0:
+                             if batch_logging_service:
+                                 batch_logging_service.log_error(filename, "process_zip", "Skipped empty file")
+                             continue
                         
                         files_to_classify.append({
                             "filename": filename,
@@ -237,6 +262,8 @@ class ZipProcessingService:
                         
                         if not doc_type:
                             logger.warning(f"Could not determine document type for file: {file_path}")
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(filename, "Skipped", 0.0, "unclassified_skipped")
                             files_skipped += 1
                             continue
 
@@ -253,27 +280,35 @@ class ZipProcessingService:
                         percent = 10 + int((idx + 1) / total_files * 60)
                         await progress_service.update_progress(task_id, percent, f"Processing: {filename}")
 
-                # Batch classify remaining files if any
-                if files_to_classify and classification_service:
-                    if progress_service and task_id:
-                        await progress_service.update_progress(task_id, 70, f"Classifying files...")
+            # Batch classify remaining files if any
+            if files_to_classify and classification_service:
+                if progress_service and task_id:
+                    await progress_service.update_progress(task_id, 70, f"Classifying {len(files_to_classify)} loose files...")
+                
+                # Extract filenames for batch classification
+                filenames = [f["filename"] for f in files_to_classify]
+                classification_results = await classification_service.classify_files_batch(filenames)
+                
+                for f_item in files_to_classify:
+                    fname = f_item["filename"]
+                    doc_type = classification_results.get(fname)
                     
-                    # Extract filenames for batch classification
-                    filenames = [f["filename"] for f in files_to_classify]
-                    classification_results = await classification_service.classify_files_batch(filenames)
-                    
-                    for f_item in files_to_classify:
-                        fname = f_item["filename"]
-                        doc_type = classification_results.get(fname)
-                        
-                        if doc_type:
-                            await self._add_file_to_package(
-                                package, package_id, fname, doc_type, f_item["content"], now, file_cache_data
-                            )
-                            files_processed += 1
-                        else:
-                            logger.warning(f"Could not classify file: {fname}")
-                            files_skipped += 1
+                    if doc_type:
+                        await self._add_file_to_package(
+                            package, package_id, fname, doc_type, f_item["content"], now, file_cache_data
+                        )
+                        files_processed += 1
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(fname, doc_type.value, 1.0, "classified_success")
+                    else:
+                        logger.warning(f"Could not classify file: {fname}")
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(fname, "Unknown", 0.0, "classification_failed")
+                        files_skipped += 1
+            
+            # Log any remaining unclassified/skipped files if service is available
+            # Note: files_skipped above only counts those that failed classification
+            # but we might want to ensure we log everything that wasn't processed
 
                 # Check for empty folders
                 for doc_type in DocumentType:

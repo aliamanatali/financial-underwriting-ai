@@ -17,6 +17,7 @@ class DocumentType(str, Enum):
     DISCLOSURES = "Disclosures"
     TAX_BILLS = "Tax Bills"
     UTILITIES = "Utilities"
+    IMAGES = "Images"
 
 
 class ExpenseCategory(str, Enum):

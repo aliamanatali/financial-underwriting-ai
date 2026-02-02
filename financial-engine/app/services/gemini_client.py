@@ -31,16 +31,16 @@ class GeminiClient:
         self.max_retries = 3
         self.base_delay = 1.0
 
-    def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
+    def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None, mime_type: str = "application/pdf") -> str:
         """
-        Generates content using the Gemini model, with optional PDF data.
+        Generates content using the Gemini model, with optional PDF/Image data.
         """
         try:
             if pdf_data:
                 # Create parts for multimodal input
                 parts = [
                     types.Part.from_text(text=prompt),
-                    types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                    types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
                 ]
                 response = self.client.models.generate_content(
                     model=self.model_name,
@@ -75,9 +75,15 @@ class GeminiClient:
             
         return f"gemini_cache:{hashlib.sha256(content.encode()).hexdigest()}"
 
-    async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None, use_fast_model: bool = False) -> str:
+    async def generate_content_async(
+        self,
+        prompt: str,
+        pdf_data: Optional[bytes] = None,
+        use_fast_model: bool = False,
+        mime_type: str = "application/pdf"
+    ) -> str:
         """
-        Generates content using the Gemini model asynchronously, with optional PDF data.
+        Generates content using the Gemini model asynchronously, with optional PDF/Image data.
         Includes retry logic for rate limiting and transient errors.
         """
         # 1. Check Cache
@@ -105,7 +111,7 @@ class GeminiClient:
                     # Create parts for multimodal input
                     parts = [
                         types.Part.from_text(text=prompt),
-                        types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                        types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
                     ]
                     response = await self.client.aio.models.generate_content(
                         model=model_name,
@@ -238,7 +244,8 @@ class GeminiClient:
         pdf_data: Optional[bytes] = None,
         pydantic_schema: Optional[Type[BaseModel]] = None,
         expect_list: bool = True,
-        use_fast_model: bool = False
+        use_fast_model: bool = False,
+        mime_type: str = "application/pdf"
     ) -> Any:
         """
         Generates structured data asynchronously. Returns List[Dict] if expect_list=True, else Dict.
@@ -249,12 +256,17 @@ class GeminiClient:
             pydantic_schema: Optional Pydantic model for validation
             expect_list: If True, ensures output is a list. If False, expects a single dict.
             use_fast_model: If True, uses the faster, cheaper model.
+            mime_type: MIME type of the file (pdf or image)
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model)
+        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model, mime_type=mime_type)
         
+        if response_text.startswith("An error occurred:"):
+            logger.error(f"Gemini API Error in structured data generation: {response_text}")
+            return [] if expect_list else {}
+
         # --- FIX: Removed the strict startswith check here ---
         # We trust _clean_json_string to find the JSON logic inside Markdown
 
@@ -330,7 +342,8 @@ Error: {e}
         prompt: str,
         pdf_data: Optional[bytes] = None,
         pydantic_schema: Optional[Type[BaseModel]] = None,
-        expect_list: bool = True
+        expect_list: bool = True,
+        mime_type: str = "application/pdf"
     ) -> Any:
         """
         Generates structured data. Returns List[Dict] if expect_list=True, else Dict.
@@ -340,12 +353,17 @@ Error: {e}
             pdf_data: Optional PDF bytes for vision-based processing
             pydantic_schema: Optional Pydantic model for validation
             expect_list: If True, ensures output is a list. If False, expects a single dict.
+            mime_type: MIME type of the file
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = self.generate_content(prompt, pdf_data)
+        response_text = self.generate_content(prompt, pdf_data, mime_type=mime_type)
         
+        if response_text.startswith("An error occurred:"):
+            logger.error(f"Gemini API Error in structured data generation: {response_text}")
+            return [] if expect_list else {}
+
         # --- FIX: Removed the strict startswith check here ---
         # We trust _clean_json_string to find the JSON logic inside Markdown
 

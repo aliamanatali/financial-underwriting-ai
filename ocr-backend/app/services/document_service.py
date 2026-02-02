@@ -62,14 +62,16 @@ class DocumentService:
     async def upload_document(
         self,
         file_data: bytes,
-        filename: str
+        filename: str,
+        mime_type: str = "application/pdf"
     ) -> DocumentUploadResponse:
         """
         Upload a document and queue Celery task for processing.
         
         Args:
-            file_data: PDF file content as bytes
+            file_data: File content as bytes
             filename: Original filename
+            mime_type: MIME type of the file
             
         Returns:
             DocumentUploadResponse with document ID, task ID, and status
@@ -90,6 +92,7 @@ class DocumentService:
                 "document_id": file_id,
                 "filename": filename,
                 "storage_path": storage_path,
+                "mime_type": mime_type,
                 "status": ProcessingStatus.QUEUED,
                 "task_id": task.id,
                 "task_status": "PENDING",
@@ -146,6 +149,12 @@ class DocumentService:
             # Retrieve file from storage
             file_data = await self.storage_service.get_file(doc["storage_path"])
             
+            # Check for image type
+            mime_type = doc.get("mime_type", "application/pdf")
+            if mime_type.startswith("image/"):
+                logger.info(f"Processing image document {document_id} ({mime_type})")
+                return await self._process_image_document(document_id, file_data, mime_type)
+            
             # Get PDF info to determine processing strategy
             pdf_info = await self.chunking_service.get_pdf_info(file_data)
             
@@ -183,6 +192,52 @@ class DocumentService:
             
             raise
     
+    async def _process_image_document(
+        self,
+        document_id: str,
+        file_data: bytes,
+        mime_type: str
+    ) -> DocumentResponse:
+        """
+        Process an image document.
+        
+        Args:
+            document_id: Document identifier
+            file_data: Image file bytes
+            mime_type: Mime type of the image
+            
+        Returns:
+            DocumentResponse with extraction results
+        """
+        # Update status to extracting
+        await self._update_document_status(
+            document_id,
+            ProcessingStatus.EXTRACTING
+        )
+        
+        # Extract text using Gemini
+        extraction_result = await self.gemini_service.extract_image_content(file_data, mime_type)
+        
+        # Update metadata with file info
+        metadata = extraction_result.metadata
+        metadata.file_size = len(file_data)
+        metadata.is_chunked = False
+        metadata.mime_type = mime_type
+        
+        # Update document with extraction results
+        update_data = {
+            "status": ProcessingStatus.COMPLETED,
+            "extracted_text": extraction_result.text,
+            "metadata": metadata.model_dump(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        await self._update_document(document_id, update_data)
+        
+        logger.info(f"Image document processed successfully: {document_id}")
+        
+        return await self.get_document(document_id)
+
     async def _process_small_document(
         self,
         document_id: str,

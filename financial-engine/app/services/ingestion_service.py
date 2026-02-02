@@ -201,7 +201,12 @@ class IngestionService:
         CRITICAL FOR UNIT SIZE:
         - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
 
-        Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end".
+        OPTIONAL FIELDS:
+        - "deposit": Security deposit amount.
+        - "parking": Parking space number or fee.
+        - "comments": Any notes or comments.
+
+        Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments".
         """
         
         try:
@@ -231,9 +236,11 @@ class IngestionService:
         # 1. Wait for Processing
         max_wait_time = 300
         elapsed_time = 0
+        mime_type = "application/pdf"
         while elapsed_time < max_wait_time:
             status = await self.ocr_backend_client.get_document_status(document_id)
             if status["status"] == "completed":
+                mime_type = status.get("mime_type", "application/pdf")
                 break
             await asyncio.sleep(5)
             elapsed_time += 5
@@ -320,7 +327,8 @@ class IngestionService:
                 proforma = self.om_scraper_service.extract_proforma(raw_text)
                 if not proforma:
                     # Fallback to vision
-                    proforma = await self.om_scraper_service.extract_om_proforma_from_pdf(pdf_bytes, f"doc_{document_id}.pdf")
+                    file_ext = "pdf" if mime_type == "application/pdf" else mime_type.split("/")[-1]
+                    proforma = await self.om_scraper_service.extract_om_proforma_from_file(pdf_bytes, f"doc_{document_id}.{file_ext}", mime_type=mime_type)
                 return proforma
             except Exception as e:
                 logger.error(f"Failed to extract OM Proforma: {e}")
@@ -372,14 +380,20 @@ class IngestionService:
             CRITICAL FOR UNIT SIZE:
             - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
 
-            Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end".
+            OPTIONAL FIELDS:
+            - "deposit": Security deposit amount.
+            - "parking": Parking space number or fee.
+            - "comments": Any notes or comments.
+
+            Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments".
             """
             try:
                 rent_roll_data = await self.gemini_client.generate_structured_data_async(
                     f"{rent_roll_prompt}\n\n{raw_text}",
                     pydantic_schema=RentRollItem,
                     pdf_data=pdf_bytes,
-                    expect_list=True
+                    expect_list=True,
+                    mime_type=mime_type
                 )
                 return self.normalization_service.normalize_rent_roll(rent_roll_data)
             except Exception as e:
