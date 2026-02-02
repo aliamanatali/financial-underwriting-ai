@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 
@@ -100,12 +100,22 @@ class RentRollItem(BaseModel):
     unit_size: Optional[int] = 0
     unit_type: str
     tenant_name: Optional[str] = "Unknown"
-    current_rent: float = 0.0
+    current_rent: Optional[float] = 0.0
     stabilized_rent: Optional[float] = 0.0
     market_rent: Optional[float] = 0.0
     move_in_date: Optional[str] = None
     lease_start: Optional[str] = None
     lease_end: Optional[str] = None
+    
+    @validator('current_rent', 'stabilized_rent', 'market_rent', pre=True)
+    def validate_rent_fields(cls, v):
+        """Ensure rent fields are valid floats, default to 0.0 if None or invalid"""
+        if v is None or v == "":
+            return 0.0
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
 
 class RentRollSummary(BaseModel):
     total_units: int

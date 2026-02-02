@@ -7,7 +7,6 @@ pytest-asyncio
 openpyxl
 httpx
 python-dotenv
-google-generativeai
 google-genai
 google-cloud-storage
 pandas

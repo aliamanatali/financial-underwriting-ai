@@ -6,7 +6,8 @@ import asyncio
 import time
 import hashlib
 from typing import List, Dict, Optional, Type, Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, ValidationError
 from app.config import settings
@@ -19,20 +20,13 @@ class GeminiClient:
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
-        genai.configure(api_key=self.api_key)
         
-        model_name = settings.gemini_model or 'gemini-2.5-pro'
-        self.model = genai.GenerativeModel(
-            model_name,
-            generation_config={"temperature": 0.0}
-        )
+        # Initialize the new client
+        self.client = genai.Client(api_key=self.api_key)
         
-        # Initialize fast model for cheaper tasks
-        fast_model_name = settings.gemini_fast_model or 'gemini-3-pro-preview'
-        self.fast_model = genai.GenerativeModel(
-            fast_model_name,
-            generation_config={"temperature": 0.0}
-        )
+        # Model names
+        self.model_name = settings.gemini_model or 'gemini-2.0-flash-exp'
+        self.fast_model_name = settings.gemini_fast_model or 'gemini-2.0-flash-exp'
         
         self.max_retries = 3
         self.base_delay = 1.0
@@ -43,13 +37,22 @@ class GeminiClient:
         """
         try:
             if pdf_data:
-                pdf_part = {
-                    "mime_type": "application/pdf",
-                    "data": base64.b64encode(pdf_data).decode("utf-8")
-                }
-                response = self.model.generate_content([prompt, pdf_part])
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_text(text=prompt),
+                    types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                ]
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
             else:
-                response = self.model.generate_content(prompt)
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
             return response.text
         except Exception as e:
             logger.error(f"Error generating content with Gemini: {e}")
@@ -83,32 +86,47 @@ class GeminiClient:
             try:
                 cached_response = await redis_client.get(cache_key)
                 if cached_response:
-                    logger.info("Gemini Cache Hit")
-                    return cached_response
+                    # Don't return cached errors - invalidate and retry
+                    if cached_response.startswith("An error occurred:"):
+                        logger.warning("Cached error found, invalidating cache and retrying")
+                        await redis_client.delete(cache_key)
+                    else:
+                        logger.info("Gemini Cache Hit")
+                        return cached_response
             except Exception as e:
                 logger.error(f"Redis cache get error: {e}")
 
         last_exception = None
-        model_to_use = self.fast_model if use_fast_model else self.model
+        model_name = self.fast_model_name if use_fast_model else self.model_name
         
         for attempt in range(self.max_retries):
             try:
                 if pdf_data:
-                    pdf_part = {
-                        "mime_type": "application/pdf",
-                        "data": base64.b64encode(pdf_data).decode("utf-8")
-                    }
-                    response = await model_to_use.generate_content_async([prompt, pdf_part])
+                    # Create parts for multimodal input
+                    parts = [
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                    ]
+                    response = await self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=parts,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 else:
-                    response = await model_to_use.generate_content_async(prompt)
+                    response = await self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 
-                # Cache and return
+                # Cache and return (only cache successful responses)
                 result_text = response.text
-                if redis_client.client:
-                    try:
-                        await redis_client.set(cache_key, result_text, expire=86400)
-                    except Exception as e:
-                        logger.error(f"Redis cache set error: {e}")
+                if result_text and not result_text.startswith("An error occurred:"):
+                    if redis_client.client:
+                        try:
+                            await redis_client.set(cache_key, result_text, expire=86400)
+                        except Exception as e:
+                            logger.error(f"Redis cache set error: {e}")
                 return result_text
                 
             except google_exceptions.ResourceExhausted as e:
@@ -138,19 +156,28 @@ class GeminiClient:
         """
         Generates content using the Gemini model asynchronously with streaming.
         """
-        model_to_use = self.fast_model if use_fast_model else self.model
+        model_name = self.fast_model_name if use_fast_model else self.model_name
         
         last_exception = None
         for attempt in range(self.max_retries):
             try:
                 if pdf_data:
-                    pdf_part = {
-                        "mime_type": "application/pdf",
-                        "data": base64.b64encode(pdf_data).decode("utf-8")
-                    }
-                    response = await model_to_use.generate_content_async([prompt, pdf_part], stream=True)
+                    # Create parts for multimodal input
+                    parts = [
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                    ]
+                    response = await self.client.aio.models.generate_content_stream(
+                        model=model_name,
+                        contents=parts,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 else:
-                    response = await model_to_use.generate_content_async(prompt, stream=True)
+                    response = await self.client.aio.models.generate_content_stream(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 
                 async for chunk in response:
                     if chunk.text:

@@ -6,7 +6,8 @@ import asyncio
 import random
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core import retry
 from google.api_core.exceptions import DeadlineExceeded, ResourceExhausted, GoogleAPIError
 
@@ -81,8 +82,8 @@ class GeminiService:
     
     def __init__(self):
         """Initialize Gemini service with API key."""
-        genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel(settings.gemini_model)
+        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.model_name = settings.gemini_model
         self.timeout = settings.gemini_timeout_seconds
         self.max_retries = settings.gemini_max_retries
         self.semaphore = get_gemini_semaphore()
@@ -108,22 +109,20 @@ class GeminiService:
         try:
             logger.info("Starting PDF text extraction with Gemini")
             
-            # Convert PDF to base64
-            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
-            
-            # Create PDF part for Gemini
-            pdf_part = {
-                'mime_type': 'application/pdf',
-                'data': pdf_base64
-            }
+            # Create parts for multimodal input
+            parts = [
+                types.Part.from_bytes(data=pdf_data, mime_type="application/pdf"),
+                types.Part.from_text(text=DOCUMIND_EXTRACTION_PROMPT)
+            ]
             
             # Generate content with Gemini
-            response = self.model.generate_content(
-                [pdf_part, DOCUMIND_EXTRACTION_PROMPT],
-                generation_config={
-                    'temperature': settings.gemini_temperature,
-                    'max_output_tokens': settings.gemini_max_output_tokens
-                }
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=settings.gemini_temperature,
+                    max_output_tokens=settings.gemini_max_output_tokens
+                )
             )
             
             # Extract text from response
@@ -324,27 +323,34 @@ class GeminiService:
     
     async def _generate_content_async(self, pdf_part: dict, prompt: str):
         """
-        Generate content asynchronously (wrapper for sync Gemini API).
+        Generate content asynchronously.
         
         Args:
-            pdf_part: PDF part dictionary for Gemini
+            pdf_part: PDF part dictionary for Gemini (legacy format)
             prompt: Extraction prompt
             
         Returns:
             Gemini API response
         """
-        # Run the synchronous Gemini API call in a thread pool
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.model.generate_content(
-                [pdf_part, prompt],
-                generation_config={
-                    'temperature': settings.gemini_temperature,
-                    'max_output_tokens': settings.gemini_max_output_tokens
-                }
+        # Convert legacy pdf_part format to new API format
+        parts = [
+            types.Part.from_bytes(
+                data=base64.b64decode(pdf_part['data']),
+                mime_type=pdf_part['mime_type']
+            ),
+            types.Part.from_text(text=prompt)
+        ]
+        
+        # Use async API
+        response = await self.client.aio.models.generate_content(
+            model=self.model_name,
+            contents=parts,
+            config=types.GenerateContentConfig(
+                temperature=settings.gemini_temperature,
+                max_output_tokens=settings.gemini_max_output_tokens
             )
         )
+        return response
     
     def _create_chunk_prompt(
         self,
@@ -507,13 +513,12 @@ CRITICAL RULES:
             List of embedding values
         """
         try:
-            result = genai.embed_content(
+            result = await self.client.aio.models.embed_content(
                 model=settings.gemini_embedding_model,
-                content=text,
-                task_type="retrieval_document"
+                content=text
             )
             
-            embedding = result['embedding']
+            embedding = result.values
             
             # Matryoshka truncation if needed
             if dimensions < len(embedding):

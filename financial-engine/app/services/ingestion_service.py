@@ -54,6 +54,65 @@ class IngestionService:
 
         return rent_roll
 
+    async def extract_rent_roll_from_excel(self, excel_content: bytes, total_units: int = 0) -> List[RentRollItem]:
+        """
+        Extracts the rent roll from an Excel file (bytes).
+        Async version that works with file content in memory.
+        """
+        import logging
+        import io
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Read Excel from bytes
+            df = pd.read_excel(io.BytesIO(excel_content), header=None)
+            
+            # Find the row that contains "Unit" AND "Rent"
+            header_row_idx = None
+            for i, row in df.iterrows():
+                row_str = row.astype(str).str.lower().tolist()
+                if any("unit" in x for x in row_str) and any("rent" in x for x in row_str):
+                    header_row_idx = i
+                    break
+            
+            if header_row_idx is None:
+                logger.warning("Could not find Rent Roll headers in Excel file")
+                return []
+            
+            # Reload with correct header
+            df = pd.read_excel(io.BytesIO(excel_content), header=header_row_idx)
+            df = df.fillna("")
+            
+            rent_roll = []
+            for _, row in df.iterrows():
+                # Skip empty rows
+                if not row.get("Unit Number") and not row.get("Tenant Name"):
+                    continue
+                
+                try:
+                    rent_roll.append(RentRollItem(
+                        unit_number=str(row.get("Unit Number", "")),
+                        unit_type=str(row.get("Unit Type", "")),
+                        unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
+                        tenant_name=str(row.get("Tenant Name", "")),
+                        current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                        stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
+                        market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
+                        move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
+                        lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
+                        lease_end=str(row.get("Lease End") or row.get("Lease End Date") or "")
+                    ))
+                except Exception as e:
+                    logger.warning(f"Failed to parse rent roll row: {e}")
+                    continue
+            
+            logger.info(f"Extracted {len(rent_roll)} rent roll items from Excel file")
+            return rent_roll
+            
+        except Exception as e:
+            logger.error(f"Failed to extract rent roll from Excel: {e}")
+            return []
+
     async def extract_property_meta_from_pdf(self, pdf_content: bytes) -> PropertyMeta:
         """
         Extracts property metadata from a PDF document (bytes).

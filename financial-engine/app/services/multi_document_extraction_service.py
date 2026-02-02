@@ -10,7 +10,8 @@ import asyncio
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory, OMProformaTable
 
 logger = logging.getLogger(__name__)
@@ -275,18 +276,12 @@ class MultiDocumentExtractionService:
                 tmp_path = tmp_file.name
             
             try:
-                # Upload the file to Gemini
-                uploaded_file = genai.upload_file(tmp_path, mime_type=mime_type)
-                logger.info(f"Uploaded file to Gemini: {uploaded_file.name} ({mime_type})")
-
-                # Wait for file to be active
-                while uploaded_file.state.name == "PROCESSING":
-                    logger.info(f"Waiting for file processing: {uploaded_file.name}")
-                    await asyncio.sleep(2)
-                    uploaded_file = genai.get_file(uploaded_file.name)
+                # Read file content for direct processing (new API doesn't require file upload)
+                # Instead, we'll pass the file content directly
+                with open(tmp_path, 'rb') as f:
+                    file_bytes = f.read()
                 
-                if uploaded_file.state.name == "FAILED":
-                    raise Exception(f"File processing failed on Gemini side: {uploaded_file.name}")
+                logger.info(f"Processing file with Gemini: {filename} ({mime_type})")
 
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
@@ -356,7 +351,22 @@ class MultiDocumentExtractionService:
                 Return ONLY the JSON array, no additional text or explanation.
                 """
                 
-                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
+                # Use gemini_service to generate content with file
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    types.Part.from_text(text=prompt)
+                ]
+                
+                # Get the client from gemini_service
+                client = self.gemini_service.client
+                model_name = self.gemini_service.model_name
+                
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
                 
                 # Parse JSON response
                 response_text = response.text.strip()
@@ -476,18 +486,27 @@ class MultiDocumentExtractionService:
                 tmp_path = tmp_file.name
             
             try:
-                uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                # Read file content for direct processing
+                with open(tmp_path, 'rb') as f:
+                    file_bytes = f.read()
                 
-                # Wait for file to be active
-                while uploaded_file.state.name == "PROCESSING":
-                    logger.info(f"Waiting for OM file processing: {uploaded_file.name}")
-                    await asyncio.sleep(2)
-                    uploaded_file = genai.get_file(uploaded_file.name)
+                logger.info(f"Processing OM file with Gemini: {filename}")
                 
-                if uploaded_file.state.name == "FAILED":
-                    raise Exception(f"OM File processing failed on Gemini side: {uploaded_file.name}")
-
-                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                    types.Part.from_text(text=prompt)
+                ]
+                
+                # Get the client from gemini_service
+                client = self.gemini_service.client
+                model_name = self.gemini_service.model_name
+                
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
                 
                 response_text = response.text.strip()
                 if response_text.startswith("```json"):
