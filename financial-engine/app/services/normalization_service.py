@@ -158,6 +158,38 @@ class NormalizationService:
         if not raw_expenses:
             return []
 
+        # PRE-PROCESSING: Deduplication of numeric "descriptions"
+        # The extraction engine sometimes picks up the value column as a separate line item description.
+        # Example: "Property Tax" -> $10,000 AND "$10,000" -> $10,000.
+        # We filter out items where the description essentially parses to a number.
+        cleaned_expenses = []
+        for exp in raw_expenses:
+            desc = str(exp.get("description", "")).strip()
+            
+            # Skip empty descriptions
+            if not desc:
+                continue
+
+            # Check if description is numeric (currency or plain number)
+            is_numeric_desc = False
+            try:
+                # Remove common text currency symbols/formatting to check for pure number
+                # We want to catch "$44,740", "44,740", "(44,740)", "-44,740"
+                clean_desc = desc.replace('$', '').replace(',', '').replace('(', '').replace(')', '').strip()
+                if clean_desc:
+                    float(clean_desc)
+                    is_numeric_desc = True
+            except ValueError:
+                is_numeric_desc = False
+            
+            if is_numeric_desc:
+                logger.warning(f"Skipping numeric description/duplicate: '{desc}' (Amount: {exp.get('amount')})")
+                continue
+                
+            cleaned_expenses.append(exp)
+            
+        raw_expenses = cleaned_expenses
+
         categories = [e.value for e in ExpenseCategory]
         
         # 1. Check Cache
