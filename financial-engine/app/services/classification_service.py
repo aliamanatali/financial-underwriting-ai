@@ -1,10 +1,11 @@
 import logging
 import json
 import io
+import asyncio
 from typing import Optional, List, Dict, Tuple
 from PyPDF2 import PdfReader
 from app.models.schemas import DocumentType
-from app.services.gemini_service import GeminiService
+from app.services.gemini_client import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class ClassificationService:
     Uses content-based classification by analyzing first 3 and last 3 pages.
     """
     
-    def __init__(self, gemini_service: GeminiService):
+    def __init__(self, gemini_service: GeminiClient):
         self.gemini_service = gemini_service
 
     def _extract_pdf_pages(self, pdf_content: bytes, max_pages_start: int = 3, max_pages_end: int = 3) -> Tuple[str, int]:
@@ -129,7 +130,7 @@ class ClassificationService:
             
             Category:"""
             
-            response = await self.gemini_service.generate_content_async(prompt)
+            response = await self.gemini_service.generate_content_async(prompt, use_fast_model=True)
             result = response.strip().replace('"', '').replace("'", "")
             
             # Match result to enum
@@ -214,10 +215,16 @@ class ClassificationService:
         try:
             results = {}
             
-            # Process each file individually for now (can be optimized later)
+            # Process files in parallel
+            tasks = []
             for filename, content in files:
-                doc_type = await self.classify_file(filename, content=content)
+                tasks.append(self.classify_file(filename, content=content))
+            
+            classification_results = await asyncio.gather(*tasks)
+            
+            for i, doc_type in enumerate(classification_results):
                 if doc_type:
+                    filename = files[i][0]
                     results[filename] = doc_type
             
             return results
