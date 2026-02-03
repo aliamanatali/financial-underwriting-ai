@@ -6,7 +6,8 @@ import asyncio
 import time
 import hashlib
 from typing import List, Dict, Optional, Type, Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core import exceptions as google_exceptions
 from pydantic import BaseModel, ValidationError
 from app.config import settings
@@ -19,37 +20,39 @@ class GeminiClient:
         self.api_key = os.getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
-        genai.configure(api_key=self.api_key)
         
-        model_name = settings.gemini_model or 'gemini-2.5-pro'
-        self.model = genai.GenerativeModel(
-            model_name,
-            generation_config={"temperature": 0.0}
-        )
+        # Initialize the new client
+        self.client = genai.Client(api_key=self.api_key)
         
-        # Initialize fast model for cheaper tasks
-        fast_model_name = settings.gemini_fast_model or 'gemini-3-pro-preview'
-        self.fast_model = genai.GenerativeModel(
-            fast_model_name,
-            generation_config={"temperature": 0.0}
-        )
+        # Model names
+        self.model_name = settings.gemini_model or 'gemini-2.0-flash-exp'
+        self.fast_model_name = settings.gemini_fast_model or 'gemini-2.0-flash-exp'
         
         self.max_retries = 3
         self.base_delay = 1.0
 
-    def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None) -> str:
+    def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None, mime_type: str = "application/pdf") -> str:
         """
-        Generates content using the Gemini model, with optional PDF data.
+        Generates content using the Gemini model, with optional PDF/Image data.
         """
         try:
             if pdf_data:
-                pdf_part = {
-                    "mime_type": "application/pdf",
-                    "data": base64.b64encode(pdf_data).decode("utf-8")
-                }
-                response = self.model.generate_content([prompt, pdf_part])
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_text(text=prompt),
+                    types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
+                ]
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
             else:
-                response = self.model.generate_content(prompt)
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
             return response.text
         except Exception as e:
             logger.error(f"Error generating content with Gemini: {e}")
@@ -72,9 +75,15 @@ class GeminiClient:
             
         return f"gemini_cache:{hashlib.sha256(content.encode()).hexdigest()}"
 
-    async def generate_content_async(self, prompt: str, pdf_data: Optional[bytes] = None, use_fast_model: bool = False) -> str:
+    async def generate_content_async(
+        self,
+        prompt: str,
+        pdf_data: Optional[bytes] = None,
+        use_fast_model: bool = False,
+        mime_type: str = "application/pdf"
+    ) -> str:
         """
-        Generates content using the Gemini model asynchronously, with optional PDF data.
+        Generates content using the Gemini model asynchronously, with optional PDF/Image data.
         Includes retry logic for rate limiting and transient errors.
         """
         # 1. Check Cache
@@ -83,32 +92,47 @@ class GeminiClient:
             try:
                 cached_response = await redis_client.get(cache_key)
                 if cached_response:
-                    logger.info("Gemini Cache Hit")
-                    return cached_response
+                    # Don't return cached errors - invalidate and retry
+                    if cached_response.startswith("An error occurred:"):
+                        logger.warning("Cached error found, invalidating cache and retrying")
+                        await redis_client.delete(cache_key)
+                    else:
+                        logger.info("Gemini Cache Hit")
+                        return cached_response
             except Exception as e:
                 logger.error(f"Redis cache get error: {e}")
 
         last_exception = None
-        model_to_use = self.fast_model if use_fast_model else self.model
+        model_name = self.fast_model_name if use_fast_model else self.model_name
         
         for attempt in range(self.max_retries):
             try:
                 if pdf_data:
-                    pdf_part = {
-                        "mime_type": "application/pdf",
-                        "data": base64.b64encode(pdf_data).decode("utf-8")
-                    }
-                    response = await model_to_use.generate_content_async([prompt, pdf_part])
+                    # Create parts for multimodal input
+                    parts = [
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
+                    ]
+                    response = await self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=parts,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 else:
-                    response = await model_to_use.generate_content_async(prompt)
+                    response = await self.client.aio.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 
-                # Cache and return
+                # Cache and return (only cache successful responses)
                 result_text = response.text
-                if redis_client.client:
-                    try:
-                        await redis_client.set(cache_key, result_text, expire=86400)
-                    except Exception as e:
-                        logger.error(f"Redis cache set error: {e}")
+                if result_text and not result_text.startswith("An error occurred:"):
+                    if redis_client.client:
+                        try:
+                            await redis_client.set(cache_key, result_text, expire=86400)
+                        except Exception as e:
+                            logger.error(f"Redis cache set error: {e}")
                 return result_text
                 
             except google_exceptions.ResourceExhausted as e:
@@ -138,19 +162,28 @@ class GeminiClient:
         """
         Generates content using the Gemini model asynchronously with streaming.
         """
-        model_to_use = self.fast_model if use_fast_model else self.model
+        model_name = self.fast_model_name if use_fast_model else self.model_name
         
         last_exception = None
         for attempt in range(self.max_retries):
             try:
                 if pdf_data:
-                    pdf_part = {
-                        "mime_type": "application/pdf",
-                        "data": base64.b64encode(pdf_data).decode("utf-8")
-                    }
-                    response = await model_to_use.generate_content_async([prompt, pdf_part], stream=True)
+                    # Create parts for multimodal input
+                    parts = [
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(data=pdf_data, mime_type="application/pdf")
+                    ]
+                    response = await self.client.aio.models.generate_content_stream(
+                        model=model_name,
+                        contents=parts,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 else:
-                    response = await model_to_use.generate_content_async(prompt, stream=True)
+                    response = await self.client.aio.models.generate_content_stream(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(temperature=0.0)
+                    )
                 
                 async for chunk in response:
                     if chunk.text:
@@ -211,7 +244,8 @@ class GeminiClient:
         pdf_data: Optional[bytes] = None,
         pydantic_schema: Optional[Type[BaseModel]] = None,
         expect_list: bool = True,
-        use_fast_model: bool = False
+        use_fast_model: bool = False,
+        mime_type: str = "application/pdf"
     ) -> Any:
         """
         Generates structured data asynchronously. Returns List[Dict] if expect_list=True, else Dict.
@@ -222,12 +256,17 @@ class GeminiClient:
             pydantic_schema: Optional Pydantic model for validation
             expect_list: If True, ensures output is a list. If False, expects a single dict.
             use_fast_model: If True, uses the faster, cheaper model.
+            mime_type: MIME type of the file (pdf or image)
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model)
+        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model, mime_type=mime_type)
         
+        if response_text.startswith("An error occurred:"):
+            logger.error(f"Gemini API Error in structured data generation: {response_text}")
+            return [] if expect_list else {}
+
         # --- FIX: Removed the strict startswith check here ---
         # We trust _clean_json_string to find the JSON logic inside Markdown
 
@@ -303,7 +342,8 @@ Error: {e}
         prompt: str,
         pdf_data: Optional[bytes] = None,
         pydantic_schema: Optional[Type[BaseModel]] = None,
-        expect_list: bool = True
+        expect_list: bool = True,
+        mime_type: str = "application/pdf"
     ) -> Any:
         """
         Generates structured data. Returns List[Dict] if expect_list=True, else Dict.
@@ -313,12 +353,17 @@ Error: {e}
             pdf_data: Optional PDF bytes for vision-based processing
             pydantic_schema: Optional Pydantic model for validation
             expect_list: If True, ensures output is a list. If False, expects a single dict.
+            mime_type: MIME type of the file
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = self.generate_content(prompt, pdf_data)
+        response_text = self.generate_content(prompt, pdf_data, mime_type=mime_type)
         
+        if response_text.startswith("An error occurred:"):
+            logger.error(f"Gemini API Error in structured data generation: {response_text}")
+            return [] if expect_list else {}
+
         # --- FIX: Removed the strict startswith check here ---
         # We trust _clean_json_string to find the JSON logic inside Markdown
 

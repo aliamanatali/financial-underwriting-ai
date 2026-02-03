@@ -30,7 +30,8 @@ from app.services.storage_service import storage_service
 from app.services.explainability_service import ExplainabilityService
 from app.services.progress_service import ProgressService
 from app.services.classification_service import ClassificationService
-from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service
+from app.services.batch_logging_service import BatchLoggingService
+from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service, get_batch_logging_service
 from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAPPING
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
@@ -51,6 +52,8 @@ os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 async def upload_zip_package(
     file: UploadFile = File(...),
     property_name: Optional[str] = Form(None),
+    classification_service: ClassificationService = Depends(get_classification_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """
     Upload a ZIP file containing the 8-folder structure.
@@ -73,7 +76,12 @@ async def upload_zip_package(
             shutil.copyfileobj(file.file, f)
             
         # Process ZIP using the service
-        package, file_data_map = await zip_service.process_zip_file(temp_zip_path, property_name)
+        package, file_data_map = await zip_service.process_zip_file(
+            temp_zip_path,
+            property_name,
+            classification_service=classification_service,
+            batch_logging_service=batch_logging_service
+        )
         
         # Update caches
         deal_packages_cache[package.package_id] = package
@@ -403,7 +411,8 @@ async def normalize_package_documents(
     document_type: Optional[DocumentType] = None,
     gemini_service: GeminiService = Depends(get_gemini_service),
     progress_service: ProgressService = Depends(get_progress_service),
-    explainability_service: ExplainabilityService = Depends(get_explainability_service)
+    explainability_service: ExplainabilityService = Depends(get_explainability_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """
     Normalize documents in a package and automatically generate financial report.
@@ -428,7 +437,7 @@ async def normalize_package_documents(
         deal_packages_cache[package_id] = package
     
     # Initialize extraction service
-    extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
+    extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
     
     # Collect documents to process
     documents_to_process = []
@@ -787,6 +796,40 @@ async def get_document_types():
     return result
 
 
+def _clean_address(address: str) -> str:
+    """
+    Clean address string by removing document path artifacts.
+    E.g., "Rent Roll/2715DwightRentRoll Package..." -> "2715 Dwight Way"
+    """
+    import re
+    
+    if not address:
+        return "Unknown"
+    
+    # Remove document type prefixes
+    address = re.sub(r'^(Rent Roll|Offering Memorandum|Financials|Tax Bills?|Utilities|Leases|Disclosures|Building Plans & Permits|Images)[/\\]', '', address, flags=re.IGNORECASE)
+    
+    # Extract street address pattern: number + street name
+    # Match patterns like "2715 Dwight" or "2715 Dwight Way"
+    match = re.search(r'(\d+)\s+([A-Za-z\s]+?)(?:\s+(?:Way|Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Circle|Cir|Place|Pl))?(?:[,\s]|$)', address)
+    if match:
+        street_num = match.group(1)
+        street_name = match.group(2).strip()
+        
+        # Try to find city and state in the remaining text
+        city_state_match = re.search(r',\s*([A-Za-z\s]+),\s*([A-Z]{2})', address)
+        if city_state_match:
+            city = city_state_match.group(1).strip()
+            state = city_state_match.group(2)
+            return f"{street_num} {street_name}, {city}, {state}"
+        else:
+            # Just return street address
+            return f"{street_num} {street_name}"
+    
+    # If no pattern match, return cleaned version
+    return address.strip()
+
+
 @router.post("/packages/{package_id}/analyze")
 async def analyze_deal_package(
     package_id: str,
@@ -821,6 +864,7 @@ async def analyze_deal_package(
     from app.services.audit_log_service import AuditLogService
     from app.services.excel_service import ExcelService
     from app.services.memo_service import MemoService
+    from app.services.synthesis_service import SynthesisService
     import math
 
     def sanitize_float(val):
@@ -890,6 +934,7 @@ async def analyze_deal_package(
     excel_service = ExcelService()
     memo_service = MemoService(gemini_service=gemini_service)
     ingestion_service = IngestionService()
+    synthesis_service = SynthesisService()
     
     # ===== STEP 1: BUILD ANALYSIS OBJECT FROM PACKAGE DATA =====
     # We use the normalized data that was stored in the package (and verified by user)
@@ -968,14 +1013,37 @@ async def analyze_deal_package(
 
     logger.info(f"Using {len(normalized_items)} normalized items for analysis")
     
-    # ===== STEP 2: CONVERT NORMALIZED DATA TO ANALYSIS STRUCTURE =====
-    # Build property metadata, rent roll, and expenses from normalized items
+    # ===== STEP 2: SYNTHESIZE DATA FROM ALL DOCUMENTS (OMNISCIENT PATTERN) =====
+    # Replace OM-centric extraction with priority-based synthesis
     
-    # Logic to find Best OM for Extraction (Property Meta & Rent Roll)
+    await progress_service.update_progress(package_id, 30, "Synthesizing property metadata from all documents...")
+    
+    # Run Metadata Synthesizer (Priority-based selection)
+    synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
+    
+    logger.info("=== SYNTHESIZED METADATA ===")
+    logger.info(f"Purchase Price: ${synthesized_metadata['purchase_price']['value']:,.2f} (from {synthesized_metadata['purchase_price']['source']})")
+    logger.info(f"Total Units: {synthesized_metadata['total_units']['value']} (from {synthesized_metadata['total_units']['source']})")
+    logger.info(f"Year Built: {synthesized_metadata['year_built']['value']} (from {synthesized_metadata['year_built']['source']})")
+    
+    # Initialize Property Meta with synthesized values
+    property_meta = PropertyMeta(
+        address=_clean_address(package.property_name),
+        year_built=synthesized_metadata['year_built']['value'] if synthesized_metadata['year_built']['value'] > 0 else 1980,
+        purchase_price=synthesized_metadata['purchase_price']['value'],
+        total_units=synthesized_metadata['total_units']['value'],
+        is_renovated=False,
+        current_loan_balance=0.0
+    )
+    
+    # Extract rent roll items from normalized data
+    await progress_service.update_progress(package_id, 40, "Building master rent roll from all documents...")
+    
+    # Try to extract rent roll from OM first (if available) for backward compatibility
+    rent_roll: List[RentRollItem] = []
     selected_om = None
     om_docs = package.documents.get(DocumentType.OFFERING_MEMORANDUM, [])
     if om_docs:
-        # Select best matching OM based on property name match in filename
         selected_om = om_docs[0]
         if len(om_docs) > 1 and package.property_name:
             prop_parts = package.property_name.lower().split()
@@ -985,13 +1053,7 @@ async def analyze_deal_package(
                 if score > best_score:
                     best_score = score
                     selected_om = doc
-        logger.info(f"Selected OM for extraction: {selected_om.filename}")
-
-    # Extract Property Meta & Rent Roll from OM if available
-    om_property_meta = None
-    om_rent_roll = []
-    
-    if selected_om:
+        
         try:
             doc_id = selected_om.document_id
             file_content = None
@@ -1003,43 +1065,70 @@ async def analyze_deal_package(
                 file_content = await storage_service.get_document_file(storage_path)
             
             if file_content:
-                # Extract Meta
-                await progress_service.update_progress(package_id, 30, "Extracting Property Meta from OM...")
-                om_property_meta = await ingestion_service.extract_property_meta_from_pdf(file_content)
-                logger.info(f"Extracted Property Meta from OM: {om_property_meta}")
+                target_units = property_meta.total_units if property_meta.total_units > 0 else 0
                 
-                # Extract Rent Roll
-                await progress_service.update_progress(package_id, 40, "Extracting Rent Roll from OM...")
-                target_units = om_property_meta.total_units if om_property_meta else 0
-                om_rent_roll = await ingestion_service.extract_rent_roll_from_pdf(file_content, total_units=target_units)
-                logger.info(f"Extracted {len(om_rent_roll)} Rent Roll items from OM")
+                # Check file type and use appropriate extraction method
+                extension = Path(selected_om.filename).suffix.lower()
+                if extension in ['.xlsx', '.xls']:
+                    # Use Excel-specific extraction
+                    om_rent_roll = await ingestion_service.extract_rent_roll_from_excel(
+                        file_content,
+                        total_units=target_units
+                    )
+                else:
+                    # Use PDF extraction
+                    om_rent_roll = await ingestion_service.extract_rent_roll_from_pdf(
+                        file_content,
+                        total_units=target_units
+                    )
                 
-                # Reconcile unit count
-                if len(om_rent_roll) > 0:
-                     if not om_property_meta.total_units or om_property_meta.total_units != len(om_rent_roll):
-                         om_property_meta.total_units = len(om_rent_roll)
-
+                if om_rent_roll:
+                    rent_roll.extend(om_rent_roll)
+                    logger.info(f"Extracted {len(om_rent_roll)} rent roll items from OM")
         except Exception as e:
-            logger.error(f"Failed to extract from OM: {e}")
-
-    # Initialize Property Meta (OM > Default)
-    if om_property_meta:
-        property_meta = om_property_meta
-        # Ensure address fallback
-        if not property_meta.address or property_meta.address == "Unknown":
-            property_meta.address = package.property_name
-    else:
-        property_meta = PropertyMeta(
-            address=package.property_name,
-            year_built=1980,
-            purchase_price=0.0,
-            total_units=0,
-            is_renovated=False,
-            current_loan_balance=0.0
-        )
+            logger.warning(f"Failed to extract rent roll from OM: {e}")
     
-    # Initialize Rent Roll (OM > Empty)
-    rent_roll: List[RentRollItem] = om_rent_roll if om_rent_roll else []
+    # Extract rent roll from other documents (Rent Roll files, etc.)
+    rent_roll_docs = package.documents.get(DocumentType.RENT_ROLL, [])
+    for rent_roll_doc in rent_roll_docs:
+        try:
+            doc_id = rent_roll_doc.document_id
+            file_content = None
+            if doc_id in file_storage_cache:
+                file_content = file_storage_cache[doc_id].get("content")
+            else:
+                extension = Path(rent_roll_doc.filename).suffix
+                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+                file_content = await storage_service.get_document_file(storage_path)
+            
+            if file_content:
+                target_units = property_meta.total_units if property_meta.total_units > 0 else 0
+                
+                # Check file type and use appropriate extraction method
+                extension = Path(rent_roll_doc.filename).suffix.lower()
+                if extension in ['.xlsx', '.xls']:
+                    # Use Excel-specific extraction
+                    extracted_items = await ingestion_service.extract_rent_roll_from_excel(
+                        file_content,
+                        total_units=target_units
+                    )
+                else:
+                    # Use PDF extraction
+                    extracted_items = await ingestion_service.extract_rent_roll_from_pdf(
+                        file_content,
+                        total_units=target_units
+                    )
+                
+                if extracted_items:
+                    rent_roll.extend(extracted_items)
+                    logger.info(f"Extracted {len(extracted_items)} rent roll items from {rent_roll_doc.filename}")
+        except Exception as e:
+            logger.warning(f"Failed to extract rent roll from {rent_roll_doc.filename}: {e}")
+    
+    # Run Rent Roll Accumulator (Deduplication by unit number)
+    if rent_roll:
+        rent_roll = synthesis_service.build_master_rent_roll(rent_roll)
+        logger.info(f"Master rent roll built with {len(rent_roll)} unique units")
 
     # Apply Manual Overrides for Property Meta (Overrides everything)
     if package.manual_overrides:
@@ -1057,87 +1146,10 @@ async def analyze_deal_package(
             logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
     historical_expenses: List[StandardizedExpense] = []
     
-    # Create lookup for document types by filename
-    filename_to_doc_type = {}
-    for doc_type, doc_list in package.documents.items():
-        for doc_meta in doc_list:
-            filename_to_doc_type[doc_meta.filename] = doc_type
-
-    # Parse normalized items (Fill gaps, but don't overwrite OM data unless verified)
+    # Parse normalized items for expenses only (property metadata already synthesized)
     for item in normalized_items:
-        # FILTER: Only allow items from Offering Memorandum for financial aggregation
-        # We skip items from Rent Rolls, T12s, Tax Bills, etc. to ensure strict sourcing from OM
-        source_doc_type = filename_to_doc_type.get(item.source_document)
-        if source_doc_type != DocumentType.OFFERING_MEMORANDUM:
-            continue
-
-        # GLOBAL CHECK: Unit Count from Metadata (e.g. from Excel Rent Roll)
-        if item.metadata and item.metadata.get("row_count") and "rent roll" in item.raw_text.lower():
-            row_count = item.metadata.get("row_count")
-            if row_count and row_count > 0:
-                # Only update if we don't have a value or if verify forced it
-                if property_meta.total_units == 0 or item.user_verified:
-                    property_meta.total_units = int(row_count)
-                    logger.info(f"Updated Total Units from Rent Roll row count: {row_count}")
-        
-        # Check if this is a Property Meta item or Property Info group
-        if item.field_type == "property_meta" or (hasattr(item, 'category_group') and item.category_group == "Property Info"):
-            try:
-                # Update Property Meta based on content
-                lower_text = item.raw_text.lower()
-                amount = 0.0
-                if item.metadata:
-                    metadata_amount = item.metadata.get("amount", 0.0)
-                    if metadata_amount:
-                        amount = sanitize_float(metadata_amount)
-                
-                mapped_val = item.normalized_value.lower()
-                
-                # Logic: Only update if (Current Value is 0) OR (Item is User Verified)
-                
-                if "purchase price" in mapped_val or "purchase price" in lower_text or "asking price" in lower_text:
-                    if amount and amount > 0:
-                        if property_meta.purchase_price == 0 or item.user_verified:
-                            property_meta.purchase_price = amount
-                            logger.info(f"Updated Purchase Price from extraction: ${amount:,.2f}")
-                
-                elif "price per unit" in mapped_val or "price per unit" in lower_text or "$/unit" in lower_text:
-                    if amount and amount > 0:
-                        if property_meta.total_units > 0:
-                             calc_price = amount * property_meta.total_units
-                             if property_meta.purchase_price == 0 or item.user_verified:
-                                 property_meta.purchase_price = calc_price
-                                 logger.info(f"Calculated Purchase Price from Price/Unit: ${amount:,.2f} * {property_meta.total_units} units = ${calc_price:,.2f}")
-
-                elif "year built" in mapped_val or "year built" in lower_text:
-                    if amount and amount > 1800 and amount < 2030:
-                        if property_meta.year_built == 0 or property_meta.year_built == 1980 or item.user_verified:
-                            property_meta.year_built = int(amount)
-                            logger.info(f"Updated Year Built from extraction: {property_meta.year_built}")
-                
-                elif "total units" in mapped_val or "total units" in lower_text or "number of units" in lower_text:
-                    if amount and amount > 0:
-                        if property_meta.total_units == 0 or item.user_verified:
-                            property_meta.total_units = int(amount)
-                            logger.info(f"Updated Total Units from extraction: {property_meta.total_units}")
-                
-                elif "current loan balance" in mapped_val or "loan balance" in mapped_val or "existing loan" in lower_text:
-                     if amount and amount > 0:
-                        if property_meta.current_loan_balance == 0 or item.user_verified:
-                            property_meta.current_loan_balance = amount
-                            logger.info(f"Updated Existing Loan from extraction: ${amount:,.2f}")
-
-            except Exception as e:
-                logger.warning(f"Could not parse property meta item: {item.raw_text}, error: {str(e)}")
-
-        # Check if this is a Revenue item
-        elif item.field_type == "revenue_item" or (hasattr(item, 'category_group') and item.category_group == "Revenue"):
-             # We can potentially use this to refine GPR if Rent Roll is missing
-             # For now, we'll log it but rely on Rent Roll logic for main GPR
-             pass
-             
         # Check if this is an expense item
-        elif item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group == "Operating Expense"):
+        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group == "Operating Expense"):
             try:
                 # Parse the category
                 # Fallback to Other OpEx if unknown
@@ -1145,6 +1157,11 @@ async def analyze_deal_package(
                     category = ExpenseCategory(item.normalized_value)
                 except ValueError:
                     category = ExpenseCategory.OTHER_OPERATING_EXPENSES
+                
+                # Fix for attribute error: type object 'ExpenseCategory' has no attribute 'MARKETING'
+                # If the normalized_value is MARKETING or ADVERTISING (legacy), remap it to ADVERTISING_MARKETING
+                if item.normalized_value in ["Marketing", "Advertising"]:
+                    category = ExpenseCategory.ADVERTISING_MARKETING
                 
                 # Use amount from metadata if available, otherwise parse from text
                 amount = 0.0

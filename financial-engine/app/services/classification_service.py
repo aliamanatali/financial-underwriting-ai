@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Tuple
 from PyPDF2 import PdfReader
 from app.models.schemas import DocumentType
 from app.services.gemini_service import GeminiService
+from app.services.batch_logging_service import BatchLoggingService
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,9 @@ class ClassificationService:
     Uses content-based classification by analyzing first 3 and last 3 pages.
     """
     
-    def __init__(self, gemini_service: GeminiService):
+    def __init__(self, gemini_service: GeminiService, batch_logging_service: Optional[BatchLoggingService] = None):
         self.gemini_service = gemini_service
+        self.batch_logging_service = batch_logging_service
 
     def _extract_pdf_pages(self, pdf_content: bytes, max_pages_start: int = 3, max_pages_end: int = 3) -> Tuple[str, int]:
         """
@@ -117,6 +119,7 @@ class ClassificationService:
             - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports
             - {DocumentType.TAX_BILLS.value}: Property tax bills, tax returns, assessor documents
             - {DocumentType.UTILITIES.value}: Utility bills (water, electric, gas, sewer, trash)
+            - {DocumentType.IMAGES.value}: Photos, images, scanned documents
             
             Document Filename: "{filename}"
             Total Pages: {total_pages if total_pages > 0 else 'Unknown'}
@@ -136,31 +139,47 @@ class ClassificationService:
             for doc_type in DocumentType:
                 if doc_type.value.lower() == result.lower():
                     logger.info(f"Classified '{filename}' as {doc_type.value} based on content")
+                    if self.batch_logging_service:
+                        self.batch_logging_service.log_classification(filename, doc_type.value, 1.0, "success")
                     return doc_type
             
             # Try partial matches if exact match fails
+            matched_type = None
             if "financial" in result.lower():
-                return DocumentType.FINANCIALS
-            if "rent" in result.lower() and "roll" in result.lower():
-                return DocumentType.RENT_ROLL
-            if "offering" in result.lower() or "memorandum" in result.lower():
-                return DocumentType.OFFERING_MEMORANDUM
-            if "lease" in result.lower():
-                return DocumentType.LEASES
-            if "tax" in result.lower():
-                return DocumentType.TAX_BILLS
-            if "utility" in result.lower() or "utilities" in result.lower():
-                return DocumentType.UTILITIES
-            if "plan" in result.lower() or "permit" in result.lower():
-                return DocumentType.BUILDING_PLANS_PERMITS
-            if "disclosure" in result.lower() or "environmental" in result.lower():
-                return DocumentType.DISCLOSURES
+                matched_type = DocumentType.FINANCIALS
+            elif "rent" in result.lower() and "roll" in result.lower():
+                matched_type = DocumentType.RENT_ROLL
+            elif "offering" in result.lower() or "memorandum" in result.lower():
+                matched_type = DocumentType.OFFERING_MEMORANDUM
+            elif "lease" in result.lower():
+                matched_type = DocumentType.LEASES
+            elif "tax" in result.lower():
+                matched_type = DocumentType.TAX_BILLS
+            elif "utility" in result.lower() or "utilities" in result.lower():
+                matched_type = DocumentType.UTILITIES
+            elif "plan" in result.lower() or "permit" in result.lower():
+                matched_type = DocumentType.BUILDING_PLANS_PERMITS
+            elif "disclosure" in result.lower() or "environmental" in result.lower():
+                matched_type = DocumentType.DISCLOSURES
+            elif "image" in result.lower() or "photo" in result.lower():
+                matched_type = DocumentType.IMAGES
+            
+            if matched_type:
+                if self.batch_logging_service:
+                    self.batch_logging_service.log_classification(filename, matched_type.value, 0.8, "success_partial")
+                return matched_type
             
             logger.info(f"LLM could not confidently classify '{filename}' (Result: {result}). Defaults to Unknown.")
+            
+            if self.batch_logging_service:
+                self.batch_logging_service.log_classification(filename, "Unknown", 0.0, "low_confidence")
+            
             return None
 
         except Exception as e:
             logger.error(f"Error classifying file {filename}: {str(e)}")
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error(filename, "classify_file", str(e))
             return None
 
     async def _classify_by_filename(self, filename: str) -> Optional[DocumentType]:
@@ -247,6 +266,7 @@ class ClassificationService:
             - {DocumentType.DISCLOSURES.value}
             - {DocumentType.TAX_BILLS.value}
             - {DocumentType.UTILITIES.value}
+            - {DocumentType.IMAGES.value}
             - Unknown
             
             Filenames to classify:
@@ -293,13 +313,20 @@ class ClassificationService:
                          final_map[fname] = DocumentType.LEASES
                     elif "memo" in cat_str.lower():
                          final_map[fname] = DocumentType.OFFERING_MEMORANDUM
+                    elif "image" in cat_str.lower() or "photo" in cat_str.lower():
+                         final_map[fname] = DocumentType.IMAGES
                     else:
-                        # Keep it as None or map to a default?
-                        # The caller handles missing keys or None
+                        if self.batch_logging_service:
+                             self.batch_logging_service.log_classification(fname, cat_str, 0.0, "unknown_category")
                         pass
+
+                if self.batch_logging_service and fname in final_map:
+                     self.batch_logging_service.log_classification(fname, final_map[fname].value, 1.0, "batch_success")
                         
             return final_map
             
         except Exception as e:
             logger.error(f"Error in batch classification: {str(e)}")
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error("batch", "classify_files_batch", str(e))
             return {}

@@ -91,12 +91,15 @@ class OMScraperService:
             print(f"Error extracting OM Tax Assumptions: {e}")
             return OMTaxAssumptions()
 
-    async def extract_om_proforma_from_pdf(self, pdf_bytes: bytes, file_name: str) -> List[OMProformaTable]:
+    async def extract_om_proforma_from_file(self, file_bytes: bytes, file_name: str, mime_type: str = "application/pdf") -> List[OMProformaTable]:
         """
-        Async version of extract_proforma that uses PDF content directly with Gemini Vision.
+        Async version of extract_proforma that uses file content directly with Gemini Vision.
+        Supports PDF and Images.
         """
-        prompt = """
-        Analyze this Offering Memorandum PDF and extract the "Proforma" or "Pro Forma" table(s).
+        file_type_desc = "Offering Memorandum PDF" if mime_type == "application/pdf" else "Offering Memorandum Image"
+        
+        prompt = f"""
+        Analyze this {file_type_desc} and extract the "Proforma" or "Pro Forma" table(s).
         This table typically lists Income, Expenses, and NOI for different scenarios (e.g., "Current", "Year 1", "Market", "Stabilized").
 
         Task:
@@ -134,16 +137,17 @@ class OMScraperService:
             if hasattr(self.gemini_client, 'generate_structured_data_async'):
                 proforma_data = await self.gemini_client.generate_structured_data_async(
                     prompt,
-                    pdf_data=pdf_bytes,
+                    pdf_data=file_bytes,
                     expect_list=True,
-                    pydantic_schema=OMProformaTable
+                    pydantic_schema=OMProformaTable,
+                    mime_type=mime_type
                 )
                 return [OMProformaTable(**item) if isinstance(item, dict) else item for item in proforma_data]
             else:
                 return []
                 
         except Exception as e:
-            print(f"Error extracting OM Proforma from PDF: {e}")
+            print(f"Error extracting OM Proforma from file: {e}")
             return []
 
     def extract_om_details(self, file_path: str) -> PropertyMeta:

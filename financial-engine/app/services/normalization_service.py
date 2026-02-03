@@ -134,15 +134,30 @@ class NormalizationService:
         if isinstance(value, (int, float)):
             return float(value)
         if isinstance(value, str):
-            # Remove currency symbols, commas, and whitespace
+            # Handle Mixed Content (e.g., Chinese characters + numbers)
+            # Extract only the valid number part if mixed
+            import re
+            
+            # Regex to find the first valid number pattern (including negatives, decimals, commas)
+            # Looks for: optional negative sign, digits with optional commas, optional decimal part
+            # Matches: "$1,234.56", "-500", "2180 (Chinese text)", "(500)"
+            
+            # First, standard cleaning
             clean_val = value.replace('$', '').replace(',', '').strip()
-            # Handle negative values in parentheses e.g. (500)
+            
+            # Handle negative values in parentheses e.g. (500) -> -500
             if clean_val.startswith('(') and clean_val.endswith(')'):
                 clean_val = '-' + clean_val[1:-1]
-            
+
             # Handle negative signs with spaces e.g. "- 500" -> "-500"
             if clean_val.startswith('-') and ' ' in clean_val:
                  clean_val = clean_val.replace(' ', '')
+                 
+            # Extract number if still mixed with text (e.g. "2180 text")
+            # We look for a pattern like: -? [0-9]+ (\. [0-9]+)?
+            match = re.search(r'-?\d+(\.\d+)?', clean_val)
+            if match:
+                clean_val = match.group(0)
 
             try:
                 return float(clean_val)
@@ -280,6 +295,25 @@ class NormalizationService:
             # Iterate through original raw_expenses to maintain order and ensure all are covered
             for expense in raw_expenses:
                 desc = expense.get("description", "")
+                
+                # --- FIX: Expense Aggregation Errors ---
+                # 1. Exclude Loan/Principal amounts if they sneaked in as expenses
+                desc_lower = desc.lower()
+                if "principal" in desc_lower or "loan amount" in desc_lower or "loan balance" in desc_lower:
+                     # Check if it's "Principal Payment" (Debt Service) vs "Principal Balance" (Liability)
+                     # If it's Balance, we exclude it from Expenses entirely (or map to Debt, but not Operating Expense)
+                     # The prompt says: "Principal Balance" or "Loan Amount" (~$4.9M) may have been erroneously summed.
+                     if "balance" in desc_lower or "amount" in desc_lower:
+                         logger.warning(f"Excluding likely Debt Balance item from expenses: {desc}")
+                         continue
+
+                # 2. Exclude "Profit & Loss" document header/summary lines that might be massive sums
+                # "Assets + Liabilities + Expenses" sum
+                if "profit & loss" in desc_lower or "balance sheet" in desc_lower:
+                    if expense.get("amount", 0) > 1_000_000: # Arbitrary high threshold for "Total" lines
+                         logger.warning(f"Excluding likely Document Title/Total line: {desc} - {expense.get('amount')}")
+                         continue
+
                 mapped_item = final_mapped_data_dict.get(desc)
                 
                 if not mapped_item:
@@ -417,6 +451,57 @@ class NormalizationService:
         """
         normalized_rent_roll = []
         for item in raw_rent_roll:
+            # FIX: Detect Surcharges vs Base Rent
+            # If "surcharge" is in description or notes (if available), or if unit_type/tenant_name hints at it,
+            # we should flag it or treat it carefully.
+            # Ideally, extraction logic separates this, but if it comes in as a rent row with a note:
+            # For now, we rely on the fact that surcharges usually don't look like standard units,
+            # OR we ensure we parse the rent amount strictly.
+            
+            # If current_rent is huge or oddly specific and text mentions "surcharge", it might be an extra fee.
+            # But the primary fix requested is: "Rent Roll 2715.pdf mentions a '10% surcharge if 5th student.'
+            # This should be Other Income, not Gross Potential Rent."
+            
+            # Logic: If tenant_name or unit_type contains "surcharge", exclude from rent roll OR set rent to 0?
+            # Better: If it's a surcharge line item, it shouldn't be a RentRollItem.
+            # We filter it out if we detect "surcharge" or "fee" in the unit/tenant fields
+            # AND the unit_number is not a valid unit number (e.g. "SURCHARGE").
+            
+            tenant_str = str(item.get("tenant_name", "")).lower()
+            unit_str = str(item.get("unit_number", "")).lower()
+            
+            if "surcharge" in tenant_str or "surcharge" in unit_str:
+                logger.info(f"Skipping rent roll item identified as surcharge: {item}")
+                continue
+            
+            # --- FIX UNIT MIX: Exclude Parking Spaces ---
+            # The user report says: "6 Blue Honda Accord... $120" (Parking Space).
+            # We filter out items that look like parking based on keywords in unit number, unit type, or tenant name.
+            # Also check if unit type is "Parking" or "Garage".
+            is_parking = False
+            for s in [tenant_str, unit_str, str(item.get("unit_type", "")).lower()]:
+                if any(k in s for k in ["parking", "garage", "carport", "storage", "honda", "toyota", "ford", "bmw", "mercedes", "mazda", "chevrolet", "nissan"]):
+                     # Be careful not to exclude a tenant named "Parker" or "Ford".
+                     # If it's in unit_type, it's definitely parking.
+                     # If it's in tenant_name, it's suspicious if it matches car models.
+                     # Let's rely on explicit "parking" / "garage" in unit_type first.
+                     pass
+
+            # Explicit check on unit_type
+            u_type_lower = str(item.get("unit_type", "")).lower()
+            if u_type_lower in ["parking", "garage", "storage", "parking space"]:
+                is_parking = True
+            
+            # Check for vehicle names in tenant_name if unit_number is small integer (like 6, 8, 9)
+            # The report says: "6 Blue Honda Accord... $120"
+            # This implies the extracted tenant name might be "Blue Honda Accord".
+            if any(car in tenant_str for car in ["honda", "toyota", "ford ", "bmw", "mercedes", "mazda", "chevrolet", "nissan", "hyundai", "kia ", "jeep "]):
+                is_parking = True
+            
+            if is_parking:
+                logger.info(f"Skipping rent roll item identified as parking/storage: {item}")
+                continue
+
             # Pydantic will validate the types. We just need to ensure that the keys exist.
             # If market_rent is missing, default to current_rent or 0.0
             # Set defaults for missing or None values to prevent validation errors
@@ -430,8 +515,17 @@ class NormalizationService:
                 item["tenant_name"] = "VACANT"
             
             # New fields defaults
-            if item.get("stabilized_rent") is None:
-                item["stabilized_rent"] = 0.0
+            # FIX: Revenue / Rent Roll Errors - Stabilized Rent is set to $0 for active units.
+            # The Report: Shows Unit 2, 3, 5, 7, etc., have a "Current Rent" but a "Stabilized Rent" of $0.
+            # Logic: If stabilized_rent is 0 or None, but current_rent > 0, default stabilized_rent to current_rent.
+            # This assumes that for active units, the floor for stabilized rent is the current rent.
+            
+            current_rent_val = self._parse_amount(item.get("current_rent", 0.0))
+            stabilized_rent_val = self._parse_amount(item.get("stabilized_rent", 0.0))
+            
+            if stabilized_rent_val <= 0 and current_rent_val > 0:
+                stabilized_rent_val = current_rent_val
+
             if item.get("unit_size") is None:
                 item["unit_size"] = 0
             if item.get("move_in_date") is None:
@@ -447,13 +541,13 @@ class NormalizationService:
             #         u_type = u_type[:-7].strip()
 
             rent_roll_item_data = {
-                "unit_number": item.get("unit_number", "N/A"),
-                "unit_type": item.get("unit_type", "Unknown"),
-                "unit_size": int(item.get("unit_size", 0)),
-                "tenant_name": item.get("tenant_name", "Unknown"),
-                "current_rent": item.get("current_rent", 0.0),
-                "stabilized_rent": item.get("stabilized_rent", 0.0),
-                "market_rent": item["market_rent"], # Already defaulted above
+                "unit_number": item.get("unit_number") or "N/A",
+                "unit_type": item.get("unit_type") or "Unknown",
+                "unit_size": int(item.get("unit_size") or 0),
+                "tenant_name": item.get("tenant_name") or "Unknown",
+                "current_rent": current_rent_val, # Use robust parser
+                "stabilized_rent": stabilized_rent_val,
+                "market_rent": self._parse_amount(item.get("market_rent") or item.get("current_rent", 0.0)),
                 "move_in_date": item.get("move_in_date", ""),
                 "lease_start": item["lease_start"], # Already defaulted above
                 "lease_end": item.get("lease_end", ""),

@@ -4,12 +4,13 @@ import React from "react";
 import { RentRollItem, StudentHousingConfig } from "@/lib/types";
 import WidgetTooltip from "./WidgetTooltip";
 
-type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
+type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent" | "deposit"> & {
   id: string;
   unit_size: string | number;
   current_rent: string | number;
   stabilized_rent: string | number;
   market_rent: string | number;
+  deposit?: string | number;
   beds_single?: number;
   beds_double?: number;
   market_rent_single?: number;

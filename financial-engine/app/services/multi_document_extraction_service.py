@@ -10,8 +10,10 @@ import asyncio
 from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory, OMProformaTable
+from app.services.batch_logging_service import BatchLoggingService
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,14 @@ class MultiDocumentExtractionService:
     """Service for extracting and normalizing financial data from multiple document types."""
     
     # Standard expense categories for normalization
+    # Explicitly map MARKETING to Advertising & Marketing if needed, but enum handles values.
+    # We ensure "Advertising & Marketing" is used instead of just "Marketing".
     STANDARD_CATEGORIES = [e.value for e in ExpenseCategory]
     
-    def __init__(self, gemini_service=None):
+    def __init__(self, gemini_service=None, batch_logging_service: Optional[BatchLoggingService] = None):
         """Initialize the extraction service with optional Gemini service."""
         self.gemini_service = gemini_service
+        self.batch_logging_service = batch_logging_service
     
     async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
@@ -128,11 +133,14 @@ class MultiDocumentExtractionService:
 
         except Exception as e:
             logger.error(f"Error extracting from CSV file {filename}: {str(e)}", exc_info=True)
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error(filename, "extract_from_csv", str(e))
             raise
 
     async def extract_from_excel(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
         Extract aggregated financial data from Excel files (T12, P&L, Rent Roll, etc.).
+        Supports .xlsx via openpyxl and .xls via pandas/xlrd.
         Returns a single summary entry per document instead of individual rows.
         
         Args:
@@ -148,57 +156,95 @@ class MultiDocumentExtractionService:
             return await loop.run_in_executor(None, self._extract_from_excel_sync, file_content, filename)
         except Exception as e:
             logger.error(f"Error extracting from Excel file {filename}: {str(e)}", exc_info=True)
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error(filename, "extract_from_excel", str(e))
             raise
 
     def _extract_from_excel_sync(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """Synchronous implementation of Excel extraction for thread pool execution."""
+        total_amount = 0.0
+        row_count = 0
+        categories = set()
+        
         try:
-            workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
-            sheet = workbook.active
+            # Check file extension to decide extraction method
+            is_legacy_xls = filename.lower().endswith('.xls')
             
-            logger.info(f"Processing Excel file: {filename}, sheet: {sheet.title}")
-            
-            # Get all rows
-            all_rows = list(sheet.iter_rows(min_row=1, values_only=True))
-            
-            if not all_rows:
-                logger.warning(f"No rows found in {filename}")
-                return []
-            
-            # Check if first row looks like a header
-            first_row = all_rows[0] if all_rows else []
-            skip_first_row = False
-            if first_row:
-                first_row_str = [str(cell).lower() if cell else "" for cell in first_row]
-                if any(keyword in " ".join(first_row_str) for keyword in ["id", "description", "category", "amount", "date", "notes", "expense", "item"]):
-                    skip_first_row = True
-                    logger.info(f"Detected header row: {first_row[:6]}")
-            
-            # Aggregate all data
-            start_row = 2 if skip_first_row else 1
-            total_amount = 0.0
-            row_count = 0
-            categories = set()
-            
-            for row_idx, row in enumerate(all_rows[start_row-1:], start=start_row):
-                if not row or len(row) < 2:
-                    continue
+            if is_legacy_xls:
+                import pandas as pd
+                logger.info(f"Processing legacy Excel file (.xls): {filename}")
+                try:
+                    # Use pandas with xlrd engine for .xls files
+                    df = pd.read_excel(io.BytesIO(file_content), header=None, engine='xlrd')
+                    # Iterate rows
+                    for _, row in df.iterrows():
+                        # Find category/description (first non-numeric string)
+                        for cell in row:
+                            if pd.notna(cell) and isinstance(cell, str) and len(str(cell).strip()) > 1:
+                                try:
+                                    float(cell)
+                                except (ValueError, TypeError):
+                                    categories.add(str(cell).strip())
+                                    break
+                        
+                        # Find and sum amounts (first positive number)
+                        for cell in row:
+                            if pd.notna(cell) and isinstance(cell, (int, float)) and cell > 0:
+                                total_amount += float(cell)
+                                row_count += 1
+                                break
+                    
+                except ImportError:
+                    logger.error("xlrd not installed, cannot process .xls files")
+                    raise Exception("xlrd library required for .xls support")
+                except Exception as e:
+                    logger.error(f"Pandas .xls extraction failed: {e}")
+                    raise
+            else:
+                # Default .xlsx handling with openpyxl (preferred for memory efficiency)
+                workbook = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
+                sheet = workbook.active
                 
-                # Find category/description
-                for cell in row:
-                    if cell and isinstance(cell, str) and len(str(cell).strip()) > 1:
-                        try:
-                            float(cell)
-                        except (ValueError, TypeError):
-                            categories.add(str(cell).strip())
+                logger.info(f"Processing Excel file: {filename}, sheet: {sheet.title}")
+                
+                # Get all rows
+                all_rows = list(sheet.iter_rows(min_row=1, values_only=True))
+                
+                if not all_rows:
+                    logger.warning(f"No rows found in {filename}")
+                    return []
+                
+                # Check if first row looks like a header
+                first_row = all_rows[0] if all_rows else []
+                skip_first_row = False
+                if first_row:
+                    first_row_str = [str(cell).lower() if cell else "" for cell in first_row]
+                    if any(keyword in " ".join(first_row_str) for keyword in ["id", "description", "category", "amount", "date", "notes", "expense", "item"]):
+                        skip_first_row = True
+                        logger.info(f"Detected header row: {first_row[:6]}")
+                
+                # Aggregate all data
+                start_row = 2 if skip_first_row else 1
+                
+                for row_idx, row in enumerate(all_rows[start_row-1:], start=start_row):
+                    if not row or len(row) < 2:
+                        continue
+                    
+                    # Find category/description
+                    for cell in row:
+                        if cell and isinstance(cell, str) and len(str(cell).strip()) > 1:
+                            try:
+                                float(cell)
+                            except (ValueError, TypeError):
+                                categories.add(str(cell).strip())
+                                break
+                    
+                    # Find and sum amounts
+                    for cell in row:
+                        if isinstance(cell, (int, float)) and cell > 0:
+                            total_amount += float(cell)
+                            row_count += 1
                             break
-                
-                # Find and sum amounts
-                for cell in row:
-                    if isinstance(cell, (int, float)) and cell > 0:
-                        total_amount += float(cell)
-                        row_count += 1
-                        break
             
             if row_count == 0:
                 logger.warning(f"No valid data rows found in {filename}")
@@ -275,18 +321,12 @@ class MultiDocumentExtractionService:
                 tmp_path = tmp_file.name
             
             try:
-                # Upload the file to Gemini
-                uploaded_file = genai.upload_file(tmp_path, mime_type=mime_type)
-                logger.info(f"Uploaded file to Gemini: {uploaded_file.name} ({mime_type})")
-
-                # Wait for file to be active
-                while uploaded_file.state.name == "PROCESSING":
-                    logger.info(f"Waiting for file processing: {uploaded_file.name}")
-                    await asyncio.sleep(2)
-                    uploaded_file = genai.get_file(uploaded_file.name)
+                # Read file content for direct processing (new API doesn't require file upload)
+                # Instead, we'll pass the file content directly
+                with open(tmp_path, 'rb') as f:
+                    file_bytes = f.read()
                 
-                if uploaded_file.state.name == "FAILED":
-                    raise Exception(f"File processing failed on Gemini side: {uploaded_file.name}")
+                logger.info(f"Processing file with Gemini: {filename} ({mime_type})")
 
                 prompt = """
                 Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
@@ -356,9 +396,28 @@ class MultiDocumentExtractionService:
                 Return ONLY the JSON array, no additional text or explanation.
                 """
                 
-                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
+                # Use gemini_service to generate content with file
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    types.Part.from_text(text=prompt)
+                ]
+                
+                # Get the client from gemini_service
+                client = self.gemini_service.client
+                model_name = self.gemini_service.model_name
+                
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
                 
                 # Parse JSON response
+                if not response.text:
+                    logger.warning(f"Gemini returned empty response for {filename}")
+                    return []
+                    
                 response_text = response.text.strip()
                 logger.info(f"Gemini response for {filename}: {response_text[:200]}...")
                 
@@ -416,6 +475,8 @@ class MultiDocumentExtractionService:
             }]
         except Exception as e:
             logger.error(f"Error extracting from file {filename}: {str(e)}", exc_info=True)
+            if self.batch_logging_service:
+                self.batch_logging_service.log_error(filename, "extract_from_visual_document", str(e))
             # Return placeholder instead of raising
             return [{
                 "raw_text": f"Document - {filename} (Extraction error: {str(e)[:100]})",
@@ -476,19 +537,32 @@ class MultiDocumentExtractionService:
                 tmp_path = tmp_file.name
             
             try:
-                uploaded_file = genai.upload_file(tmp_path, mime_type="application/pdf")
+                # Read file content for direct processing
+                with open(tmp_path, 'rb') as f:
+                    file_bytes = f.read()
                 
-                # Wait for file to be active
-                while uploaded_file.state.name == "PROCESSING":
-                    logger.info(f"Waiting for OM file processing: {uploaded_file.name}")
-                    await asyncio.sleep(2)
-                    uploaded_file = genai.get_file(uploaded_file.name)
+                logger.info(f"Processing OM file with Gemini: {filename}")
                 
-                if uploaded_file.state.name == "FAILED":
-                    raise Exception(f"OM File processing failed on Gemini side: {uploaded_file.name}")
+                # Create parts for multimodal input
+                parts = [
+                    types.Part.from_bytes(data=file_bytes, mime_type="application/pdf"),
+                    types.Part.from_text(text=prompt)
+                ]
+                
+                # Get the client from gemini_service
+                client = self.gemini_service.client
+                model_name = self.gemini_service.model_name
+                
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                )
+                
+                if not response.text:
+                    logger.warning(f"Gemini returned empty response for OM {filename}")
+                    return []
 
-                response = await self.gemini_service.model.generate_content_async([uploaded_file, prompt])
-                
                 response_text = response.text.strip()
                 if response_text.startswith("```json"):
                     response_text = response_text[7:]
@@ -549,11 +623,19 @@ class MultiDocumentExtractionService:
                     exp["subtype"] = "reimbursement"
                     logger.info(f"Categorized '{exp.get('raw_text')}' as reimbursement")
             
-            # Fix 5: Capital expenditures (electrical upgrades, major work)
-            elif any(keyword in raw_text for keyword in ["electrical upgrade", "new service", "panel upgrade", "major renovation", "roof replacement", "hvac replacement"]):
+            # Fix 5: Capital expenditures (electrical upgrades, major work, elevator, retaining wall)
+            elif any(keyword in raw_text for keyword in ["electrical upgrade", "new service", "panel upgrade", "major renovation", "roof replacement", "hvac replacement", "elevator modernization", "cylinder replacement", "retaining wall", "seismic", "foundation work"]):
                 if item_type == "expense":
                     exp["type"] = "capex"
                     logger.info(f"Recategorized '{exp.get('raw_text')}' as capital expenditure")
+
+            # Fix 5b: High dollar threshold heuristic for ambiguous items (e.g. > $15,000 single invoice usually CapEx)
+            # This is risky without context, but for "Proposal" or "Modernization" it works.
+            elif any(keyword in raw_text for keyword in ["proposal", "modernization", "installation", "replacement"]):
+                amount = exp.get("amount", 0)
+                if amount and amount > 5000:
+                    exp["type"] = "capex"
+                    logger.info(f"Recategorized '{exp.get('raw_text')}' as capital expenditure (High $ + Keyword)")
             
             # Fix 6: Permit fees for capital work
             elif "permit" in raw_text and any(keyword in raw_text for keyword in ["electrical", "upgrade", "replacement", "new"]):
@@ -1084,12 +1166,28 @@ class MultiDocumentExtractionService:
                             metadata=meta
                         )
                         local_items.append(item)
+                        
+                        if self.batch_logging_service:
+                             self.batch_logging_service.log_normalization(
+                                 document_id=expense.get("document_id", "unknown"),
+                                 filename=expense.get("source_document", "unknown"),
+                                 raw_text=raw_text,
+                                 normalized_value=normalization.get("normalized_value", ""),
+                                 category_group=normalization.get("category_group", ""),
+                                 confidence=normalization.get("confidence", 0.0),
+                                 source_document=expense.get("source_document", "unknown")
+                             )
+
                     except Exception as item_error:
                         logger.error(f"Error creating normalized item: {str(item_error)}")
+                        if self.batch_logging_service:
+                            self.batch_logging_service.log_error("batch", "create_normalized_item", str(item_error))
                         continue
                 return local_items
             except Exception as batch_error:
                 logger.error(f"Error processing batch {batch_idx}: {str(batch_error)}")
+                if self.batch_logging_service:
+                    self.batch_logging_service.log_error("batch", "process_normalization_batch", str(batch_error))
                 return []
 
         # Run normalization batches in parallel
