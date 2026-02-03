@@ -16,3 +16,4 @@ numpy-financial
 fpdf2
 motor
 redis
+PyPDF2

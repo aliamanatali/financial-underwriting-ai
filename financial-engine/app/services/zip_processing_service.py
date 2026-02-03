@@ -256,11 +256,11 @@ class ZipProcessingService:
                 # Batch classify remaining files if any
                 if files_to_classify and classification_service:
                     if progress_service and task_id:
-                        await progress_service.update_progress(task_id, 70, f"Classifying files...")
+                        await progress_service.update_progress(task_id, 70, f"Classifying {len(files_to_classify)} files based on content...")
                     
-                    # Extract filenames for batch classification
-                    filenames = [f["filename"] for f in files_to_classify]
-                    classification_results = await classification_service.classify_files_batch(filenames)
+                    # Prepare files with content for content-based classification
+                    files_with_content = [(f["filename"], f["content"]) for f in files_to_classify]
+                    classification_results = await classification_service.classify_files_batch(files=files_with_content)
                     
                     for f_item in files_to_classify:
                         fname = f_item["filename"]
@@ -272,7 +272,7 @@ class ZipProcessingService:
                             )
                             files_processed += 1
                         else:
-                            logger.warning(f"Could not classify file: {fname}")
+                            logger.warning(f"Could not classify file based on content: {fname}")
                             files_skipped += 1
 
                 # Check for empty folders
@@ -381,13 +381,13 @@ class ZipProcessingService:
             else:
                 files_to_classify.append((filename, content))
 
-        # 2. Classify unknown files
+        # 2. Classify unknown files using content-based classification
         if files_to_classify:
             if progress_service and task_id:
-                await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} loose files...")
+                await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} files based on content...")
                 
-            filenames_to_classify = [f[0] for f in files_to_classify]
-            classifications = await classification_service.classify_files_batch(filenames_to_classify)
+            # Pass files with content for content-based classification
+            classifications = await classification_service.classify_files_batch(files=files_to_classify)
         else:
             classifications = {}
 
@@ -474,10 +474,10 @@ class ZipProcessingService:
             else:
                 files_to_classify.append((filename, content))
 
-        # 2. Classify unknown files
+        # 2. Classify unknown files using content-based classification
         if files_to_classify and classification_service:
-            filenames_to_classify = [f[0] for f in files_to_classify]
-            classifications = await classification_service.classify_files_batch(filenames_to_classify)
+            # Pass files with content for content-based classification
+            classifications = await classification_service.classify_files_batch(files=files_to_classify)
         else:
             classifications = {}
 
