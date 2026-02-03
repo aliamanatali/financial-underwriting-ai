@@ -364,6 +364,11 @@ class MultiDocumentExtractionService:
                 6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
                 
                 7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
+
+                8. IGNORE INSURANCE LIMITS:
+                   - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
+                   - These are coverage limits, NOT the premium amount.
+                   - Only extract the "Premium" or "Total Premium" amount.
                 
                 For each item, provide:
                 1. The exact text/description as it appears in the document
@@ -598,8 +603,21 @@ class MultiDocumentExtractionService:
             raw_text = exp.get("raw_text", "").lower()
             item_type = exp.get("type", "expense")
             
+            # Fix 0: Blacklist Tuition/Student Financial Aid items
+            # These are personal financial documents often mixed in with property docs
+            blacklist_keywords = ["tuition", "scholarship", "financial aid", "student services", "semester", "undergraduate resident"]
+            if any(keyword in raw_text for keyword in blacklist_keywords):
+                logger.warning(f"Blacklisted item detected and ignored: '{exp.get('raw_text')}'")
+                exp["type"] = "other"
+                exp["subtype"] = "tuition_ignored"
+                # We do not append to fixed_expenses if we want to delete it,
+                # but the instruction says "set its type to 'other' ... to ensure it is effectively deleted or ignored downstream."
+                # However, usually _validate_and_fix_extraction returns the list to be used.
+                # If I change type to "other", it might still be processed.
+                # Let's keep it in but mark it as ignored so downstream normalization filters it out or maps it to 'Other'.
+            
             # Fix 1: Past Due should NEVER be revenue
-            if any(keyword in raw_text for keyword in ["past due", "delinquent", "arrears", "outstanding balance", "overdue"]):
+            elif any(keyword in raw_text for keyword in ["past due", "delinquent", "arrears", "outstanding balance", "overdue"]):
                 if item_type == "revenue":
                     logger.warning(f"Fixing incorrect categorization: '{exp.get('raw_text')}' was marked as revenue, changing to receivable")
                     exp["type"] = "receivable"

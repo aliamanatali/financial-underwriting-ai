@@ -114,12 +114,12 @@ function getBedCountFromUnitType(unit_type: string): number {
   }
 
   // Heuristic 2: "2bd", "2 br"
-  const match_bd = unit_type.toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
+  const match_bd = (unit_type || "").toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
   if (match_bd) {
     return parseInt(match_bd[1], 10);
   }
 
-  if (unit_type.toLowerCase().includes("studio")) {
+  if ((unit_type || "").toLowerCase().includes("studio")) {
     return 1;
   }
 
@@ -183,7 +183,7 @@ export default function RentRollWidget({
     return items.map(item => {
       // Robust matching: trim and lowercase
       const typeConfig = config?.unit_type_configs.find(c =>
-        c.unit_type?.trim().toLowerCase() === item.unit_type?.trim().toLowerCase()
+        (c.unit_type || "").trim().toLowerCase() === (item.unit_type || "").trim().toLowerCase()
       );
       
       if (config && !typeConfig) {
@@ -277,11 +277,13 @@ export default function RentRollWidget({
       // Handle MM/DD/YYYY
       else if (date.includes('/')) {
         const parts = date.split('/');
-        let yearStr = parts[2];
-        if (yearStr.length === 2) {
-          yearStr = "20" + yearStr; // handle 2-digit years
+        if (parts.length >= 3) {
+          let yearStr = parts[2];
+          if (yearStr && yearStr.length === 2) {
+            yearStr = "20" + yearStr; // handle 2-digit years
+          }
+          year = parseInt(yearStr, 10);
         }
-        year = parseInt(yearStr, 10);
       }
       
       if (year && (year < 1900 || year > 2100)) {
@@ -354,6 +356,7 @@ export default function RentRollWidget({
   };
 
   const handleSave = async () => {
+    console.log("RentRollWidget: handleSave started");
     setIsSaving(true);
 
     const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
@@ -380,6 +383,7 @@ export default function RentRollWidget({
       setRowErrors(newRowErrors); // Update state with all current errors
 
       if (errorCount > 0) {
+          console.log("RentRollWidget: Validation failed with", errorCount, "errors");
           setWarningMessage(
               `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
           );
@@ -401,7 +405,7 @@ export default function RentRollWidget({
       const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
           const item = items.find(i => i.unit_type === unitType);
           const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
-            c.unit_type?.trim().toLowerCase() === unitType?.trim().toLowerCase()
+            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
           );
           
           if (item) {
@@ -432,7 +436,9 @@ export default function RentRollWidget({
       
       payload.student_housing_config = updatedConfig;
 
+      console.log("RentRollWidget: Sending update payload", payload);
       await apiClient.updateManualOverrides(packageId, payload);
+      console.log("RentRollWidget: Update successful");
       setIsEditing({
         details: false,
         omExport: false,
@@ -471,7 +477,7 @@ export default function RentRollWidget({
           // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
           // So we must validate 'studentHousingConfig'.
           
-          const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type?.trim() === unitType?.trim());
+          const config = studentHousingConfig.unit_type_configs.find(c => (c.unit_type || "").trim() === (unitType || "").trim());
           
           if (!config) {
               console.log(`Validation Failed: No config for ${unitType}`);
@@ -1059,7 +1065,7 @@ export default function RentRollWidget({
                       <td className="px-4 py-2.5">{item.unit_type}</td>
                       <td className="px-4 py-2.5">{config?.unit_config_label || item.unit_type}</td>
                       <td className="px-4 py-2.5 text-center">{bedCount}</td>
-                      <td className="px-4 py-2.5 text-center">{item.unit_type?.toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
+                      <td className="px-4 py-2.5 text-center">{(item.unit_type || "").toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
                       <td className="px-4 py-2.5">
                         {isEditing.omExport ? (
                           <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />

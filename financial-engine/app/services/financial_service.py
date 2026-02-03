@@ -152,7 +152,23 @@ class FinancialService:
         
         total_expenses = 0.0
         if analysis.historical_expenses:
-            total_expenses = sum(expense.amount for expense in analysis.historical_expenses)
+            # FIX: Filter out Non-Operating items from Historical T12 Sum
+            for expense in analysis.historical_expenses:
+                # Handle Enum or String category
+                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
+                
+                # Exclude Capital items, Debt, and Non-Operating
+                if expense.mapped_category in [
+                    ExpenseCategory.CAPITAL_RESERVES,
+                    ExpenseCategory.CURRENT_LOAN_BALANCE,
+                ]:
+                    continue
+                
+                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization"]:
+                    continue
+
+                total_expenses += expense.amount
+
             if total_expenses == 0:
                 logger.warning("Historical expenses list is present but total amount is 0. Check normalization.")
         else:
@@ -430,7 +446,21 @@ class FinancialService:
             has_t12_data = True
             for expense in analysis.historical_expenses:
                 # Skip if it's Taxes or Mgmt Fee - we use the calculated values above
-                if expense.mapped_category in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.MANAGEMENT_FEES]:
+                # Also skip Debt/Loan Balance items that shouldn't be in OpEx
+                
+                # Handle Enum or String category
+                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
+
+                if expense.mapped_category in [
+                    ExpenseCategory.REAL_ESTATE_TAXES,
+                    ExpenseCategory.MANAGEMENT_FEES,
+                    ExpenseCategory.CURRENT_LOAN_BALANCE,
+                    ExpenseCategory.CAPITAL_RESERVES,
+                ]:
+                    continue
+                
+                # Additional String Checks
+                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization"]:
                     continue
                 
                 # Check for critical categories

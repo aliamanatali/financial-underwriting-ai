@@ -1,6 +1,6 @@
 import json
 from typing import List, Dict, Any
-from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem
+from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem, CategoryGroup
 import logging
 from datetime import datetime
 
@@ -299,15 +299,27 @@ class NormalizationService:
                 # --- FIX: Expense Aggregation Errors ---
                 # 1. Exclude Loan/Principal amounts if they sneaked in as expenses
                 desc_lower = desc.lower()
+                forced_category = None
+
                 if "principal" in desc_lower or "loan amount" in desc_lower or "loan balance" in desc_lower:
                      # Check if it's "Principal Payment" (Debt Service) vs "Principal Balance" (Liability)
-                     # If it's Balance, we exclude it from Expenses entirely (or map to Debt, but not Operating Expense)
-                     # The prompt says: "Principal Balance" or "Loan Amount" (~$4.9M) may have been erroneously summed.
+                     # If it's Balance, we map it to CURRENT_LOAN_BALANCE so it can be excluded from OpEx but preserved
                      if "balance" in desc_lower or "amount" in desc_lower:
-                         logger.warning(f"Excluding likely Debt Balance item from expenses: {desc}")
-                         continue
+                         logger.info(f"Identified likely Debt Balance item: {desc}. Forcing category to CURRENT_LOAN_BALANCE.")
+                         forced_category = ExpenseCategory.CURRENT_LOAN_BALANCE
 
-                # 2. Exclude "Profit & Loss" document header/summary lines that might be massive sums
+                # 2. Filter out Student Financial Data from Expenses
+                # Check description for student/tuition keywords
+                student_keywords = [
+                    "tuition", "scholarship", "grant", "financial aid", "semester",
+                    "student services", "living expenses", "resident tuition", "award letter"
+                ]
+                if any(k in desc_lower for k in student_keywords):
+                    logger.warning(f"Reclassifying student financial item to Capital Reserves (Non-Op): {desc}")
+                    # We force it to CAPITAL_RESERVES to exclude from NOI
+                    forced_category = ExpenseCategory.CAPITAL_RESERVES
+
+                # 3. Exclude "Profit & Loss" document header/summary lines that might be massive sums
                 # "Assets + Liabilities + Expenses" sum
                 if "profit & loss" in desc_lower or "balance sheet" in desc_lower:
                     if expense.get("amount", 0) > 1_000_000: # Arbitrary high threshold for "Total" lines
@@ -324,7 +336,10 @@ class NormalizationService:
                 
                 # Ensure the mapped category is a valid enum member
                 try:
-                    category_enum = ExpenseCategory(mapped_item["mapped_category"])
+                    if forced_category:
+                        category_enum = forced_category
+                    else:
+                        category_enum = ExpenseCategory(mapped_item["mapped_category"])
                 except ValueError:
                     category_enum = ExpenseCategory.UNCATEGORIZED
 
@@ -333,6 +348,23 @@ class NormalizationService:
                 # but LLM output usually echoes it. Safest is raw expense amount.
                 amount_val = expense.get("amount")
                 parsed_amount = abs(self._parse_amount(amount_val))
+
+                # FIX: CapEx / Large Insurance Item Review Logic
+                # If mapped_category is INSURANCE and amount > $50,000, it might be a limit or a large claim, not a premium.
+                # Or if any single expense item is > $50,000 and NOT Taxes/Debt/Management, flag it or move to CapEx/Reserves.
+                
+                # Check for large Insurance items specifically (common error source)
+                # FIX: Aggressive Insurance Limit Detection
+                # 1. High value check (> $25k)
+                # 2. Keyword check (limit, coverage, aggregate, liability) even if amount is lower but still significant (> $1000)
+                is_insurance_limit_keyword = any(k in desc_lower for k in ["limit", "coverage", "aggregate", "liability"])
+                
+                if category_enum == ExpenseCategory.INSURANCE:
+                    is_high_value = parsed_amount > 25000
+                    if is_high_value or (parsed_amount > 1000 and is_insurance_limit_keyword):
+                        logger.warning(f"Likely Insurance Limit/Coverage detected (${parsed_amount:,.2f}): '{desc}'. Re-classifying as Capital Reserves.")
+                        category_enum = ExpenseCategory.CAPITAL_RESERVES
+                        # Capital Reserves ensures it's excluded from NOI ("below the line")
 
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
@@ -472,6 +504,34 @@ class NormalizationService:
             
             if "surcharge" in tenant_str or "surcharge" in unit_str:
                 logger.info(f"Skipping rent roll item identified as surcharge: {item}")
+                continue
+
+            # --- FIX: Blacklist Tuition/Student Financial Aid items ---
+            # Check tenant_name, unit_number, unit_type, and description
+            u_type_lower = str(item.get("unit_type", "")).lower()
+            
+            blacklist_keywords = [
+                "tuition", "scholarship", "financial aid", "student services", "semester",
+                "undergraduate resident", "application fee", "admin fee", "late fee", "pet fee",
+                "student housing", "housing fee", "activity fee", "service fee",
+                # Expanded Aggressive Filter
+                "grant", "living expenses", "resident tuition", "award letter"
+            ]
+            
+            check_fields = [tenant_str, unit_str, u_type_lower, str(item.get("description", "")).lower()]
+            
+            # Check for exact match or substring match
+            found_keyword = None
+            for field in check_fields:
+                for keyword in blacklist_keywords:
+                    if keyword in field:
+                        found_keyword = keyword
+                        break
+                if found_keyword:
+                    break
+
+            if found_keyword:
+                logger.warning(f"Excluded Rent Roll item due to student financial keyword: '{found_keyword}' in item: {item}")
                 continue
             
             # --- FIX UNIT MIX: Exclude Parking Spaces ---

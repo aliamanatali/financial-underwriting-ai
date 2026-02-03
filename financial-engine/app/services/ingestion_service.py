@@ -156,6 +156,24 @@ class IngestionService:
                 pdf_data=pdf_content,
                 expect_list=False
             )
+
+            # Sanity Check for Purchase Price Hallucination
+            # Use 0 as default if key is missing or None
+            purchase_price = property_meta_data.get("purchase_price") or 0
+            total_units = property_meta_data.get("total_units") or 0
+            
+            # FIX: Stronger Sanity Check for Purchase Price
+            # If price < $100k, it's almost certainly wrong (e.g. deposit, fee, or per unit price extraction error).
+            if purchase_price > 0 and purchase_price < 100_000:
+                 logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} (<$100k). Resetting to 0.")
+                 property_meta_data["purchase_price"] = 0.0
+            # If > 4 units and price < $500k, it's likely a deposit or per-unit price error
+            elif purchase_price > 0 and purchase_price < 500_000 and total_units > 4:
+                logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} for {total_units} units. Resetting to 0.")
+                property_meta_data["purchase_price"] = 0.0
+            elif purchase_price > 0 and purchase_price < 1_000_000 and total_units > 10:
+                logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} for {total_units} units. Resetting to 0.")
+                property_meta_data["purchase_price"] = 0.0
             
             # Robustness check
             if not isinstance(property_meta_data, dict) or "address" not in property_meta_data:
@@ -287,6 +305,24 @@ class IngestionService:
                     pydantic_schema=PropertyMeta,
                     expect_list=False
                 )
+
+                # Sanity Check for Purchase Price Hallucination
+                # Use 0 as default if key is missing or None
+                purchase_price = property_meta_data.get("purchase_price") or 0
+                total_units = property_meta_data.get("total_units") or 0
+                
+                # FIX: Stronger Sanity Check for Purchase Price (Duplicate logic for async path)
+                if purchase_price > 0 and purchase_price < 100_000:
+                     logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} (<$100k). Resetting to 0.")
+                     property_meta_data["purchase_price"] = 0.0
+                # If > 4 units and price < $500k, it's likely a deposit or per-unit price error
+                elif purchase_price > 0 and purchase_price < 500_000 and total_units > 4:
+                    logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} for {total_units} units. Resetting to 0.")
+                    property_meta_data["purchase_price"] = 0.0
+                elif purchase_price > 0 and purchase_price < 1_000_000 and total_units > 10:
+                    logger.warning(f"Voided suspiciously low Purchase Price of ${purchase_price} for {total_units} units. Resetting to 0.")
+                    property_meta_data["purchase_price"] = 0.0
+
                 # Robustness check
                 if not isinstance(property_meta_data, dict) or "address" not in property_meta_data:
                      # Check for dict with error
