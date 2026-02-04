@@ -412,11 +412,23 @@ class MultiDocumentExtractionService:
                 client = self.gemini_service.client
                 model_name = self.gemini_service.model_name
                 
-                response = await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=parts,
-                    config=types.GenerateContentConfig(temperature=0.0)
-                )
+                try:
+                    response = await asyncio.wait_for(
+                        client.aio.models.generate_content(
+                            model=model_name,
+                            contents=parts,
+                            config=types.GenerateContentConfig(temperature=0.0)
+                        ),
+                        timeout=120.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"Gemini visual extraction timed out for {filename}")
+                    return [{
+                        "raw_text": f"Document - {filename} (Extraction timed out)",
+                        "amount": 0.0,
+                        "source_document": filename,
+                        "error": "Timeout"
+                    }]
                 
                 # Parse JSON response
                 if not response.text:
@@ -558,11 +570,18 @@ class MultiDocumentExtractionService:
                 client = self.gemini_service.client
                 model_name = self.gemini_service.model_name
                 
-                response = await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=parts,
-                    config=types.GenerateContentConfig(temperature=0.0)
-                )
+                try:
+                    response = await asyncio.wait_for(
+                        client.aio.models.generate_content(
+                            model=model_name,
+                            contents=parts,
+                            config=types.GenerateContentConfig(temperature=0.0)
+                        ),
+                        timeout=120.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"Gemini OM extraction timed out for {filename}")
+                    return []
                 
                 if not response.text:
                     logger.warning(f"Gemini returned empty response for OM {filename}")

@@ -69,6 +69,35 @@ class ClassificationService:
             logger.error(f"Error extracting PDF pages: {str(e)}")
             return "", 0
 
+    async def _extract_text_with_ocr(self, content: bytes, filename: str) -> str:
+        """
+        Extract text from the document using Gemini Vision (OCR) as a fallback.
+        This is used when standard text extraction fails (e.g., scanned PDFs).
+        """
+        try:
+            logger.info(f"Attempting OCR with Gemini Vision for {filename}")
+            
+            prompt = """
+            You are a helpful assistant that extracts text from documents.
+            Please extract the text from this document.
+            Focus on identifying information that would help classify the document type,
+            such as document titles, headers, dates, and key financial terminology.
+            Return a summary of the textual content found.
+            """
+            
+            # Use the fast model for efficiency
+            response = await self.gemini_service.generate_content_async(
+                prompt=prompt,
+                pdf_data=content,
+                use_fast_model=True
+            )
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"OCR extraction failed for {filename}: {str(e)}")
+            return ""
+
     async def classify_file(self, filename: str, content: Optional[bytes] = None, content_preview: str = "") -> Optional[DocumentType]:
         """
         Classify a single file based on its content (first 3 and last 3 pages).
@@ -86,24 +115,47 @@ class ClassificationService:
             # Extract content from PDF if provided
             extracted_content = ""
             total_pages = 0
+            extraction_method = "Unknown"
             
             if content:
                 # Check if it's a PDF
                 if filename.lower().endswith('.pdf'):
+                    extraction_method = "PyPDF2"
                     extracted_content, total_pages = self._extract_pdf_pages(content)
                     logger.info(f"Extracted content from {total_pages} pages of {filename}")
                 else:
                     # For non-PDF files, use content_preview or try to decode
                     try:
+                        extraction_method = "utf-8 decode"
                         extracted_content = content.decode('utf-8', errors='ignore')[:2000]
                     except:
+                        extraction_method = "content_preview fallback"
                         extracted_content = content_preview
             else:
+                extraction_method = "content_preview only"
                 extracted_content = content_preview
             
-            # If we have no content, fall back to filename-based classification
+            # If we have insufficient content, try OCR fallback for PDFs/images
+            if (not extracted_content or len(extracted_content.strip()) < 50) and content:
+                # Check if it's a file type we can try OCR on (PDF or images)
+                # GeminiClient handles the mime type detection usually, or defaults to PDF
+                # We'll try it if we have content bytes
+                logger.info(f"Insufficient text extracted from {filename}. Attempting fallback to Gemini Vision OCR.")
+                ocr_text = await self._extract_text_with_ocr(content, filename)
+                
+                if ocr_text and len(ocr_text.strip()) >= 50:
+                    extracted_content = ocr_text
+                    extraction_method = "Gemini Vision OCR"
+                    logger.info(f"Successfully extracted {len(extracted_content)} chars via OCR for {filename}")
+            
+            # If we still have no content, fall back to filename-based classification
             if not extracted_content or len(extracted_content.strip()) < 50:
-                logger.warning(f"Insufficient content for {filename}, using filename-based classification")
+                content_len = len(extracted_content.strip()) if extracted_content else 0
+                content_display = f'"{extracted_content}"' if extracted_content else "EMPTY STRING"
+                logger.warning(
+                    f"Insufficient content for {filename} (Length: {content_len}, Method: {extraction_method}). "
+                    f"Content: {content_display}. Using filename-based classification"
+                )
                 return await self._classify_by_filename(filename)
             
             # Use LLM to classify based on content
@@ -117,7 +169,7 @@ class ClassificationService:
             - {DocumentType.LEASES.value}: Individual lease agreements, tenancy agreements
             - {DocumentType.FINANCIALS.value}: T12, P&L, Income Statements, Balance Sheets, Operating Statements, Historical financials
             - {DocumentType.BUILDING_PLANS_PERMITS.value}: Floor plans, site plans, permits, surveys, zoning documents
-            - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports
+            - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports, purchase and sale agreements (PSA), management agreements, contracts
             - {DocumentType.TAX_BILLS.value}: Property tax bills, tax returns, assessor documents
             - {DocumentType.UTILITIES.value}: Utility bills (water, electric, gas, sewer, trash)
             - {DocumentType.IMAGES.value}: Photos, images, scanned documents
@@ -189,13 +241,13 @@ class ClassificationService:
         """
         filename_lower = filename.lower()
         
-        if "rent roll" in filename_lower or "rentroll" in filename_lower:
+        if "rent roll" in filename_lower or "rentroll" in filename_lower or "rent_roll" in filename_lower:
             return DocumentType.RENT_ROLL
         if "t12" in filename_lower or "trailing 12" in filename_lower or "p&l" in filename_lower or "profit & loss" in filename_lower or "income statement" in filename_lower:
             return DocumentType.FINANCIALS
-        if "om" in filename_lower or "offering memorandum" in filename_lower or "flyer" in filename_lower:
+        if "om" in filename_lower or "offering memorandum" in filename_lower or "flyer" in filename_lower or "offering_memorandum" in filename_lower:
             return DocumentType.OFFERING_MEMORANDUM
-        if "lease" in filename_lower and "agreement" in filename_lower:
+        if "lease" in filename_lower and ("agreement" in filename_lower or "contract" in filename_lower):
             return DocumentType.LEASES
         if "tax" in filename_lower and "bill" in filename_lower:
             return DocumentType.TAX_BILLS
@@ -203,7 +255,7 @@ class ClassificationService:
             return DocumentType.UTILITIES
         if "plan" in filename_lower or "permit" in filename_lower:
             return DocumentType.BUILDING_PLANS_PERMITS
-        if "disclosure" in filename_lower or "environmental" in filename_lower:
+        if "disclosure" in filename_lower or "environmental" in filename_lower or "psa" in filename_lower or "purchase and sale" in filename_lower or "mgmt" in filename_lower or "management agreement" in filename_lower:
             return DocumentType.DISCLOSURES
         
         return None

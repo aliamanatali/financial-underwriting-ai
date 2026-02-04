@@ -1,4 +1,5 @@
 import os
+import asyncio
 from google import genai
 from google.genai import types
 
@@ -32,12 +33,17 @@ class GeminiService:
         Generates content using the Gemini model asynchronously.
         """
         try:
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0)
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.0)
+                ),
+                timeout=90.0
             )
             return response.text
+        except asyncio.TimeoutError:
+            return "Error: Request timed out after 90 seconds."
         except Exception as e:
             # Handle potential API errors
             return f"An error occurred: {e}"

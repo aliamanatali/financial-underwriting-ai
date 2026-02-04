@@ -113,16 +113,22 @@ class GeminiClient:
                         types.Part.from_text(text=prompt),
                         types.Part.from_bytes(data=pdf_data, mime_type=mime_type)
                     ]
-                    response = await self.client.aio.models.generate_content(
-                        model=model_name,
-                        contents=parts,
-                        config=types.GenerateContentConfig(temperature=0.0)
+                    response = await asyncio.wait_for(
+                        self.client.aio.models.generate_content(
+                            model=model_name,
+                            contents=parts,
+                            config=types.GenerateContentConfig(temperature=0.0)
+                        ),
+                        timeout=90.0
                     )
                 else:
-                    response = await self.client.aio.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(temperature=0.0)
+                    response = await asyncio.wait_for(
+                        self.client.aio.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(temperature=0.0)
+                        ),
+                        timeout=90.0
                     )
                 
                 # Cache and return (only cache successful responses)
@@ -149,6 +155,9 @@ class GeminiClient:
                 await asyncio.sleep(delay)
                 last_exception = e
                 
+            except asyncio.TimeoutError:
+                 logger.warning(f"Request timed out (attempt {attempt + 1}/{self.max_retries}). Retrying...")
+                 last_exception = "TimeoutError"
             except Exception as e:
                 # For other errors, log and return error message immediately or maybe retry?
                 # Usually we don't retry on bad request etc.
