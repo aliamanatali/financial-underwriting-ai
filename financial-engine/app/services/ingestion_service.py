@@ -16,6 +16,8 @@ class IngestionService:
         self.om_scraper_service = OMScraperService(gemini_client=self.gemini_client)
 
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta) -> List[RentRollItem]:
+        import os
+        filename = os.path.basename(file_path)
         # Read with no header initially
         df = pd.read_excel(file_path, header=None)
 
@@ -40,21 +42,23 @@ class IngestionService:
                 continue
 
             rent_roll.append(RentRollItem(
-                    unit_number=str(row.get("Unit Number", "")),
-                    unit_type=str(row.get("Unit Type", "")),
-                    unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
-                    tenant_name=str(row.get("Tenant Name", "")),
-                    current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
-                    stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
-                    market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
-                    move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
-                    lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
-                    lease_end=str(row.get("Lease End") or row.get("Lease End Date") or "")
-                ))
+                unit_number=str(row.get("Unit Number", "")),
+                unit_type=str(row.get("Unit Type", "")),
+                unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
+                tenant_name=str(row.get("Tenant Name", "")),
+                current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
+                market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
+                move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
+                lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
+                lease_end=str(row.get("Lease End") or row.get("Lease End Date") or ""),
+                source_file=filename,
+                floor=str(row.get("Floor", ""))
+            ))
 
         return rent_roll
 
-    async def extract_rent_roll_from_excel(self, excel_content: bytes, total_units: int = 0) -> List[RentRollItem]:
+    async def extract_rent_roll_from_excel(self, excel_content: bytes, total_units: int = 0, filename: str = None) -> List[RentRollItem]:
         """
         Extracts the rent roll from an Excel file (bytes).
         Async version that works with file content in memory.
@@ -91,17 +95,19 @@ class IngestionService:
                 
                 try:
                     rent_roll.append(RentRollItem(
-                        unit_number=str(row.get("Unit Number", "")),
-                        unit_type=str(row.get("Unit Type", "")),
-                        unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
-                        tenant_name=str(row.get("Tenant Name", "")),
-                        current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
-                        stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
-                        market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
-                        move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
-                        lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
-                        lease_end=str(row.get("Lease End") or row.get("Lease End Date") or "")
-                    ))
+                            unit_number=str(row.get("Unit Number", "")),
+                            unit_type=str(row.get("Unit Type", "")),
+                            unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
+                            tenant_name=str(row.get("Tenant Name", "")),
+                            current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                            stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
+                            market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
+                            move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
+                            lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
+                            lease_end=str(row.get("Lease End") or row.get("Lease End Date") or ""),
+                            source_file=filename,
+                            floor=str(row.get("Floor", ""))
+                        ))
                 except Exception as e:
                     logger.warning(f"Failed to parse rent roll row: {e}")
                     continue
@@ -186,7 +192,7 @@ class IngestionService:
             logger.error(f"Failed to extract property meta from PDF: {e}")
             return PropertyMeta(address="Unknown", year_built=1980, purchase_price=0.0, total_units=0)
 
-    async def extract_rent_roll_from_pdf(self, pdf_content: bytes, total_units: int = 0) -> List[RentRollItem]:
+    async def extract_rent_roll_from_pdf(self, pdf_content: bytes, total_units: int = 0, filename: str = None) -> List[RentRollItem]:
         """
         Extracts the rent roll from a PDF document (bytes).
         """
@@ -237,6 +243,9 @@ class IngestionService:
             )
             
             rent_roll = self.normalization_service.normalize_rent_roll(rent_roll_data)
+            if filename:
+                for item in rent_roll:
+                    item.source_file = filename
             return rent_roll
         except Exception as e:
             logger.error(f"Failed to extract rent roll from PDF: {e}")
@@ -415,13 +424,18 @@ class IngestionService:
 
             CRITICAL FOR UNIT SIZE:
             - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
+            - If Unit Size is missing, return 0.
 
+            CRITICAL FOR GENERIC RENT:
+            - If a column is just labeled "Rent", treat it as "Current Rent".
+            
             OPTIONAL FIELDS:
             - "deposit": Security deposit amount.
             - "parking": Parking space number or fee.
             - "comments": Any notes or comments.
+            - "floor": Floor number/level (e.g. "1st", "2nd").
 
-            Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments".
+            Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments", "floor".
             """
             try:
                 rent_roll_data = await self.gemini_client.generate_structured_data_async(

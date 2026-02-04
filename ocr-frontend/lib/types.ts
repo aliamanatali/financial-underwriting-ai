@@ -145,6 +145,7 @@ export interface RentRollItem {
   deposit?: number;
   parking?: string;
   comments?: string;
+  source_file?: string;
 }
 
 export interface RentRollSummary {

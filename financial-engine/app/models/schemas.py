@@ -110,6 +110,8 @@ class RentRollItem(BaseModel):
     deposit: Optional[float] = 0.0
     parking: Optional[str] = None
     comments: Optional[str] = None
+    source_file: Optional[str] = None
+    floor: Optional[str] = None
     
     @validator('unit_number', 'unit_type', 'tenant_name', pre=True)
     def validate_string_fields(cls, v):

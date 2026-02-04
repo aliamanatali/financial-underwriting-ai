@@ -326,6 +326,19 @@ class NormalizationService:
                          logger.warning(f"Excluding likely Document Title/Total line: {desc} - {expense.get('amount')}")
                          continue
 
+                # 4. Exclude Global Expense Summaries to prevent duplication
+                # e.g., "Total Operating Expenses", "Total Expenses", "Total Ordinary Expenses"
+                # But allow category totals (e.g. "Total Repairs") because deduplication logic in FinancialService handles those.
+                # We specifically want to target the Grand Total of expenses.
+                if desc_lower in ["total expenses", "total operating expenses", "total ordinary expenses", "total opex", "total expense"]:
+                     logger.warning(f"Excluding Global Expense Summary line to prevent double-counting: {desc} - {expense.get('amount')}")
+                     continue
+
+                # Also check for "Total <X>" where X is generic
+                if desc_lower.startswith("total ") and ("operating expense" in desc_lower or "expense" == desc_lower.replace("total ", "").strip()):
+                     logger.warning(f"Excluding Global Expense Summary line: {desc}")
+                     continue
+
                 mapped_item = final_mapped_data_dict.get(desc)
                 
                 if not mapped_item:
@@ -515,7 +528,10 @@ class NormalizationService:
                 "undergraduate resident", "application fee", "admin fee", "late fee", "pet fee",
                 "student housing", "housing fee", "activity fee", "service fee",
                 # Expanded Aggressive Filter
-                "grant", "living expenses", "resident tuition", "award letter"
+                "grant", "living expenses", "resident tuition", "award letter",
+                # Accounts Receivable / Non-Rent Items
+                "security deposit", "accounts receivable", "last month", "prepaid rent",
+                "deposit", "balance forward", "previous balance"
             ]
             
             check_fields = [tenant_str, unit_str, u_type_lower, str(item.get("description", "")).lower()]

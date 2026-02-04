@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
+import CombinedRentRollTable from "./CombinedRentRollTable";
+import ExpenseRevenueList from "./ExpenseRevenueList";
 import WidgetTooltip from "./WidgetTooltip";
 
 interface UnderwritingDashboardProps {
@@ -486,6 +488,18 @@ export default function UnderwritingDashboard({
         initialEditMode={initialRentRollEditMode}
         validationTrigger={validationTrigger}
         fullAnalysis={analysis} // Pass full analysis for export purposes
+      />
+
+      {/* Combined Rent Roll Table (Read-Only Aggregated View) */}
+      <CombinedRentRollTable
+        rentRoll={analysis.rent_roll || []}
+        formatCurrency={formatCurrency}
+      />
+
+      {/* Expense & Revenue List (Historical Financials) */}
+      <ExpenseRevenueList
+        expenses={analysis.historical_expenses || []}
+        formatCurrency={formatCurrency}
       />
 
       {/* AI Underwriting Section */}

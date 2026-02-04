@@ -1110,13 +1110,15 @@ async def analyze_deal_package(
                     # Use Excel-specific extraction
                     extracted_items = await ingestion_service.extract_rent_roll_from_excel(
                         file_content,
-                        total_units=target_units
+                        total_units=target_units,
+                        filename=rent_roll_doc.filename
                     )
                 else:
                     # Use PDF extraction
                     extracted_items = await ingestion_service.extract_rent_roll_from_pdf(
                         file_content,
-                        total_units=target_units
+                        total_units=target_units,
+                        filename=rent_roll_doc.filename
                     )
                 
                 if extracted_items:

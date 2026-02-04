@@ -229,62 +229,91 @@ class SynthesisService:
         return best_values
     
     def build_master_rent_roll(
-        self, 
+        self,
         all_rent_roll_items: List[RentRollItem]
     ) -> List[RentRollItem]:
         """
-        Build a master rent roll by deduplicating units across multiple rent roll documents.
+        Build a master rent roll by prioritizing the document with the MOST data,
+        but also including UNIQUE items from other documents.
         
-        This function implements the "Rent Roll Accumulator" pattern:
-        - Groups units by unit_number across ALL rent roll documents
-        - When duplicates exist, takes the one with the HIGHEST rent (most recent/accurate)
-        - Returns a deduplicated master rent roll
+        This function implements the "Best Source + Unique Add-ons" pattern:
+        1. Identify the "Best Source" (document with the most rent roll items).
+        2. Initialize master list with ALL items from Best Source.
+        3. Scan other documents for items with UNIQUE unit numbers not in Best Source.
+        4. Add those unique items to the master list.
         
         Args:
             all_rent_roll_items: List of all rent roll items from all documents
             
         Returns:
-            Deduplicated list of rent roll items (one per unique unit)
+            List of rent roll items from the best source + unique items from others
         """
         if not all_rent_roll_items:
-            logger.warning("No rent roll items provided for deduplication")
+            logger.warning("No rent roll items provided for synthesis")
             return []
         
-        logger.info(f"Building master rent roll from {len(all_rent_roll_items)} total items")
+        logger.info(f"Synthesizing master rent roll from {len(all_rent_roll_items)} total items")
         
-        # Dictionary to track best item for each unit
-        master_roll: Dict[str, RentRollItem] = {}
+        # Group items by source file
+        items_by_source: Dict[str, List[RentRollItem]] = {}
         
         for item in all_rent_roll_items:
-            unit_id = item.unit_number
+            # Handle cases where source_file might be None
+            source = item.source_file or "Unknown Source"
+            if source not in items_by_source:
+                items_by_source[source] = []
+            items_by_source[source].append(item)
             
-            # If this is the first time we see this unit, add it
-            if unit_id not in master_roll:
-                master_roll[unit_id] = item
-            else:
-                # Unit already exists - take the one with higher rent
-                existing_rent = master_roll[unit_id].current_rent or 0.0
-                new_rent = item.current_rent or 0.0
+        # Find the source with the most items
+        if not items_by_source:
+             return []
+
+        best_source = max(items_by_source, key=lambda s: len(items_by_source[s]))
+        primary_items = items_by_source[best_source]
+        
+        logger.info(f"Selected Primary Rent Roll Source: '{best_source}' with {len(primary_items)} items")
+        
+        # Initialize master dictionary with items from the best source
+        # We use a dictionary keyed by unit_number for fast lookup
+        master_roll: Dict[str, RentRollItem] = {}
+        
+        # Add primary items first (they have authority)
+        for item in primary_items:
+            # Simple deduplication within primary source
+            if item.unit_number not in master_roll:
+                master_roll[item.unit_number] = item
+        
+        # Scan other sources for UNIQUE items
+        added_unique_count = 0
+        for source, items in items_by_source.items():
+            if source == best_source:
+                continue
                 
-                if new_rent > existing_rent:
-                    logger.debug(f"Unit {unit_id}: Updating rent from ${existing_rent:,.2f} to ${new_rent:,.2f}")
-                    master_roll[unit_id] = item
+            for item in items:
+                # If unit number is NOT in master roll, it's unique to this secondary source
+                if item.unit_number not in master_roll:
+                    master_roll[item.unit_number] = item
+                    added_unique_count += 1
+                    logger.debug(f"Added unique unit {item.unit_number} from secondary source {source}")
         
-        deduplicated_items = list(master_roll.values())
-        
-        logger.info(f"Master rent roll built: {len(deduplicated_items)} unique units (deduplicated from {len(all_rent_roll_items)} items)")
+        if added_unique_count > 0:
+            logger.info(f"Added {added_unique_count} unique items from secondary sources")
+        else:
+            logger.info("No unique items found in secondary sources")
+            
+        final_items = list(master_roll.values())
         
         # Calculate summary stats
-        total_rent = sum(item.current_rent or 0.0 for item in deduplicated_items)
-        occupied_units = sum(1 for item in deduplicated_items if (item.current_rent or 0.0) > 0)
+        total_rent = sum(item.current_rent or 0.0 for item in final_items)
+        occupied_units = sum(1 for item in final_items if (item.current_rent or 0.0) > 0)
         
         logger.info(f"Master Rent Roll Summary:")
-        logger.info(f"  - Total Units: {len(deduplicated_items)}")
+        logger.info(f"  - Total Units: {len(final_items)}")
         logger.info(f"  - Occupied Units: {occupied_units}")
         logger.info(f"  - Total Monthly Rent: ${total_rent:,.2f}")
         logger.info(f"  - Annual GPR: ${total_rent * 12:,.2f}")
         
-        return deduplicated_items
+        return final_items
     
     def extract_rent_roll_from_normalized_items(
         self,
@@ -323,7 +352,8 @@ class SynthesisService:
                             market_rent=item.metadata.get("market_rent", 0.0),
                             move_in_date=item.metadata.get("move_in_date", ""),
                             lease_start=item.metadata.get("lease_start", ""),
-                            lease_end=item.metadata.get("lease_end", "")
+                            lease_end=item.metadata.get("lease_end", ""),
+                            source_file=item.source_document
                         )
                         rent_roll_items.append(rent_roll_item)
                 except Exception as e:
