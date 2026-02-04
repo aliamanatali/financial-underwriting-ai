@@ -34,12 +34,16 @@ def get_gemini_semaphore():
 
 
 # DocuMind Extraction Prompt - Zero Hallucination Document Digitization
-DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this document with ZERO hallucination.
+DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ABSOLUTELY EVERY piece of text and data from this document with ZERO hallucination.
 
 CORE PRINCIPLES:
 1. NO HALLUCINATION: Never invent, infer, or add information not present in the document
-2. NO SUMMARIZATION: Extract the full content, not summaries
-3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting
+2. NO SUMMARIZATION: Extract the full content, not summaries. Do not describe the document; transcribe it.
+3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting.
+4. SCANNED DOCUMENT HANDLING: If the document is scanned or an image, pay special attention to OCR accuracy.
+   - Extract text even if it is faint, blurry, or low contrast.
+   - Capture all handwritten notes, margin comments, and stamps.
+   - Transcribe all form fields (checkboxes, fill-in-the-blanks).
 
 OUTPUT FORMAT:
 For each page, use this structure:
@@ -48,14 +52,15 @@ For each page, use this structure:
 [Extract all visible text exactly as it appears]
 
 [Use these annotations for non-text elements:]
-- [Handwritten: text] - for handwritten content
-- [Stamp: "text"] - for stamps or seals
+- [Handwritten: text] - for handwritten content (signatures, margin notes, filled fields)
+- [Stamp: "text"] - for stamps, seals, or official marks
 - [Watermark: "text"] - for watermarks
 - [Image: description] - for images/logos
-- [Table: convert to markdown] - for tables
+- [Table: convert to markdown] - for tables (preserve structure row-by-row)
+- [Checkbox: X] - for marked checkboxes (use [Checkbox: ] for unmarked)
 - [Redaction box present] - for redacted content
-- [Uncertain: possible text] - for unclear content
-- [Illegible: X words] - for unreadable text
+- [Uncertain: possible text] - for unclear content (provide best guess)
+- [Illegible: X words] - for completely unreadable text
 
 [Page Confidence: High/Medium/Low | Justification: reason]
 
@@ -69,11 +74,12 @@ HANDWRITING DETECTED: Yes/No
 EXTRACTION NOTES: [any important notes]
 
 CRITICAL RULES:
-- Extract EVERYTHING visible, even if it seems redundant
-- Preserve exact formatting, line breaks, and spacing where meaningful
-- Never skip headers, footers, page numbers, or watermarks
-- If text is unclear, mark it as [Uncertain: ...] rather than guessing
-- Maintain the original document's structure and flow
+- Extract EVERYTHING visible: headers, footers, page numbers, watermarks, sidebar notes.
+- For TABLES: Ensure every cell is extracted. Do not summarize or skip empty cells.
+- For FORMS: Extract the label AND the filled value/checkbox.
+- If text is unclear, provide your best transcription marked as [Uncertain: ...].
+- Do not skip pages or sections. Process every inch of the document.
+- For scanned forms, ensure checkboxes and filled fields are correctly associated with their labels
 """
 
 
@@ -427,14 +433,18 @@ class GeminiService:
         Returns:
             Customized extraction prompt
         """
-        return f"""You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this PDF chunk with ZERO hallucination.
+        return f"""You are DocuMind, a high-fidelity document digitization system. Your task is to extract ABSOLUTELY EVERY piece of text and data from this PDF chunk with ZERO hallucination.
 
 THIS IS {chunk_info.upper()} (Pages {start_page}-{end_page})
 
 CORE PRINCIPLES:
 1. NO HALLUCINATION: Never invent, infer, or add information not present in the document
-2. NO SUMMARIZATION: Extract the full content, not summaries
-3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting
+2. NO SUMMARIZATION: Extract the full content, not summaries. Do not describe the document; transcribe it.
+3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting.
+4. SCANNED DOCUMENT HANDLING: If the document is scanned or an image, pay special attention to OCR accuracy.
+   - Extract text even if it is faint, blurry, or low contrast.
+   - Capture all handwritten notes, margin comments, and stamps.
+   - Transcribe all form fields (checkboxes, fill-in-the-blanks).
 
 OUTPUT FORMAT:
 For each page, use this structure:
@@ -443,14 +453,15 @@ For each page, use this structure:
 [Extract all visible text exactly as it appears]
 
 [Use these annotations for non-text elements:]
-- [Handwritten: text] - for handwritten content
-- [Stamp: "text"] - for stamps or seals
+- [Handwritten: text] - for handwritten content (signatures, margin notes, filled fields)
+- [Stamp: "text"] - for stamps, seals, or official marks
 - [Watermark: "text"] - for watermarks
 - [Image: description] - for images/logos
-- [Table: convert to markdown] - for tables
+- [Table: convert to markdown] - for tables (preserve structure row-by-row)
+- [Checkbox: X] - for marked checkboxes (use [Checkbox: ] for unmarked)
 - [Redaction box present] - for redacted content
-- [Uncertain: possible text] - for unclear content
-- [Illegible: X words] - for unreadable text
+- [Uncertain: possible text] - for unclear content (provide best guess)
+- [Illegible: X words] - for completely unreadable text
 
 [Page Confidence: High/Medium/Low | Justification: reason]
 
@@ -466,11 +477,12 @@ HANDWRITING DETECTED: Yes/No
 EXTRACTION NOTES: [any important notes]
 
 CRITICAL RULES:
-- Extract EVERYTHING visible, even if it seems redundant
-- Preserve exact formatting, line breaks, and spacing where meaningful
-- Never skip headers, footers, page numbers, or watermarks
-- If text is unclear, mark it as [Uncertain: ...] rather than guessing
-- Maintain the original document's structure and flow
+- Extract EVERYTHING visible: headers, footers, page numbers, watermarks, sidebar notes.
+- For TABLES: Ensure every cell is extracted. Do not summarize or skip empty cells.
+- For FORMS: Extract the label AND the filled value/checkbox.
+- If text is unclear, provide your best transcription marked as [Uncertain: ...].
+- Do not skip pages or sections. Process every inch of the document.
+- For scanned forms, ensure checkboxes and filled fields are correctly associated with their labels
 """
     
     def _parse_extraction_metadata(

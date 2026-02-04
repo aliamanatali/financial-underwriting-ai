@@ -158,11 +158,11 @@ class DocumentService:
             # Get PDF info to determine processing strategy
             pdf_info = await self.chunking_service.get_pdf_info(file_data)
             
-            # Determine if chunking is needed
-            # We use the configured thresholds from settings (updated to higher values)
-            should_chunk = self.chunking_service.should_use_chunking(
+            # Determine chunking strategy
+            should_chunk, chunk_size = self.chunking_service.get_optimal_chunk_strategy(
                 page_count=pdf_info["page_count"],
                 file_size_mb=pdf_info["file_size_mb"],
+                default_chunk_size=settings.chunk_size_pages,
                 page_threshold=settings.large_file_page_threshold,
                 size_threshold_mb=settings.large_file_threshold_mb
             )
@@ -170,9 +170,10 @@ class DocumentService:
             if should_chunk:
                 logger.info(
                     f"Processing large document {document_id} with chunking strategy "
-                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB, "
+                    f"chunk_size={chunk_size})"
                 )
-                return await self._process_large_document(document_id, file_data, pdf_info)
+                return await self._process_large_document(document_id, file_data, pdf_info, chunk_size)
             else:
                 logger.info(
                     f"Processing small document {document_id} without chunking "
@@ -287,7 +288,8 @@ class DocumentService:
         self,
         document_id: str,
         file_data: bytes,
-        pdf_info: Dict[str, Any]
+        pdf_info: Dict[str, Any],
+        chunk_size: int = None
     ) -> DocumentResponse:
         """
         Process a large document using chunking strategy.
@@ -296,13 +298,14 @@ class DocumentService:
             document_id: Document identifier
             file_data: PDF file bytes
             pdf_info: PDF metadata
+            chunk_size: Optional chunk size (overrides default)
             
         Returns:
             DocumentResponse with extraction results
         """
         try:
             # Split PDF into chunks
-            chunks = await self.chunking_service.split_pdf(file_data)
+            chunks = await self.chunking_service.split_pdf(file_data, chunk_size)
             total_chunks = len(chunks)
             
             logger.info(f"Split document {document_id} into {total_chunks} chunks")
@@ -322,7 +325,7 @@ class DocumentService:
                     "page_count": pdf_info["page_count"],
                     "file_size": pdf_info["file_size"],
                     "is_chunked": True,
-                    "chunk_size": settings.chunk_size_pages,
+                    "chunk_size": chunk_size or settings.chunk_size_pages,
                     "chunk_progress": chunk_progress.model_dump()
                 },
                 "updated_at": datetime.utcnow()
@@ -443,7 +446,7 @@ class DocumentService:
                 mime_type="application/pdf",
                 extraction_notes=extraction_notes,
                 is_chunked=True,
-                chunk_size=settings.chunk_size_pages,
+                chunk_size=chunk_size or settings.chunk_size_pages,
                 chunk_progress=chunk_progress
             )
             

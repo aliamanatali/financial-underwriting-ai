@@ -292,6 +292,7 @@ class IngestionService:
         
         # Task A: Property Meta
         async def task_property_meta():
+            logger.info(f"Starting Property Meta Extraction. Raw text length: {len(raw_text)}")
             property_meta_prompt = """
             Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
             
@@ -314,6 +315,8 @@ class IngestionService:
                     pydantic_schema=PropertyMeta,
                     expect_list=False
                 )
+                
+                logger.info(f"Raw Property Meta Data Extracted: {property_meta_data}")
 
                 # Sanity Check for Purchase Price Hallucination
                 # Use 0 as default if key is missing or None

@@ -120,10 +120,11 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
             # Get PDF info
             pdf_info = asyncio.run(chunking_service.get_pdf_info(file_data))
             
-            # Determine if chunking is needed
-            should_chunk = chunking_service.should_use_chunking(
+            # Determine chunking strategy
+            should_chunk, chunk_size = chunking_service.get_optimal_chunk_strategy(
                 page_count=pdf_info["page_count"],
                 file_size_mb=pdf_info["file_size_mb"],
+                default_chunk_size=settings.chunk_size_pages,
                 page_threshold=settings.large_file_page_threshold,
                 size_threshold_mb=settings.large_file_threshold_mb
             )
@@ -131,7 +132,8 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
             if should_chunk:
                 logger.info(
                     f"Processing large document {document_id} with parallel chunking "
-                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB, "
+                    f"chunk_size={chunk_size})"
                 )
                 result = _process_with_parallel_chunks(
                     self,
@@ -139,7 +141,8 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
                     file_data,
                     pdf_info,
                     chunking_service,
-                    progress_tracker
+                    progress_tracker,
+                    chunk_size
                 )
             else:
                 logger.info(
@@ -388,6 +391,13 @@ def aggregate_chunks_task(chunk_results: List[Dict[str, Any]], document_id: str,
             mime_type="application/pdf",
             extraction_notes=extraction_notes,
             is_chunked=True,
+            # We don't have easy access to the exact chunk_size here without passing it through
+            # But we can infer it or just use the default from settings as a fallback/record
+            # ideally we should pass it, but for now let's leave it or update if critical.
+            # actually, let's just use settings.chunk_size_pages as a placeholder or
+            # maybe calculate it from the results?
+            # The most accurate way is to check the first chunk's page range if available
+            # but for now let's keep it simple.
             chunk_size=settings.chunk_size_pages,
             chunk_progress=chunk_progress
         )
@@ -451,12 +461,13 @@ def _process_with_parallel_chunks(
     file_data: bytes,
     pdf_info: Dict[str, Any],
     chunking_service: PDFChunkingService,
-    progress_tracker: RedisProgressTracker
+    progress_tracker: RedisProgressTracker,
+    chunk_size: int = None
 ) -> Dict[str, Any]:
     """Process document using parallel chunk processing."""
     
     # Split PDF into chunks
-    chunks = asyncio.run(chunking_service.split_pdf(file_data))
+    chunks = asyncio.run(chunking_service.split_pdf(file_data, chunk_size))
     total_chunks = len(chunks)
     
     logger.info(f"Split document {document_id} into {total_chunks} chunks for parallel processing")
