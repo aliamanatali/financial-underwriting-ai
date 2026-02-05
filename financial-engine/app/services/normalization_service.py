@@ -7,9 +7,10 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 class NormalizationService:
-    def __init__(self, llm_service: Any):
+    def __init__(self, llm_service: Any, batch_logging_service: BatchLoggingService = None):
         self.llm_service = llm_service
         self.collection_name = "expense_mappings"
+        self.batch_logging_service = batch_logging_service
 
     async def _get_cached_mappings(self, descriptions: List[str]) -> Dict[str, Dict]:
         """Retrieve cached mappings from Redis and MongoDB."""
@@ -339,6 +340,30 @@ class NormalizationService:
                      logger.warning(f"Excluding Global Expense Summary line: {desc}")
                      continue
 
+                # 5. Exclude Assessed Values / Property Values from Expenses
+                # These are often large numbers (e.g. $1.5M) misclassified as tax expenses because they appear on tax bills.
+                # Keywords: "Net Taxable Value", "Total Real Property" (value context), "Gross Assessment", "Land Value"
+                # We must be careful not to exclude "Special Assessment" which is a valid tax.
+                assessment_keywords = [
+                    "net taxable value", "gross assessment", "total real property",
+                    "assessed value", "taxable value", "land value", "improvement value",
+                    "personal property value", "total value", "full cash value"
+                ]
+                
+                # Check for strict matches.
+                # "Total Real Property" is tricky because it could be "Total Real Property Tax", but usually that's "Total Taxes".
+                # On tax bills, "Total Real Property" usually heads the value column or the summary of values.
+                # If the amount is very large (e.g. > $100k) and matches these keywords, it's definitely value not tax.
+                if any(k in desc_lower for k in assessment_keywords):
+                    # Safety check: Assessments usually don't have "tax" at the end, but "Net Taxable Value" does.
+                    # Exception: "Assessment Tax" or "Special Assessment".
+                    if "special assessment" not in desc_lower:
+                         # Heuristic: If value > $100,000, it's almost certainly a property value, not a tax line item
+                         # (unless it's a massive building's total tax, but context helps).
+                         # For now, blindly excluding based on specific value keywords is safer for this bug.
+                         logger.warning(f"Excluding likely Assessed Value/Property Value line: {desc} - {expense.get('amount')}")
+                         continue
+
                 mapped_item = final_mapped_data_dict.get(desc)
                 
                 if not mapped_item:
@@ -576,6 +601,12 @@ class NormalizationService:
             
             if is_parking:
                 logger.info(f"Skipping rent roll item identified as parking/storage: {item}")
+                continue
+
+            # --- FIX: Filter out Garbage Entries (e.g. "13 Unknown") ---
+            # If unit_type is "Unknown" AND rents are 0, it's likely a bad extraction or a header/footer line interpreted as a unit.
+            if u_type_lower == "unknown" and self._parse_amount(item.get("current_rent", 0)) == 0 and self._parse_amount(item.get("market_rent", 0)) == 0:
+                logger.info(f"Skipping rent roll item identified as garbage/empty: {item}")
                 continue
 
             # Pydantic will validate the types. We just need to ensure that the keys exist.

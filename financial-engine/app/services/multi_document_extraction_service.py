@@ -685,6 +685,17 @@ class MultiDocumentExtractionService:
                 if item_type == "revenue" and not exp.get("subtype"):
                     exp["subtype"] = "rent"
             
+            # Fix 8: Ignore "Total" lines to prevent double counting
+            # This is critical for utility bills where line items and total are both extracted
+            if "total" in raw_text and item_type == "expense":
+                # Check if it's a summary line like "Total Charges" or "Total Due"
+                if any(keyword in raw_text for keyword in ["total charges", "total due", "amount due", "total amount", "current charges"]):
+                     # We skip adding it to fixed_expenses effectively deleting it
+                     # UNLESS it's the only item extracted? No, risky.
+                     # Better to mark it as ignored or separate type.
+                     logger.info(f"Ignoring potential duplicate summary line: '{exp.get('raw_text')}'")
+                     continue
+
             fixed_expenses.append(exp)
         
         return fixed_expenses
@@ -1130,6 +1141,12 @@ class MultiDocumentExtractionService:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
             return [], om_proforma_results
         
+        # Validate and fix expenses (filtering out totals, tuition, etc.) BEFORE batching
+        # to ensure batch sizes align with normalization results.
+        # This prevents misalignment in the zip() operation downstream.
+        all_expenses = self._validate_and_fix_extraction(all_expenses)
+        logger.info(f"Total expenses after validation/filtering: {len(all_expenses)}")
+
         # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
         logger.info(f"Starting batch normalization of {len(all_expenses)} expenses...")
@@ -1209,6 +1226,7 @@ class MultiDocumentExtractionService:
                                  document_id=expense.get("document_id", "unknown"),
                                  filename=expense.get("source_document", "unknown"),
                                  raw_text=raw_text,
+                                 amount=float(amount or 0.0),
                                  normalized_value=normalization.get("normalized_value", ""),
                                  category_group=normalization.get("category_group", ""),
                                  confidence=normalization.get("confidence", 0.0),

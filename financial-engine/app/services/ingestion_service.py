@@ -42,11 +42,11 @@ class IngestionService:
                 continue
 
             rent_roll.append(RentRollItem(
-                unit_number=str(row.get("Unit Number", "")),
-                unit_type=str(row.get("Unit Type", "")),
-                unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
-                tenant_name=str(row.get("Tenant Name", "")),
-                current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                    unit_number=str(row.get("Unit Number", "")),
+                    unit_type=str(row.get("Unit Type", "")),
+                    unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or row.get("Size") or 0),
+                    tenant_name=str(row.get("Tenant Name", "")),
+                    current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
                 stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
                 market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
                 move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
@@ -95,11 +95,11 @@ class IngestionService:
                 
                 try:
                     rent_roll.append(RentRollItem(
-                            unit_number=str(row.get("Unit Number", "")),
-                            unit_type=str(row.get("Unit Type", "")),
-                            unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or 0),
-                            tenant_name=str(row.get("Tenant Name", "")),
-                            current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
+                        unit_number=str(row.get("Unit Number", "")),
+                        unit_type=str(row.get("Unit Type", "")),
+                        unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or row.get("Size") or 0),
+                        tenant_name=str(row.get("Tenant Name", "")),
+                        current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
                             stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
                             market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
                             move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
@@ -426,7 +426,7 @@ class IngestionService:
             - If not explicitly listed, return 0.0.
 
             CRITICAL FOR UNIT SIZE:
-            - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
+            - Look for "Unit Size", "Sq Ft", "Square Feet", "SF", or just "Size".
             - If Unit Size is missing, return 0.
 
             CRITICAL FOR GENERIC RENT:

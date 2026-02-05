@@ -24,7 +24,7 @@ class BatchLoggingService:
         
         # Initialize headers
         self._init_csv(self.classification_log_file, ["timestamp", "filename", "predicted_category", "confidence", "status"])
-        self._init_csv(self.normalization_log_file, ["timestamp", "document_id", "filename", "raw_text", "normalized_value", "category_group", "confidence", "source_document"])
+        self._init_csv(self.normalization_log_file, ["timestamp", "document_id", "filename", "raw_text", "amount", "normalized_value", "category_group", "confidence", "source_document"])
         self._init_csv(self.error_log_file, ["timestamp", "filename", "operation", "error_message", "details"])
 
     def _ensure_log_dir(self):
@@ -55,7 +55,7 @@ class BatchLoggingService:
         except Exception as e:
             logger.error(f"Failed to log classification: {e}")
 
-    def log_normalization(self, document_id: str, filename: str, raw_text: str, normalized_value: str, category_group: str, confidence: float, source_document: str):
+    def log_normalization(self, document_id: str, filename: str, raw_text: str, amount: float, normalized_value: str, category_group: str, confidence: float, source_document: str):
         """Log a normalization result."""
         try:
             with open(self.normalization_log_file, mode='a', newline='', encoding='utf-8') as f:
@@ -65,6 +65,7 @@ class BatchLoggingService:
                     document_id,
                     filename,
                     raw_text,
+                    amount,
                     normalized_value,
                     category_group,
                     confidence,

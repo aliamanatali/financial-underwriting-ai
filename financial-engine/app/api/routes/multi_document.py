@@ -1033,7 +1033,7 @@ async def analyze_deal_package(
         purchase_price=synthesized_metadata['purchase_price']['value'],
         total_units=synthesized_metadata['total_units']['value'],
         is_renovated=False,
-        current_loan_balance=0.0
+        current_loan_balance=synthesized_metadata.get('current_loan_balance', {}).get('value', 0.0)
     )
     
     # Extract rent roll items from normalized data

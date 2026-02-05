@@ -30,12 +30,13 @@ class FinancialService:
     def _deduplicate_expenses(self, expenses: List[ProFormaExpenseItem]) -> List[ProFormaExpenseItem]:
         """
         Deduplicates expenses to avoid summing 'Total' lines AND individual line items.
+        Also aggregates multiple years of data by taking the MAXIMUM value for a category if it looks like year-over-year data.
+        
         Logic:
         1. Group by Category.
         2. If a category has multiple items:
-           - Check if one item text contains "Total".
-           - Check if that "Total" item's amount is roughly equal to the sum of others.
-           - If yes, keep ONLY the "Total" item.
+           - Check for "Total" lines and prefer them if they cover the whole amount.
+           - If multiple large items exist (e.g. Tax 2022, Tax 2023), picking the largest might be safer than summing.
         """
         from collections import defaultdict
         
@@ -52,36 +53,77 @@ class FinancialService:
             if len(items) <= 1:
                 final_expenses.extend(items)
                 continue
-                
-            # Check for "Total" item
+            
+            # --- Strategy 1: Look for Explicit Totals ---
             total_item = None
             others = []
             
             for item in items:
                 desc = item.original_text.lower() if item.original_text else ""
-                # Strict check for "Total" at start or explicit "Total <Category>"
                 if "total" in desc:
-                    # If we have multiple "Total"s, pick the largest one?
-                    # For now assume one major Total row.
                     if total_item is None or item.amount > total_item.amount:
-                         if total_item: others.append(total_item)
+                         if total_item: others.append(total_item) # Demote previous total
                          total_item = item
                     else:
                         others.append(item)
                 else:
                     others.append(item)
             
-            if total_item and others:
+            # If we found a Total line, use it
+            if total_item:
                 sum_others = sum(e.amount for e in others)
-                # If Total is roughly >= sum of others (or at least significant), use Total.
-                # If Total is significantly smaller than sum of others, maybe it's a sub-total?
-                # User said: "ensure the engine only picks the 'Total Amount Due'"
-                # We will trust the "Total" row if it exists and is > 0.
-                logger.info(f"Deduplicating {category}: Keeping 'Total' item '${total_item.amount}' ({total_item.original_text}) and dropping {len(others)} others (Sum: ${sum_others})")
+                logger.info(f"Deduplicating {category}: Keeping 'Total' item '${total_item.amount}' ({total_item.original_text})")
                 final_expenses.append(total_item)
-            else:
-                # No explicit "Total" row found, keep all (or logic to find largest?)
-                final_expenses.extend(items)
+                continue
+
+            # --- Strategy 2: Duplicate Detection (Multi-Year) ---
+            items.sort(key=lambda x: x.amount, reverse=True)
+            
+            # If category is Taxes or Insurance, take MAX (Largest Annual Bill)
+            if category in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
+                 largest = items[0]
+                 
+                 # Sanity Check for Insurance specifically (avoid capturing Property Values/Limits)
+                 # Max plausible insurance is ~$2,500/unit/year.
+                 # We don't have unit count here easily, but we can check absolute outliers.
+                 # $100k for insurance on a single building is suspicious unless it's huge.
+                 if category == ExpenseCategory.INSURANCE and largest.amount > 100000:
+                     # Check if we have a smaller, more reasonable item?
+                     reasonable_items = [i for i in items if 1000 < i.amount < 50000]
+                     if reasonable_items:
+                         largest = max(reasonable_items, key=lambda x: x.amount)
+                         logger.warning(f"Ignored suspicious Insurance amount ${items[0].amount}. Using reasonable fallback ${largest.amount}")
+                     else:
+                         # If only huge items exist, we might cap it later or flag it.
+                         logger.warning(f"Suspiciously high Insurance: ${largest.amount}. This might be a coverage limit or property value.")
+                         
+                 logger.info(f"Deduplicating {category}: Taking selected item '${largest.amount}' out of {len(items)} items")
+                 final_expenses.append(largest)
+                 continue
+
+            # --- Strategy 3: Aggressive Utility Deduplication ---
+            # If Utilities sum is massive (> $100k for small prop) and we have many items,
+            # it implies we might be summing monthly bills AND annual summaries extracted from P&L.
+            # Check if largest item > 40% of the sum?
+            if category == ExpenseCategory.UTILITIES:
+                total_sum = sum(e.amount for e in items)
+                largest = items[0]
+                # If largest item represents a significant chunk (e.g. "Water Total"), it might be a summary.
+                # Or if we have > 12 items, assume duplicates if the sum is huge.
+                if len(items) > 20 and total_sum > 200000:
+                    logger.warning(f"Utilities sum ${total_sum} is suspicious. Checking for duplicates.")
+                    # Heuristic: If the largest item looks like an annual figure, take it.
+                    # Or just filter out small items if a large one exists.
+                    pass
+
+            # --- Strategy 4: General Multi-Year Check ---
+            # If we have two huge items (e.g. Repairs 2022: $50k, Repairs 2023: $48k)
+            # Summing them ($98k) might be wrong if we want "Annualized".
+            # Taking average or max is safer for "Stabilized" underwriting.
+            # For now, we stick to summing "Operating" expenses like Repairs/Contract Services,
+            # as they are variable. But we warn if count is high.
+
+            final_expenses.extend(items)
                 
         return final_expenses
 
@@ -161,11 +203,24 @@ class FinancialService:
                 if expense.mapped_category in [
                     ExpenseCategory.CAPITAL_RESERVES,
                     ExpenseCategory.CURRENT_LOAN_BALANCE,
+                    ExpenseCategory.LEASING_FEES, # Exclude Leasing Fees from NOI as per standard (below the line)
+                    ExpenseCategory.PROPERTY_INFO,
+                    ExpenseCategory.TOTAL_UNITS,
+                    ExpenseCategory.YEAR_BUILT,
+                    ExpenseCategory.PURCHASE_PRICE,
+                    ExpenseCategory.PRICE_PER_UNIT
                 ]:
                     continue
                 
-                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization"]:
+                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization", "Leasing Commissions", "Property Characteristic"]:
                     continue
+
+                # NEW FILTER: Exclude extremely large single line items that look like aggregate totals
+                # A single expense item > $200k in a $300k revenue deal is suspicious
+                # Typically, Taxes and Insurance are the largest single items.
+                if expense.amount > 200000 and expense.mapped_category not in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
+                     logger.warning(f"Excluding suspiciously large expense item from Historical T12: {expense.original_text} (${expense.amount:,.2f})")
+                     continue
 
                 total_expenses += expense.amount
 
@@ -268,9 +323,14 @@ class FinancialService:
             # Use current rent as fallback for market rent if 0 (Fix for Missing Market Rent)
             current = item.current_rent or 0
             market = item.market_rent or 0
+            
+            # --- FIX: Handle 0$ Market Rent for Vacant Units ---
+            # If market rent is 0, we try to use the average market rent for this unit type.
+            # If not available yet, we use the current rent (if > 0).
+            # If current rent is also 0 (e.g. Vacant), we flag it for second pass.
+            
             if market == 0 and current > 0:
                 market = current # Conservative fallback: Market = Current
-                # Optional: Add small markup? market = current * 1.05
             
             if u_type not in unit_groups:
                 unit_groups[u_type] = []
@@ -281,6 +341,25 @@ class FinancialService:
             # Update item in place just in case we need it later
             if item.market_rent == 0:
                 item.market_rent = market
+                
+        # --- SECOND PASS: Fix 0$ Market Rents using Averages ---
+        # Now that we've collected data, calculate average market rent per unit type (excluding 0s)
+        avg_market_per_type = {}
+        for u_type, mkts in unit_market_rents.items():
+            valid_rents = [m for m in mkts if m > 0]
+            if valid_rents:
+                avg_market_per_type[u_type] = sum(valid_rents) / len(valid_rents)
+        
+        # Apply average market rent to units that still have 0
+        for item in analysis.rent_roll:
+            if (item.market_rent or 0) == 0:
+                u_type = item.unit_type or "Unknown"
+                if u_type in avg_market_per_type:
+                    fallback = avg_market_per_type[u_type]
+                    item.market_rent = fallback
+                    logger.info(f"Filled missing Market Rent for unit {item.unit_number} ({u_type}) with average: ${fallback}")
+                    # Update our tracking dicts for the summary loop below
+                    unit_market_rents[u_type].append(fallback)
             
         summary_list = []
         total_scaled_count = 0

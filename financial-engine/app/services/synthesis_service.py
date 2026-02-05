@@ -102,7 +102,8 @@ class SynthesisService:
             "year_built": {"value": 0, "source": None, "score": -1},
             "rentable_area": {"value": 0.0, "source": None, "score": -1},
             "real_estate_tax": {"value": 0.0, "source": None, "score": -1},
-            "management_fee": {"value": 0.0, "source": None, "score": -1}
+            "management_fee": {"value": 0.0, "source": None, "score": -1},
+            "current_loan_balance": {"value": 0.0, "source": None, "score": -1}
         }
         
         # Scan all items and pick winners based on priority
@@ -131,8 +132,9 @@ class SynthesisService:
                 "contract price" in raw_text or
                 "price" in normalized_val):
                 
-                # Exclude obvious wrong matches for price (like small amounts)
-                if amount > 10000 and doc_score > best_values["purchase_price"]["score"]:
+                # Exclude small amounts that might be deposits or fees
+                # Increased threshold to $100k to avoid "Earnest Money Deposit" ($50k) errors
+                if amount > 100000 and doc_score > best_values["purchase_price"]["score"]:
                     best_values["purchase_price"] = {
                         "value": amount,
                         "source": source_doc,
@@ -155,7 +157,8 @@ class SynthesisService:
                     logger.info(f"Updated Total Units: {int(amount)} from {source_doc} (score: {doc_score})")
             
             # YEAR BUILT
-            elif ("year built" in normalized_val or "year built" in raw_text):
+            elif ("year built" in normalized_val or "year built" in raw_text or "year constructed" in raw_text):
+                # Ensure year is valid
                 if amount > 1800 and amount < 2030 and doc_score > best_values["year_built"]["score"]:
                     best_values["year_built"] = {
                         "value": int(amount),
@@ -203,6 +206,23 @@ class SynthesisService:
                         "score": doc_score
                     }
                     logger.info(f"Updated Management Fee: ${amount:,.2f} from {source_doc} (score: {doc_score})")
+
+            # CURRENT LOAN BALANCE
+            elif ("loan balance" in normalized_val or
+                  "current loan" in normalized_val or
+                  "mortgage balance" in normalized_val or
+                  "existing debt" in raw_text or
+                  "principal balance" in raw_text or
+                  "loan amount" in raw_text):
+                
+                # Exclude monthly payments or small amounts
+                if amount > 100000 and doc_score > best_values["current_loan_balance"]["score"]:
+                    best_values["current_loan_balance"] = {
+                        "value": float(amount),
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                    logger.info(f"Updated Current Loan Balance: ${amount:,.2f} from {source_doc} (score: {doc_score})")
             
             # SPECIAL CASE: Rent Roll row count for Total Units
             if item.metadata and item.metadata.get("row_count") and "rent roll" in raw_text:
