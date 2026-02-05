@@ -376,6 +376,7 @@ class UnderwritingAnalysis(BaseModel):
     loss_to_lease: Optional[float] = 0.0
     vacancy_loss: Optional[float] = 0.0
     effective_gross_income: Optional[float] = 0.0
+    other_income: Optional[float] = 0.0 # Extracted from T12
     pro_forma_expenses: Optional[float] = 0.0
     pro_forma_noi: Optional[float] = 0.0
     

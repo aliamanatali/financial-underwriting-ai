@@ -3,6 +3,7 @@ from typing import List, Dict, Any
 from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem, CategoryGroup
 import logging
 from datetime import datetime
+from app.services.batch_logging_service import BatchLoggingService
 
 logger = logging.getLogger(__name__)
 
@@ -302,12 +303,20 @@ class NormalizationService:
                 desc_lower = desc.lower()
                 forced_category = None
 
-                if "principal" in desc_lower or "loan amount" in desc_lower or "loan balance" in desc_lower:
-                     # Check if it's "Principal Payment" (Debt Service) vs "Principal Balance" (Liability)
-                     # If it's Balance, we map it to CURRENT_LOAN_BALANCE so it can be excluded from OpEx but preserved
-                     if "balance" in desc_lower or "amount" in desc_lower:
-                         logger.info(f"Identified likely Debt Balance item: {desc}. Forcing category to CURRENT_LOAN_BALANCE.")
-                         forced_category = ExpenseCategory.CURRENT_LOAN_BALANCE
+                # FIX: Broader detection for Balance Sheet items (Liabilities)
+                # "Current Loan Balance", "Mortgage Payable", "Note Payable", "Principal Balance"
+                is_liability_keyword = any(k in desc_lower for k in ["loan balance", "principal balance", "mortgage payable", "note payable", "loan amount"])
+                if is_liability_keyword:
+                     logger.info(f"Identified likely Debt Balance/Liability item: {desc}. Forcing category to CURRENT_LOAN_BALANCE.")
+                     forced_category = ExpenseCategory.CURRENT_LOAN_BALANCE
+
+                # FIX: Exclude Vacancy/Concessions from Expenses
+                # These are deductions from Revenue, not Operating Expenses.
+                # We map them to UNCATEGORIZED for now, and ensure FinancialService excludes them.
+                is_vacancy_keyword = any(k in desc_lower for k in ["vacancy", "concession", "bad debt", "loss to lease", "rent loss"])
+                if is_vacancy_keyword:
+                     logger.info(f"Identified Revenue Deduction item (Vacancy/Concessions): {desc}. Forcing category to UNCATEGORIZED to exclude from OpEx.")
+                     forced_category = ExpenseCategory.UNCATEGORIZED
 
                 # 2. Filter out Student Financial Data from Expenses
                 # Check description for student/tuition keywords
@@ -322,7 +331,13 @@ class NormalizationService:
 
                 # 3. Exclude "Profit & Loss" document header/summary lines that might be massive sums
                 # "Assets + Liabilities + Expenses" sum
-                if "profit & loss" in desc_lower or "balance sheet" in desc_lower:
+                # FIX: Enhanced Document Title / Filename Exclusion
+                if any(x in desc_lower for x in ["profit & loss", "balance sheet", "financial statement", "rent roll", "offering memorandum"]):
+                    # If it looks like a file name (has extension)
+                    if any(ext in desc_lower for ext in [".xlsx", ".xls", ".pdf", ".docx", ".doc"]):
+                         logger.warning(f"Excluding likely Filename/Document Title: {desc}")
+                         continue
+                         
                     if expense.get("amount", 0) > 1_000_000: # Arbitrary high threshold for "Total" lines
                          logger.warning(f"Excluding likely Document Title/Total line: {desc} - {expense.get('amount')}")
                          continue

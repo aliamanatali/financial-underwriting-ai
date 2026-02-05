@@ -104,17 +104,32 @@ class FinancialService:
             # --- Strategy 3: Aggressive Utility Deduplication ---
             # If Utilities sum is massive (> $100k for small prop) and we have many items,
             # it implies we might be summing monthly bills AND annual summaries extracted from P&L.
-            # Check if largest item > 40% of the sum?
             if category == ExpenseCategory.UTILITIES:
                 total_sum = sum(e.amount for e in items)
-                largest = items[0]
-                # If largest item represents a significant chunk (e.g. "Water Total"), it might be a summary.
-                # Or if we have > 12 items, assume duplicates if the sum is huge.
-                if len(items) > 20 and total_sum > 200000:
-                    logger.warning(f"Utilities sum ${total_sum} is suspicious. Checking for duplicates.")
-                    # Heuristic: If the largest item looks like an annual figure, take it.
-                    # Or just filter out small items if a large one exists.
-                    pass
+                largest = items[0] # Items are already sorted desc by amount
+                
+                # If we have many items (>12 implies monthly data exists) AND a large total
+                # Check if the largest item is likely an annual summary
+                if len(items) > 12:
+                     # Calculate sum of all OTHER items
+                     rest_sum = total_sum - largest.amount
+                     
+                     # If the largest item is roughly equal to the sum of the rest (within 20% margin),
+                     # it's highly likely a "Total" line that wasn't caught by the "Total" keyword check.
+                     # OR if the largest item is just massive (> $20k) and we have > 20 items.
+                     
+                     is_duplicate_likely = False
+                     if rest_sum > 0 and abs(largest.amount - rest_sum) / rest_sum < 0.25:
+                         is_duplicate_likely = True
+                         
+                     # Also check for explicit "Total" or similar in text if not caught before
+                     if "total" in (largest.original_text or "").lower():
+                         is_duplicate_likely = True
+
+                     if is_duplicate_likely or (len(items) > 20 and total_sum > 200000):
+                        logger.warning(f"Utilities sum ${total_sum} is suspicious with {len(items)} items. Taking largest item as Annual Total.")
+                        final_expenses.append(largest)
+                        continue
 
             # --- Strategy 4: General Multi-Year Check ---
             # If we have two huge items (e.g. Repairs 2022: $50k, Repairs 2023: $48k)
@@ -193,12 +208,29 @@ class FinancialService:
             analysis.historical_expenses = self._deduplicate_expenses(analysis.historical_expenses)
         
         total_expenses = 0.0
+        
+        # --- FIX: HARD FILTERING of the Historical List ---
+        # Instead of just skipping them during sum, we must REMOVE them from the list entirely
+        # so they don't show up in the frontend or report tables.
+        valid_expenses = []
+        
         if analysis.historical_expenses:
-            # FIX: Filter out Non-Operating items from Historical T12 Sum
+            # FIX: Pre-calculate Other Income before we filter the list!
+            # We want to capture this value for Pro Forma use, even if we filter it from T12 Expense column.
+            t12_other_income = 0.0
+            for expense in analysis.historical_expenses:
+                 if expense.mapped_category in [ExpenseCategory.OTHER_INCOME, ExpenseCategory.REIMBURSEMENTS]:
+                     t12_other_income += expense.amount
+                     
+            analysis.other_income = self._sanitize_value(t12_other_income)
+            logger.info(f"Captured Historical Other Income: ${t12_other_income:,.2f}")
+
             for expense in analysis.historical_expenses:
                 # Handle Enum or String category
                 cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
+                cat_val_lower = cat_val.lower()
                 
+                # 1. CATEGORY CHECK
                 # Exclude Capital items, Debt, and Non-Operating
                 if expense.mapped_category in [
                     ExpenseCategory.CAPITAL_RESERVES,
@@ -208,21 +240,47 @@ class FinancialService:
                     ExpenseCategory.TOTAL_UNITS,
                     ExpenseCategory.YEAR_BUILT,
                     ExpenseCategory.PURCHASE_PRICE,
-                    ExpenseCategory.PRICE_PER_UNIT
+                    ExpenseCategory.PRICE_PER_UNIT,
+                    ExpenseCategory.UNCATEGORIZED, # Exclude Uncategorized (often bad extractions or revenue deductions)
+                    ExpenseCategory.ACCOUNTS_RECEIVABLE,
+                    # FIX: Exclude Revenue Items from Expense Sum
+                    ExpenseCategory.OTHER_INCOME,
+                    ExpenseCategory.GROSS_POTENTIAL_RENT,
+                    ExpenseCategory.REIMBURSEMENTS
                 ]:
+                    logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
                     continue
                 
-                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization", "Leasing Commissions", "Property Characteristic"]:
+                # 2. STRING CHECK (Case-insensitive)
+                if any(x in cat_val_lower for x in [
+                    "debt", "mortgage", "non-operating", "capital expenditure",
+                    "depreciation", "amortization", "leasing commissions",
+                    "property characteristic", "uncategorized", "loan", "receivable"
+                ]):
+                    logger.info(f"Removing Suspicious Text Item: {cat_val} - {expense.original_text} (${expense.amount:,.2f})")
                     continue
+                
+                # 2b. REVENUE KEYWORD CHECK
+                # "Income", "Revenue" in category name (except "Net Operating Income" which isn't a category)
+                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
+                     logger.info(f"Removing Revenue Item from Expenses: {cat_val} - {expense.original_text} (${expense.amount:,.2f})")
+                     continue
 
-                # NEW FILTER: Exclude extremely large single line items that look like aggregate totals
+                # 3. OUTLIER CHECK
+                # Exclude extremely large single line items that look like aggregate totals
                 # A single expense item > $200k in a $300k revenue deal is suspicious
                 # Typically, Taxes and Insurance are the largest single items.
                 if expense.amount > 200000 and expense.mapped_category not in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
-                     logger.warning(f"Excluding suspiciously large expense item from Historical T12: {expense.original_text} (${expense.amount:,.2f})")
+                     logger.warning(f"Removing Suspiciously Large Item: {expense.original_text} (${expense.amount:,.2f})")
                      continue
 
+                # If passed all checks, include in sum AND final list
                 total_expenses += expense.amount
+                valid_expenses.append(expense)
+            
+            # UPDATE THE OBJECT WITH FILTERED LIST
+            # This ensures the "T12" column in reports only contains valid OpEx
+            analysis.historical_expenses = valid_expenses
 
             if total_expenses == 0:
                 logger.warning("Historical expenses list is present but total amount is 0. Check normalization.")
@@ -487,10 +545,31 @@ class FinancialService:
         # Formula: GPR - LossToLease - VacancyLoss + Other Income
         # Note: Assuming 'Other Income' is 0 for now as it's not in the base extraction yet,
         # but could be added from T12 extraction if available.
-        other_income = 0
-        egi = gpr - loss_to_lease - vacancy_loss + other_income
+        
+        # Note: We aggregate extracted 'Other Income' and 'Reimbursements' from T12.
+        # FIX: We now capture this in calculate_historical and store it in analysis.other_income.
+        # Use that value as base, but fallback to re-calculating if 0 (e.g. if calc_historical wasn't run).
+        
+        other_income_total = analysis.other_income or 0.0
+        
+        if other_income_total == 0 and analysis.historical_expenses:
+             # Fallback: Iteration (Only works if historical_expenses hasn't been filtered yet)
+             for expense in analysis.historical_expenses:
+                if expense.mapped_category in [ExpenseCategory.OTHER_INCOME, ExpenseCategory.REIMBURSEMENTS]:
+                     other_income_total += expense.amount
+
+        # Scale Other Income if we scaled units?
+        # Typically Laundry/Parking scales with units.
+        if scaling_factor != 1.0 and other_income_total > 0:
+             other_income_total *= scaling_factor
+             logger.info(f"Scaled Other Income by {scaling_factor:.4f} -> ${other_income_total:,.0f}")
+             
+        analysis.other_income = self._sanitize_value(other_income_total)
+        
+        egi = gpr - loss_to_lease - vacancy_loss + other_income_total
         analysis.effective_gross_income = self._sanitize_value(egi)
-        self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation", "GPR - LossToLease - VacancyLoss")
+        self.audit_log_service.add_log(analysis, "Other Income", f"${other_income_total:,.0f}", "T12 Extraction", "Sum of Other Income & Reimbursements")
+        self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation", "GPR - LossToLease - VacancyLoss + OtherIncome")
 
     # --- Step 2: Expense Logic ---
     def _calculate_expenses(self, analysis: UnderwritingAnalysis):
@@ -530,28 +609,58 @@ class FinancialService:
                 # Handle Enum or String category
                 cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
 
+                # --- FIX: Strict Exclusion Logic ---
+                # Exclude Taxes/Mgmt (calculated separately)
+                # Exclude Non-OpEx categories (Debt, Reserves, Uncategorized, Property Info)
+                
+                # Check Enum exclusions
                 if expense.mapped_category in [
                     ExpenseCategory.REAL_ESTATE_TAXES,
                     ExpenseCategory.MANAGEMENT_FEES,
                     ExpenseCategory.CURRENT_LOAN_BALANCE,
                     ExpenseCategory.CAPITAL_RESERVES,
+                    ExpenseCategory.UNCATEGORIZED, # Exclude Uncategorized from Pro Forma Sum
+                    ExpenseCategory.PROPERTY_INFO,
+                    ExpenseCategory.ACCOUNTS_RECEIVABLE,
+                    ExpenseCategory.PURCHASE_PRICE,
+                    ExpenseCategory.PRICE_PER_UNIT,
+                    ExpenseCategory.TOTAL_UNITS,
+                    ExpenseCategory.YEAR_BUILT,
+                    ExpenseCategory.LEASING_FEES,
+                    # FIX: Exclude Revenue Items from Pro Forma Expense Sum
+                    ExpenseCategory.OTHER_INCOME,
+                    ExpenseCategory.GROSS_POTENTIAL_RENT,
+                    ExpenseCategory.REIMBURSEMENTS
                 ]:
                     continue
                 
-                # Additional String Checks
-                if cat_val in ["Debt", "Mortgage", "Non-Operating", "Capital Expenditure", "Depreciation", "Amortization"]:
+                # Additional String Checks (Case-insensitive for safety)
+                cat_val_lower = cat_val.lower()
+                if any(x in cat_val_lower for x in [
+                    "debt", "mortgage", "non-operating", "capital expenditure",
+                    "depreciation", "amortization", "uncategorized",
+                    "property characteristic", "loan", "receivable", "deposit"
+                ]):
                     continue
                 
                 # Check for critical categories
                 if expense.mapped_category == ExpenseCategory.PAYROLL:
                     has_payroll = True
                 
+                # Exclude Revenue keywords
+                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
+                    continue
+
+                # Exclude Revenue keywords
+                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
+                    continue
+
                 # Check for marketing (flexible match)
                 cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
                 if cat_val == ExpenseCategory.ADVERTISING_MARKETING.value or "Marketing" in cat_val or "Advertising" in cat_val:
                     has_marketing = True
                     
-                cat_name = expense.mapped_category.value
+                cat_name = cat_val # Use the safely extracted string value
                 other_expenses_map[cat_name] = other_expenses_map.get(cat_name, 0.0) + expense.amount
         else:
              self.audit_log_service.add_log(analysis, "Data Warning", "No T12 Expenses Found", "Extraction", "Using only calculated Taxes & Mgmt Fee")
