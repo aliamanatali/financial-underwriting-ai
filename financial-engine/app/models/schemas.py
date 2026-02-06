@@ -309,8 +309,13 @@ class DealPackage(BaseModel):
     documents: Dict[DocumentType, List[DocumentMetadata]] = {}  # Multiple docs per type
     normalization_status: str = "pending"  # pending, in_progress, completed
     verification_progress: float = 0.0  # Percentage of items verified by user
-    normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data
+    normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data (Legacy/General)
+    
+    # Segmented Data Storage
+    rent_roll_data: List[RentRollItem] = []
+    financials_data: List[NormalizedDataItem] = [] # Specifically for financials (T12, P&L, Tax Bills)
     om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
+    
     manual_overrides: Dict[str, Any] = {} # User provided manual overrides
 # --- 4. OM Proforma Models ---
 

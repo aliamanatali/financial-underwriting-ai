@@ -12,8 +12,12 @@ import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from google import genai
 from google.genai import types
-from app.models.schemas import NormalizedDataItem, DocumentType, CategoryGroup, DataClassification, ExpenseCategory, OMProformaTable
+from app.models.schemas import (
+    NormalizedDataItem, DocumentType, CategoryGroup, DataClassification,
+    ExpenseCategory, OMProformaTable, RentRollItem
+)
 from app.services.batch_logging_service import BatchLoggingService
+from app.services.ingestion_service import IngestionService
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,49 @@ class MultiDocumentExtractionService:
         """Initialize the extraction service with optional Gemini service."""
         self.gemini_service = gemini_service
         self.batch_logging_service = batch_logging_service
+        self.ingestion_service = IngestionService()
     
+    async def process_rent_roll_documents(
+        self,
+        documents: List[Dict[str, Any]],
+        progress_service: Any = None,
+        task_id: Optional[str] = None
+    ) -> List[RentRollItem]:
+        """
+        Process multiple rent roll documents and return a list of RentRollItems.
+        Does not perform deduplication/synthesis; that happens in SynthesisService.
+        """
+        all_rent_roll_items = []
+        
+        for doc in documents:
+            file_content = doc.get("content")
+            filename = doc.get("filename", "unknown")
+            file_type = doc.get("type", "").lower()
+            
+            # Estimate total units if possible or pass 0
+            # Ideally we get this from property meta but we might not have it yet.
+            # Passing 0 usually works for extraction prompts.
+            total_units = 0
+            
+            try:
+                items = []
+                if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
+                    items = await self.ingestion_service.extract_rent_roll_from_excel(
+                        file_content, total_units=total_units, filename=filename
+                    )
+                elif file_type in ["pdf", "visual"] or filename.endswith((".pdf", ".png", ".jpg")):
+                    items = await self.ingestion_service.extract_rent_roll_from_pdf(
+                        file_content, total_units=total_units, filename=filename
+                    )
+                
+                if items:
+                    all_rent_roll_items.extend(items)
+                    logger.info(f"Extracted {len(items)} rent roll items from {filename}")
+            except Exception as e:
+                logger.error(f"Error processing Rent Roll {filename}: {e}")
+                
+        return all_rent_roll_items
+
     async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
         Extract aggregated financial data from CSV files.

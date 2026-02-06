@@ -455,44 +455,50 @@ async def normalize_package_documents(
                 status_code=400,
                 detail=f"No documents found in package {package_id}"
             )
+            
+    # Helper to load file content
+    async def load_file_content(doc_metadata):
+        doc_id = doc_metadata.document_id
+        if doc_id in file_storage_cache:
+            return file_storage_cache[doc_id]
+        
+        filename = doc_metadata.filename
+        extension = Path(filename).suffix
+        storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+        
+        try:
+            content = await storage_service.get_document_file(storage_path)
+            if content:
+                file_data = {
+                    "content": content,
+                    "filename": filename,
+                    "document_type": doc_metadata.document_type,
+                    "package_id": package_id
+                }
+                file_storage_cache[doc_id] = file_data
+                return file_data
+        except Exception as e:
+            logger.error(f"Error retrieving document {doc_id}: {str(e)}")
+        return None
+
+    # Collect documents by category for segmented processing
+    rent_roll_docs = []
+    financial_docs = [] # T12, Tax, Utilities, etc.
+    om_docs = []
+    
+    documents_count = 0
     
     for doc_type in target_types:
         if doc_type not in package.documents:
             continue
         
         for doc_metadata in package.documents[doc_type]:
-            doc_id = doc_metadata.document_id
-            
-            # Retrieve file content from cache or GCP storage
-            if doc_id in file_storage_cache:
-                file_data = file_storage_cache[doc_id]
-            else:
-                # Try to load from GCP storage using the correct path
-                # The storage service's _get_document_path already includes the extension
-                filename = doc_metadata.filename
-                extension = Path(filename).suffix
-                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+            file_data = await load_file_content(doc_metadata)
+            if not file_data:
+                continue
                 
-                try:
-                    file_content = await storage_service.get_document_file(storage_path)
-                    if file_content:
-                        file_data = {
-                            "content": file_content,
-                            "filename": filename,
-                            "document_type": doc_metadata.document_type,
-                            "package_id": package_id
-                        }
-                        # Update cache
-                        file_storage_cache[doc_id] = file_data
-                    else:
-                        logger.warning(f"File content not found for document {doc_id} at {storage_path}")
-                        continue
-                except Exception as e:
-                    logger.error(f"Error retrieving document {doc_id}: {str(e)}")
-                    continue
-            
-            # Determine file type
             filename = file_data["filename"]
+            # Determine file type
             if filename.endswith((".xlsx", ".xls")):
                 file_type = "excel"
             elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
@@ -502,18 +508,31 @@ async def normalize_package_documents(
             else:
                 logger.warning(f"Unsupported file type: {filename}")
                 continue
-            
-            documents_to_process.append({
+                
+            doc_info = {
                 "content": file_data["content"],
                 "filename": filename,
                 "type": file_type,
                 "document_category": doc_metadata.document_type,
-                "document_id": doc_id # Pass document_id for downstream linking
-            })
-    
-    if not documents_to_process:
+                "document_id": doc_metadata.document_id
+            }
+            
+            documents_count += 1
+            
+            if doc_metadata.document_type == DocumentType.RENT_ROLL:
+                rent_roll_docs.append(doc_info)
+            elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
+                om_docs.append(doc_info)
+                # OMs also contain financials, so add to financial_docs too?
+                # Actually, standard flow extracts proforma from OM.
+                # Let's add to financial_docs as well so expenses are extracted.
+                financial_docs.append(doc_info)
+            else:
+                # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
+                financial_docs.append(doc_info)
+
+    if documents_count == 0:
         logger.warning(f"No processable documents found for package {package_id}")
-        # Return empty result instead of error for best possible outcome
         return DocumentNormalizationResult(
             document_id="multiple",
             document_type=document_type or DocumentType.FINANCIALS,
@@ -523,37 +542,64 @@ async def normalize_package_documents(
             confidence_average=0.0
         )
     
-    logger.info(f"Processing {len(documents_to_process)} documents for package {package_id}")
-    for idx, doc in enumerate(documents_to_process):
-        logger.info(f"  Document {idx+1}: {doc['filename']} ({doc['type']}, {len(doc['content'])} bytes)")
+    logger.info(f"Processing {documents_count} documents: {len(rent_roll_docs)} Rent Rolls, {len(financial_docs)} Financials/Other")
     
-    await progress_service.update_progress(package_id, 20, f"Extracting data from {len(documents_to_process)} documents (this may take a minute)...")
+    await progress_service.update_progress(package_id, 20, f"Processing {documents_count} documents folder by folder...")
     
-    # Process documents and extract normalized data
-    try:
-        normalized_items, om_proforma_results = await extraction_service.process_financial_documents(
-            documents_to_process,
-            progress_service=progress_service,
-            task_id=package_id
-        )
-        logger.info(f"Extraction service returned {len(normalized_items) if normalized_items else 0} normalized items and {len(om_proforma_results)} OM tables")
-    except Exception as e:
-        logger.error(f"Error processing documents: {str(e)}", exc_info=True)
-        await progress_service.update_progress(package_id, 0, f"Normalization failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
+    # --- 1. Process Rent Rolls (Segmented) ---
+    extracted_rent_roll = []
+    if rent_roll_docs:
+        try:
+            logger.info("Normalizing Rent Roll folder...")
+            extracted_rent_roll = await extraction_service.process_rent_roll_documents(
+                rent_roll_docs,
+                progress_service=progress_service,
+                task_id=package_id
+            )
+            package.rent_roll_data = extracted_rent_roll
+            logger.info(f"Saved {len(extracted_rent_roll)} rent roll items to package")
+        except Exception as e:
+            logger.error(f"Error processing Rent Rolls: {e}")
+            # Continue to other folders
+            
+    # --- 2. Process Financials / OM (Segmented) ---
+    extracted_financials = []
+    extracted_om_proforma = []
     
-    if not normalized_items:
-        logger.warning("No expense items extracted from documents. Continuing with empty result.")
-        normalized_items = []
+    if financial_docs:
+        try:
+            logger.info("Normalizing Financials/OM folders...")
+            extracted_financials, extracted_om_proforma = await extraction_service.process_financial_documents(
+                financial_docs,
+                progress_service=progress_service,
+                task_id=package_id
+            )
+            
+            # Assign unique IDs to financials
+            for idx, item in enumerate(extracted_financials):
+                item.id = str(uuid.uuid4())
+                
+            package.financials_data = extracted_financials
+            if extracted_om_proforma:
+                package.om_proforma_data = extracted_om_proforma
+                
+            logger.info(f"Saved {len(extracted_financials)} financial items and {len(extracted_om_proforma)} OM tables to package")
+            
+        except Exception as e:
+             logger.error(f"Error processing Financials: {e}")
+             await progress_service.update_progress(package_id, 0, f"Normalization failed: {str(e)}")
+             raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
+
+    # Consolidate normalized_data for backward compatibility / Verification UI
+    # The UI likely consumes package.normalized_data
+    # We should populate it with everything that needs verification (Financials)
+    # Rent Roll items usually have their own widget, but if we want them in the "Data Verification" table?
+    # Usually Rent Roll is separate. The "normalized_data" field in schema is List[NormalizedDataItem].
+    # RentRollItem is NOT NormalizedDataItem.
+    # So normalized_data should contain the financials_data.
+    package.normalized_data = package.financials_data
     
-    # Assign unique IDs
-    for idx, item in enumerate(normalized_items):
-        item.id = str(uuid.uuid4())
-    
-    # Save normalized data to package
     package.normalization_status = "in_progress"
-    package.normalized_data = normalized_items  # Save extracted items to package
-    package.om_proforma_data = om_proforma_results # Save OM Proforma tables
     
     # Update cache and persist to GCP
     deal_packages_cache[package_id] = package
@@ -936,90 +982,35 @@ async def analyze_deal_package(
     ingestion_service = IngestionService()
     synthesis_service = SynthesisService()
     
-    # ===== STEP 1: BUILD ANALYSIS OBJECT FROM PACKAGE DATA =====
-    # We use the normalized data that was stored in the package (and verified by user)
-    # If not present (legacy packages), we might need to re-extract, but we'll assume
-    # the new flow enforces normalization first.
+    # ===== STEP 1: LOAD PACKAGE DATA (NEW SEGMENTED FLOW) =====
+    # We load from the segmented data stores in the package.
     
     await progress_service.update_progress(package_id, 20, "Aggregating package data...")
     
-    normalized_items = package.normalized_data
+    # Financials (Expenses)
+    normalized_items = package.financials_data if package.financials_data else package.normalized_data
     
-    # If no items found but we have documents, try to extract (fallback/legacy support)
-    if not normalized_items and any(package.documents.values()):
-        logger.info("No normalized data found in package. Attempting on-the-fly extraction (legacy mode)...")
-        try:
-             # Re-extract normalized data from documents
-            extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service)
-            
-            # Collect documents to process
-            documents_to_process = []
-            for doc_type, doc_list in package.documents.items():
-                for doc_metadata in doc_list:
-                    doc_id = doc_metadata.document_id
-                    
-                    # Retrieve file content
-                    if doc_id in file_storage_cache:
-                        file_data = file_storage_cache[doc_id]
-                    else:
-                        filename = doc_metadata.filename
-                        extension = Path(filename).suffix
-                        storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
-                        
-                        try:
-                            file_content = await storage_service.get_document_file(storage_path)
-                            if file_content:
-                                file_data = {
-                                    "content": file_content,
-                                    "filename": filename,
-                                    "document_type": doc_metadata.document_type,
-                                    "package_id": package_id
-                                }
-                                file_storage_cache[doc_id] = file_data
-                            else:
-                                continue
-                        except Exception as e:
-                            logger.error(f"Error retrieving document {doc_id}: {str(e)}")
-                            continue
-                    
-                    # Determine file type
-                    filename = file_data["filename"]
-                    if filename.endswith((".xlsx", ".xls")):
-                        file_type = "excel"
-                    elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
-                        file_type = "visual"
-                    elif filename.lower().endswith(".csv"):
-                        file_type = "csv"
-                    else:
-                        continue
-                    
-                    documents_to_process.append({
-                        "content": file_data["content"],
-                        "filename": filename,
-                        "type": file_type
-                    })
-            
-            normalized_items, _ = await extraction_service.process_financial_documents(
-                documents_to_process,
-                progress_service=progress_service,
-                task_id=package_id,
-                progress_start=25,
-                progress_end=45
-            )
-            # Don't save back to package in this fallback mode to avoid overwriting future proper usage
-        except Exception as e:
-            logger.warning(f"Fallback extraction failed: {str(e)}")
-            normalized_items = []
-
-    logger.info(f"Using {len(normalized_items)} normalized items for analysis")
+    # Rent Roll
+    rent_roll_items = package.rent_roll_data
+    
+    logger.info(f"Using {len(normalized_items)} normalized items and {len(rent_roll_items)} rent roll items for analysis")
     
     # ===== STEP 2: SYNTHESIZE DATA FROM ALL DOCUMENTS (OMNISCIENT PATTERN) =====
-    # Replace OM-centric extraction with priority-based synthesis
     
     await progress_service.update_progress(package_id, 30, "Synthesizing property metadata from all documents...")
     
     # Run Metadata Synthesizer (Priority-based selection)
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
+    
+    # Note: If rent roll has more units than found in expenses/OM, update it
+    if rent_roll_items:
+        rr_units = len(rent_roll_items)
+        if rr_units > synthesized_metadata['total_units']['value']:
+             synthesized_metadata['total_units'] = {
+                 "value": rr_units,
+                 "source": "Rent Roll Data",
+                 "score": 90
+             }
     
     logger.info("=== SYNTHESIZED METADATA ===")
     logger.info(f"Purchase Price: ${synthesized_metadata['purchase_price']['value']:,.2f} (from {synthesized_metadata['purchase_price']['source']})")
@@ -1036,101 +1027,70 @@ async def analyze_deal_package(
         current_loan_balance=synthesized_metadata.get('current_loan_balance', {}).get('value', 0.0)
     )
     
-    # Extract rent roll items from normalized data
+    # Extract rent roll items (Use pre-processed Rent Roll data if available)
     await progress_service.update_progress(package_id, 40, "Building master rent roll from all documents...")
     
-    # Try to extract rent roll from OM first (if available) for backward compatibility
     rent_roll: List[RentRollItem] = []
-    selected_om = None
-    om_docs = package.documents.get(DocumentType.OFFERING_MEMORANDUM, [])
-    if om_docs:
-        selected_om = om_docs[0]
-        if len(om_docs) > 1 and package.property_name:
-            prop_parts = package.property_name.lower().split()
-            best_score = 0
-            for doc in om_docs:
-                score = sum(1 for p in prop_parts if p in doc.filename.lower())
-                if score > best_score:
-                    best_score = score
-                    selected_om = doc
+    
+    if rent_roll_items:
+        # We already extracted rent rolls during normalization phase
+        # Just need to synthesize/deduplicate them
+        rent_roll = synthesis_service.build_master_rent_roll(rent_roll_items)
+        logger.info(f"Master rent roll built from {len(rent_roll_items)} raw items -> {len(rent_roll)} unique units")
+    else:
+        # Fallback for legacy packages or if extraction failed
+        # Try to extract rent roll from OM first (if available) for backward compatibility
+        selected_om = None
+        om_docs = package.documents.get(DocumentType.OFFERING_MEMORANDUM, [])
+        if om_docs:
+            selected_om = om_docs[0]
+            if len(om_docs) > 1 and package.property_name:
+                prop_parts = package.property_name.lower().split()
+                best_score = 0
+                for doc in om_docs:
+                    score = sum(1 for p in prop_parts if p in doc.filename.lower())
+                    if score > best_score:
+                        best_score = score
+                        selected_om = doc
+            
+            try:
+                doc_id = selected_om.document_id
+                file_content = None
+                if doc_id in file_storage_cache:
+                    file_content = file_storage_cache[doc_id].get("content")
+                else:
+                    extension = Path(selected_om.filename).suffix
+                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
+                    file_content = await storage_service.get_document_file(storage_path)
+                
+                if file_content:
+                    target_units = property_meta.total_units if property_meta.total_units > 0 else 0
+                    
+                    # Check file type and use appropriate extraction method
+                    extension = Path(selected_om.filename).suffix.lower()
+                    if extension in ['.xlsx', '.xls']:
+                        # Use Excel-specific extraction
+                        om_rent_roll = await ingestion_service.extract_rent_roll_from_excel(
+                            file_content,
+                            total_units=target_units
+                        )
+                    else:
+                        # Use PDF extraction
+                        om_rent_roll = await ingestion_service.extract_rent_roll_from_pdf(
+                            file_content,
+                            total_units=target_units
+                        )
+                    
+                    if om_rent_roll:
+                        rent_roll.extend(om_rent_roll)
+                        logger.info(f"Extracted {len(om_rent_roll)} rent roll items from OM")
+            except Exception as e:
+                logger.warning(f"Failed to extract rent roll from OM: {e}")
         
-        try:
-            doc_id = selected_om.document_id
-            file_content = None
-            if doc_id in file_storage_cache:
-                file_content = file_storage_cache[doc_id].get("content")
-            else:
-                extension = Path(selected_om.filename).suffix
-                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
-                file_content = await storage_service.get_document_file(storage_path)
-            
-            if file_content:
-                target_units = property_meta.total_units if property_meta.total_units > 0 else 0
-                
-                # Check file type and use appropriate extraction method
-                extension = Path(selected_om.filename).suffix.lower()
-                if extension in ['.xlsx', '.xls']:
-                    # Use Excel-specific extraction
-                    om_rent_roll = await ingestion_service.extract_rent_roll_from_excel(
-                        file_content,
-                        total_units=target_units
-                    )
-                else:
-                    # Use PDF extraction
-                    om_rent_roll = await ingestion_service.extract_rent_roll_from_pdf(
-                        file_content,
-                        total_units=target_units
-                    )
-                
-                if om_rent_roll:
-                    rent_roll.extend(om_rent_roll)
-                    logger.info(f"Extracted {len(om_rent_roll)} rent roll items from OM")
-        except Exception as e:
-            logger.warning(f"Failed to extract rent roll from OM: {e}")
-    
-    # Extract rent roll from other documents (Rent Roll files, etc.)
-    rent_roll_docs = package.documents.get(DocumentType.RENT_ROLL, [])
-    for rent_roll_doc in rent_roll_docs:
-        try:
-            doc_id = rent_roll_doc.document_id
-            file_content = None
-            if doc_id in file_storage_cache:
-                file_content = file_storage_cache[doc_id].get("content")
-            else:
-                extension = Path(rent_roll_doc.filename).suffix
-                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
-                file_content = await storage_service.get_document_file(storage_path)
-            
-            if file_content:
-                target_units = property_meta.total_units if property_meta.total_units > 0 else 0
-                
-                # Check file type and use appropriate extraction method
-                extension = Path(rent_roll_doc.filename).suffix.lower()
-                if extension in ['.xlsx', '.xls']:
-                    # Use Excel-specific extraction
-                    extracted_items = await ingestion_service.extract_rent_roll_from_excel(
-                        file_content,
-                        total_units=target_units,
-                        filename=rent_roll_doc.filename
-                    )
-                else:
-                    # Use PDF extraction
-                    extracted_items = await ingestion_service.extract_rent_roll_from_pdf(
-                        file_content,
-                        total_units=target_units,
-                        filename=rent_roll_doc.filename
-                    )
-                
-                if extracted_items:
-                    rent_roll.extend(extracted_items)
-                    logger.info(f"Extracted {len(extracted_items)} rent roll items from {rent_roll_doc.filename}")
-        except Exception as e:
-            logger.warning(f"Failed to extract rent roll from {rent_roll_doc.filename}: {e}")
-    
-    # Run Rent Roll Accumulator (Deduplication by unit number)
-    if rent_roll:
-        rent_roll = synthesis_service.build_master_rent_roll(rent_roll)
-        logger.info(f"Master rent roll built with {len(rent_roll)} unique units")
+        # Run Rent Roll Accumulator (Deduplication by unit number)
+        if rent_roll:
+            rent_roll = synthesis_service.build_master_rent_roll(rent_roll)
+            logger.info(f"Master rent roll built with {len(rent_roll)} unique units")
 
     # Apply Manual Overrides for Property Meta (Overrides everything)
     if package.manual_overrides:
