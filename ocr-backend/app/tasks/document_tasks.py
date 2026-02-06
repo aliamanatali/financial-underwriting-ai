@@ -115,6 +115,105 @@ def process_document_task(self, document_id: str, storage_path: str) -> Dict[str
                  file_data,
                  mime_type
              )
+        elif mime_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+             logger.info(f"Processing Excel document {document_id} ({mime_type})")
+             
+             # Convert Excel to text representation for Gemini
+             import pandas as pd
+             import io
+             
+             try:
+                 # Read Excel file
+                 excel_file = io.BytesIO(file_data)
+                 # Read all sheets
+                 xls = pd.ExcelFile(excel_file)
+                 
+                 text_parts = []
+                 total_rows = 0
+                 
+                 for sheet_name in xls.sheet_names:
+                     df = pd.read_excel(xls, sheet_name=sheet_name)
+                     # Convert to string/markdown format
+                     # Limit rows to avoid huge context, or just take first N rows
+                     # For financial analysis, we usually need the full rent roll
+                     
+                     # Simple CSV-like representation
+                     text_parts.append(f"--- Sheet: {sheet_name} ---")
+                     text_parts.append(df.to_string(index=False))
+                     total_rows += len(df)
+                 
+                 extracted_text = "\n\n".join(text_parts)
+                 
+                 # Calculate processing time
+                 processing_time = time.time() - start_time
+                 
+                 # Update metadata
+                 metadata = DocumentMetadata(
+                     page_count=len(xls.sheet_names),
+                     has_handwriting=False,
+                     quality=ConfidenceLevel.HIGH,
+                     file_size=len(file_data),
+                     mime_type=mime_type,
+                     extraction_notes=f"Excel file processed. Sheets: {len(xls.sheet_names)}, Total Rows: {total_rows}",
+                     is_chunked=False
+                 )
+                 
+                 # Update document with final results
+                 asyncio.run(_update_document_final(
+                     document_id,
+                     ProcessingStatus.COMPLETED,
+                     extracted_text,
+                     metadata,
+                     None,
+                     processing_time
+                 ))
+                 
+                 # Update task state
+                 self.update_state(
+                    state='SUCCESS',
+                    meta={'status': 'Completed', 'progress': 100}
+                 )
+                 
+                 result = {
+                     'document_id': document_id,
+                     'status': 'completed',
+                     'text_length': len(extracted_text),
+                     'page_count': len(xls.sheet_names)
+                 }
+                 
+             except Exception as e:
+                 logger.error(f"Failed to process Excel file: {e}")
+                 # Fallback to simple completion if pandas fails
+                 # Calculate processing time
+                 processing_time = time.time() - start_time
+                 
+                 # Update metadata
+                 metadata = DocumentMetadata(
+                     page_count=1,
+                     has_handwriting=False,
+                     quality=ConfidenceLevel.LOW,
+                     file_size=len(file_data),
+                     mime_type=mime_type,
+                     extraction_notes=f"Excel processing failed: {str(e)}. Marked as completed for raw download.",
+                     is_chunked=False
+                 )
+                 
+                 asyncio.run(_update_document_final(
+                     document_id,
+                     ProcessingStatus.COMPLETED,
+                     "Excel Content (Extraction Failed)",
+                     metadata,
+                     None,
+                     processing_time
+                 ))
+                 
+                 result = {
+                     'document_id': document_id,
+                     'status': 'completed',
+                     'text_length': 0,
+                     'page_count': 1
+                 }
+             
         else:
             # Assume PDF
             # Get PDF info

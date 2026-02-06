@@ -44,7 +44,15 @@ async def upload_document(
         DocumentUploadResponse with document_id, task_id, and status
     """
     # Validate file type
-    allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/tiff"]
+    allowed_types = [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/tiff",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel"
+    ]
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400,

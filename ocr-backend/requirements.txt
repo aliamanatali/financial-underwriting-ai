@@ -37,3 +37,7 @@ redis>=5.0.0
 # Utilities
 python-dateutil
 fpdf2
+# Excel handling
+pandas
+openpyxl
+xlrd

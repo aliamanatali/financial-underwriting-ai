@@ -26,8 +26,14 @@ export default function DocumentUpload({
 
   const validateFile = (file: File): string | null => {
     // Check file type
-    if (file.type !== "application/pdf") {
-      return "Only PDF files are allowed";
+    const allowedTypes = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+      "application/vnd.ms-excel" // .xls
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      return "Only PDF and Excel files are allowed";
     }
 
     // Validation limit removed
@@ -186,20 +192,20 @@ export default function DocumentUpload({
                 htmlFor="file-upload"
                 className="cursor-pointer inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-[#FF5E00] hover:bg-[#E65400] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-#FFF5F00"
               >
-                <span>Choose a PDF file</span>
+                <span>Choose a PDF or Excel file</span>
                 <input
                   id="file-upload"
                   name="file-upload"
                   type="file"
                   className="sr-only"
-                  accept=".pdf,application/pdf"
+                  accept=".pdf,application/pdf,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                   onChange={handleFileInput}
                   disabled={isUploading}
                 />
               </label>
             </div>
             <p className="mt-2 text-sm text-gray-600">or drag and drop</p>
-            <p className="mt-1 text-xs text-gray-500">PDF files (No Size Limit)</p>
+            <p className="mt-1 text-xs text-gray-500">PDF or Excel files (No Size Limit)</p>
           </>
         )}
       </div>
