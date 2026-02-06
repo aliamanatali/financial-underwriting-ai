@@ -31,7 +31,7 @@ from app.services.explainability_service import ExplainabilityService
 from app.services.progress_service import ProgressService
 from app.services.classification_service import ClassificationService
 from app.services.batch_logging_service import BatchLoggingService
-from app.dependencies import get_gemini_service, get_progress_service, get_explainability_service, get_classification_service, get_batch_logging_service
+from app.dependencies import get_gemini_service, get_openai_service, get_progress_service, get_explainability_service, get_classification_service, get_batch_logging_service
 from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAPPING
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
@@ -827,6 +827,128 @@ async def update_manual_overrides(
     }
 
 
+@router.delete("/packages/{package_id}/documents/{document_id}")
+async def delete_document_from_package(
+    package_id: str,
+    document_id: str
+):
+    """
+    Delete a document from a deal package.
+    """
+    # Check cache first
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        # Try to load from GCP storage
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+        deal_packages_cache[package_id] = package
+
+    # Find the document
+    found_doc = None
+    
+    for category, docs in package.documents.items():
+        for i, doc in enumerate(docs):
+            if doc.document_id == document_id:
+                found_doc = doc
+                # Remove from category
+                package.documents[category].pop(i)
+                break
+        if found_doc:
+            break
+            
+    if not found_doc:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
+        
+    # Update updated_at
+    package.updated_at = datetime.utcnow().isoformat()
+    
+    # Save changes
+    deal_packages_cache[package_id] = package
+    await storage_service.save_deal_package(package.model_dump())
+    
+    # Remove from file storage cache
+    if document_id in file_storage_cache:
+        del file_storage_cache[document_id]
+        
+    # TODO: Also remove from actual storage (GCP/Local) to save space?
+    # For now, we just remove reference from package.
+    
+    return {
+        "message": "Document deleted successfully",
+        "document_id": document_id
+    }
+
+
+@router.put("/packages/{package_id}/documents/{document_id}/category")
+async def update_document_category(
+    package_id: str,
+    document_id: str,
+    new_category: str
+):
+    """
+    Move a document to a different category.
+    """
+    # Validate new category
+    try:
+        new_doc_type = DocumentType(new_category)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {new_category}")
+
+    # Check cache first
+    if package_id in deal_packages_cache:
+        package = deal_packages_cache[package_id]
+    else:
+        # Try to load from GCP storage
+        package_data = await storage_service.get_deal_package(package_id)
+        if not package_data:
+            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+        package = DealPackage(**package_data)
+        deal_packages_cache[package_id] = package
+
+    # Find the document
+    found_doc = None
+    old_category = None
+    
+    for category, docs in package.documents.items():
+        for i, doc in enumerate(docs):
+            if doc.document_id == document_id:
+                found_doc = doc
+                old_category = category
+                # Remove from old category
+                package.documents[category].pop(i)
+                break
+        if found_doc:
+            break
+            
+    if not found_doc:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
+        
+    # Update document type
+    found_doc.document_type = new_doc_type
+    
+    # Add to new category
+    if new_doc_type not in package.documents:
+        package.documents[new_doc_type] = []
+    package.documents[new_doc_type].append(found_doc)
+    
+    # Update updated_at
+    package.updated_at = datetime.utcnow().isoformat()
+    
+    # Save changes
+    deal_packages_cache[package_id] = package
+    await storage_service.save_deal_package(package.model_dump())
+    
+    return {
+        "message": "Document moved successfully",
+        "document_id": document_id,
+        "old_category": old_category,
+        "new_category": new_category
+    }
+
+
 @router.get("/document-types")
 async def get_document_types():
     """
@@ -881,6 +1003,7 @@ async def analyze_deal_package(
     package_id: str,
     deal_parameters: Dict[str, Any],
     gemini_service: GeminiService = Depends(get_gemini_service),
+    openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service)
 ):
@@ -978,9 +1101,10 @@ async def analyze_deal_package(
     audit_log_service = AuditLogService()
     financial_service = FinancialService(audit_log_service=audit_log_service)
     excel_service = ExcelService()
-    memo_service = MemoService(gemini_service=gemini_service)
+    memo_service = MemoService(gemini_service=gemini_service, openai_service=openai_service)
     ingestion_service = IngestionService()
     synthesis_service = SynthesisService()
+    explainability_service = ExplainabilityService(gemini_client=gemini_service, openai_service=openai_service)
     
     # ===== STEP 1: LOAD PACKAGE DATA (NEW SEGMENTED FLOW) =====
     # We load from the segmented data stores in the package.

@@ -11,10 +11,12 @@ from app.models.schemas import (
 )
 from typing import List, Dict, Any, Optional
 from app.services.gemini_client import GeminiClient
+from app.services.openai_client import OpenAIClient
 
 class ExplainabilityService:
-    def __init__(self, gemini_client: Optional[GeminiClient] = None):
+    def __init__(self, gemini_client: Optional[GeminiClient] = None, openai_service: Optional[OpenAIClient] = None):
         self.gemini_client = gemini_client
+        self.openai_service = openai_service
 
     async def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
         """
@@ -101,7 +103,11 @@ class ExplainabilityService:
             - "Upside in rent" refers to the Loss to Lease (Current vs Market).
             """
             
-            if self.gemini_client:
+            if self.openai_service and self.openai_service.client:
+                # Use OpenAI for commentary
+                commentary = await self.openai_service.generate_content_async(prompt)
+                self.analysis.analyst_commentary = commentary
+            elif self.gemini_client:
                 # Use fast model for commentary
                 commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
                 self.analysis.analyst_commentary = commentary
@@ -845,11 +851,13 @@ class ExplainabilityService:
         """
         
         try:
-            if not self.gemini_client:
+            if self.openai_service and self.openai_service.client:
+                response_text = await self.openai_service.generate_content_async(prompt)
+            elif self.gemini_client:
+                response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+            else:
                 # Fallback to simple keyword check if LLM not available
                 return "Unknown (LLM Unavailable)"
-                
-            response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
             
             # Simple parsing of the JSON response
             import json

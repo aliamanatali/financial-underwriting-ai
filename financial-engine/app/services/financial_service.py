@@ -54,6 +54,49 @@ class FinancialService:
                 final_expenses.extend(items)
                 continue
             
+            # --- Strategy 0.5: Frequency-Based Deduplication (Duplicate Entries) ---
+            # Fix for "Fire alarm monitoring extracted 30 times" and "Duplicate Property Tax entries"
+            # Logic:
+            # - If an EXACT amount appears > 15 times, it's likely a system extraction error (Page repeats). Keep 1.
+            # - If a Large Amount (> $5,000) appears > 1 time for periodic items (Tax, Insurance), keep 1 (or Max).
+            
+            from collections import Counter
+            amount_counts = Counter(i.amount for i in items)
+            repeated_amounts = {amt for amt, count in amount_counts.items() if count > 1}
+            
+            unique_items_map = {} # Key: Amount -> Item
+            items_to_keep = []
+            
+            # Threshold for "suspiciously frequent" small items
+            HIGH_FREQUENCY_THRESHOLD = 4
+            
+            for item in items:
+                amt = item.amount
+                if amt in repeated_amounts:
+                    # If it's a very frequent item (e.g. Fire Alarm $1,140 appearing 30 times)
+                    if amount_counts[amt] > HIGH_FREQUENCY_THRESHOLD:
+                        if amt not in unique_items_map:
+                             unique_items_map[amt] = item
+                             items_to_keep.append(item)
+                             logger.warning(f"Deduplicating frequent item in {category}: {item.original_text} (${amt}) found {amount_counts[amt]} times. Keeping 1.")
+                        continue
+                    
+                    # If it's a Large Item (> $5,000) duplicated (e.g. Tax Bill appearing twice)
+                    if amt > 5000:
+                         if amt not in unique_items_map:
+                             unique_items_map[amt] = item
+                             items_to_keep.append(item)
+                             logger.warning(f"Deduplicating large item in {category}: {item.original_text} (${amt}) found {amount_counts[amt]} times. Keeping 1.")
+                         continue
+                
+                # Otherwise keep it
+                items_to_keep.append(item)
+            
+            items = items_to_keep # Update the list for subsequent strategies
+            
+            if not items:
+                continue
+
             # --- Strategy 1: Look for Explicit Totals ---
             total_item = None
             others = []
@@ -248,7 +291,11 @@ class FinancialService:
                     # FIX: Exclude Revenue Items from Expense Sum
                     ExpenseCategory.OTHER_INCOME,
                     ExpenseCategory.GROSS_POTENTIAL_RENT,
-                    ExpenseCategory.REIMBURSEMENTS
+                    ExpenseCategory.REIMBURSEMENTS,
+                    # FIX: Strict CapEx Exclusion
+                    # ExpenseCategory.CAPITAL_EXPENDITURE is not in the Enum (it's a CategoryGroup), using CAPITAL_RESERVES mostly.
+                    # But checking schema, there is no CAPITAL_EXPENDITURE in ExpenseCategory enum.
+                    # We already excluded CAPITAL_RESERVES above.
                 ]:
                     logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
                     continue

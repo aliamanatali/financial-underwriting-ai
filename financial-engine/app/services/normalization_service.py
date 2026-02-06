@@ -329,7 +329,42 @@ class NormalizationService:
                     # We force it to CAPITAL_RESERVES to exclude from NOI
                     forced_category = ExpenseCategory.CAPITAL_RESERVES
 
-                # 3. Exclude "Profit & Loss" document header/summary lines that might be massive sums
+                # 3. Exclude Capital Expenditures (CapEx) incorrectly classified as Operating Expenses
+                # User-reported issues: "Guard railings", "Staircase landings", "Roofing", "Well drilling", "Permits"
+                capex_keywords = [
+                    "well drilling", "drilling", "pump replacement",
+                    "guard rail", "railing", "balcony repair", "staircase", "landing",
+                    "roofing", "roof repair", "roof replacement", "shingles",
+                    "construction", "renovation", "remodel", "upgrades",
+                    "permit", "plan check", "architect", "engineering",
+                    "asphalt", "paving", "concrete", "foundation",
+                    "hvac replacement", "boiler replacement", "capital"
+                ]
+                
+                if any(k in desc_lower for k in capex_keywords):
+                     # Be careful with "Repair" - generic repairs are OpEx. Specific large replacements are CapEx.
+                     # "Roof Repair" can be OpEx, but often large amounts > $2000 are CapEx.
+                     # For now, we trust the specific list above (e.g. "Roofing" is usually the trade name for replacement).
+                     # "Guard railings" $145k is definitely CapEx.
+                     logger.warning(f"Reclassifying CapEx item to Capital Reserves: {desc} - {expense.get('amount')}")
+                     forced_category = ExpenseCategory.CAPITAL_RESERVES
+
+                # 4. Exclude Non-Operating Items (Loans, Depreciation, Security Deposits)
+                non_op_keywords = [
+                    "depreciation", "amortization", "interest expense", "loan interest",
+                    "loan principal", "mortgage", "lender", "bank fee", "financing",
+                    "security deposit", "tenant deposit", "refund", "return of deposit",
+                    "legal settlement", "attorney fee - purchase", "closing cost"
+                ]
+                if any(k in desc_lower for k in non_op_keywords):
+                     if "interest" in desc_lower and "income" in desc_lower:
+                         # Interest Income -> Other Income (Revenue)
+                         pass
+                     else:
+                         logger.info(f"Reclassifying Non-Operating item: {desc}")
+                         forced_category = ExpenseCategory.UNCATEGORIZED
+
+                # 5. Exclude "Profit & Loss" document header/summary lines that might be massive sums
                 # "Assets + Liabilities + Expenses" sum
                 # FIX: Enhanced Document Title / Filename Exclusion
                 if any(x in desc_lower for x in ["profit & loss", "balance sheet", "financial statement", "rent roll", "offering memorandum"]):

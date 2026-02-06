@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     gemini_temperature: float = 0.0
     gemini_max_output_tokens: int = 8192
     
+    # OpenAI API settings
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4o"
     # Server settings
     port: int = 8001
     host: str = "0.0.0.0"

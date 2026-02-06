@@ -15,6 +15,20 @@ class IngestionService:
         self.ocr_backend_client = OcrBackendClient()
         self.om_scraper_service = OMScraperService(gemini_client=self.gemini_client)
 
+    def _get_val(self, row, keys, default=None):
+        """Helper to get value from row using multiple possible keys (case-insensitive)."""
+        # Convert row keys to lower for lookup
+        row_keys_lower = {k.lower().strip(): k for k in row.keys()}
+        
+        for key in keys:
+            key_lower = key.lower().strip()
+            if key_lower in row_keys_lower:
+                actual_key = row_keys_lower[key_lower]
+                val = row.get(actual_key)
+                if val is not None and val != "":
+                    return val
+        return default
+
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta) -> List[RentRollItem]:
         import os
         filename = os.path.basename(file_path)
@@ -38,22 +52,26 @@ class IngestionService:
 
         rent_roll = []
         for _, row in df.iterrows():
-            if not row.get("Unit Number") and not row.get("Tenant Name"):
+            # Use case-insensitive lookup
+            unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit"], ""))
+            tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident"], ""))
+            
+            if not unit_number and not tenant_name:
                 continue
 
             rent_roll.append(RentRollItem(
-                    unit_number=str(row.get("Unit Number", "")),
-                    unit_type=str(row.get("Unit Type", "")),
-                    unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or row.get("Size") or 0),
-                    tenant_name=str(row.get("Tenant Name", "")),
-                    current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
-                stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
-                market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
-                move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
-                lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
-                lease_end=str(row.get("Lease End") or row.get("Lease End Date") or ""),
+                    unit_number=unit_number,
+                    unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan"], "")),
+                    unit_size=int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                    tenant_name=tenant_name,
+                    current_rent=float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent"], 0.0)),
+                stabilized_rent=float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                market_rent=float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start"], "")),
+                lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End"], "")),
                 source_file=filename,
-                floor=str(row.get("Floor", ""))
+                floor=str(self._get_val(row, ["Floor", "Level"], ""))
             ))
 
         return rent_roll
@@ -89,24 +107,28 @@ class IngestionService:
             
             rent_roll = []
             for _, row in df.iterrows():
+                # Use case-insensitive lookup
+                unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit"], ""))
+                tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident"], ""))
+                
                 # Skip empty rows
-                if not row.get("Unit Number") and not row.get("Tenant Name"):
+                if not unit_number and not tenant_name:
                     continue
                 
                 try:
                     rent_roll.append(RentRollItem(
-                        unit_number=str(row.get("Unit Number", "")),
-                        unit_type=str(row.get("Unit Type", "")),
-                        unit_size=int(row.get("Unit Size") or row.get("Sq Ft") or row.get("Square Feet") or row.get("SF") or row.get("Size") or 0),
-                        tenant_name=str(row.get("Tenant Name", "")),
-                        current_rent=float(row.get("Rent Amount") or row.get("Current Rent") or 0.0),
-                            stabilized_rent=float(row.get("Stabilized Rent") or row.get("Stabilized") or 0.0),
-                            market_rent=float(row.get("Market Rent") or row.get("Market") or 0.0),
-                            move_in_date=str(row.get("Move In Date") or row.get("Move-In Date") or row.get("Move In") or ""),
-                            lease_start=str(row.get("Lease Start") or row.get("Lease Start Date") or ""),
-                            lease_end=str(row.get("Lease End") or row.get("Lease End Date") or ""),
+                        unit_number=unit_number,
+                        unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan"], "")),
+                        unit_size=int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                        tenant_name=tenant_name,
+                        current_rent=float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent"], 0.0)),
+                            stabilized_rent=float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                            market_rent=float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                            move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                            lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start"], "")),
+                            lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End"], "")),
                             source_file=filename,
-                            floor=str(row.get("Floor", ""))
+                            floor=str(self._get_val(row, ["Floor", "Level"], ""))
                         ))
                 except Exception as e:
                     logger.warning(f"Failed to parse rent roll row: {e}")
@@ -274,7 +296,101 @@ class IngestionService:
         else:
             raise HTTPException(status_code=408, detail="Document processing timed out.")
 
-        # 2. Fetch Prerequisites (Text & PDF Bytes)
+        # 2. Handle Excel Files Special Case
+        if mime_type in ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]:
+            logger.info(f"Processing Excel document {document_id}")
+            try:
+                file_bytes = await self.ocr_backend_client.get_document_bytes(document_id)
+                
+                # 1. Fetch "Text" content which is now a markdown/CSV representation of all sheets
+                # This allows us to try LLM extraction on Excel data if direct parsing fails or for other data types
+                excel_text_repr = await self.ocr_backend_client.get_document_text(document_id)
+                
+                # 2. Try Direct Excel Parsing First (High Confidence)
+                rent_roll = await self.extract_rent_roll_from_excel(file_bytes, filename=f"doc_{document_id}.xlsx")
+                
+                # 3. If Direct Parsing yields nothing, try LLM extraction on the text representation
+                # This handles complex/messy Excel files that don't match standard Rent Roll formats
+                if not rent_roll and excel_text_repr:
+                    logger.info("Direct Excel parsing failed or yielded no units. Attempting LLM extraction on Excel text representation.")
+                    # Use a specialized prompt for Excel text representation
+                    rent_roll_prompt = """
+                    Extract the rent roll from this Excel file content.
+                    The content is presented as text/CSV from multiple sheets.
+                    
+                    CRITICAL: Look for rows representing rental units.
+                    Ignore headers, summaries, or total lines.
+                    
+                    Return a JSON array of objects with keys: "unit_number", "unit_type", "unit_size", "tenant_name", "current_rent", "market_rent", "move_in_date", "lease_start", "lease_end".
+                    """
+                    try:
+                        rent_roll_data = await self.gemini_client.generate_structured_data_async(
+                            f"{rent_roll_prompt}\n\n{excel_text_repr}",
+                            pydantic_schema=RentRollItem,
+                            expect_list=True
+                        )
+                        rent_roll = self.normalization_service.normalize_rent_roll(rent_roll_data)
+                    except Exception as llm_e:
+                        logger.warning(f"LLM extraction from Excel text failed: {llm_e}")
+
+                rent_roll_summary = self._summarize_rent_roll(rent_roll)
+                
+                # 4. Try to extract Property Meta from Excel text representation if available
+                property_meta = PropertyMeta(
+                    address="Extracted from Rent Roll Excel",
+                    year_built=0,
+                    purchase_price=0.0,
+                    total_units=len(rent_roll),
+                    current_loan_balance=0.0,
+                    building_size=0
+                )
+                
+                if excel_text_repr:
+                    try:
+                        meta_prompt = "Extract property address, total units, and any financial info from this Excel content."
+                        extracted_meta = await self.gemini_client.generate_structured_data_async(
+                            f"{meta_prompt}\n\n{excel_text_repr}",
+                            pydantic_schema=PropertyMeta,
+                            expect_list=False
+                        )
+                        # Merge with default
+                        if isinstance(extracted_meta, dict):
+                            # Clean up dict to match PropertyMeta
+                            valid_keys = PropertyMeta.__fields__.keys()
+                            clean_meta = {k: v for k, v in extracted_meta.items() if k in valid_keys}
+                            property_meta = property_meta.copy(update=clean_meta)
+                            # Ensure total_units is consistent if we found rent roll items
+                            if len(rent_roll) > 0:
+                                property_meta.total_units = len(rent_roll)
+                    except Exception as e:
+                        logger.warning(f"Failed to extract meta from Excel text: {e}")
+
+                # Create Analysis Object with Excel Data
+                analysis = UnderwritingAnalysis(
+                    document_id=document_id,
+                    pass_fail_status="PASS",
+                    property_meta=property_meta,
+                    rent_roll=rent_roll,
+                    rent_roll_summary=rent_roll_summary,
+                    historical_expenses=[],
+                    audit_trail=[{
+                        "field_name": "Rent Roll Extraction",
+                        "extracted_value": f"{len(rent_roll)} units",
+                        "source": "Excel File",
+                        "confidence_score": 1.0 if rent_roll else 0.0,
+                        "method": "Direct Excel Parsing + LLM Fallback",
+                        "document_id": document_id
+                    }],
+                    om_proforma=[],
+                    tax_assumptions=None
+                )
+                return analysis
+                
+            except Exception as e:
+                logger.error(f"Failed to process Excel document: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to process Excel document: {str(e)}")
+
+        # 3. Fetch Prerequisites (Text & PDF Bytes)
         # We need these before we can start parallel tasks
         try:
             raw_text, pdf_bytes = await asyncio.gather(
@@ -288,7 +404,7 @@ class IngestionService:
         if not pdf_bytes:
              raise HTTPException(status_code=400, detail="Failed to fetch PDF content from OCR backend.")
 
-        # 3. Define Async Tasks for Parallel Execution
+        # 4. Define Async Tasks for Parallel Execution
         
         # Task A: Property Meta
         async def task_property_meta():
@@ -390,7 +506,7 @@ class IngestionService:
                 logger.error(f"Failed to extract tax assumptions: {e}")
                 return None
 
-        # 4. Execute Phase 1 Parallel Tasks
+        # 5. Execute Phase 1 Parallel Tasks
         logger.info("Starting Phase 1 Parallel Extraction...")
         results_phase1 = await asyncio.gather(
             task_property_meta(),
@@ -403,7 +519,7 @@ class IngestionService:
         property_meta, raw_expenses, pnl_income, om_proforma, tax_assumptions = results_phase1
         logger.info(f"Phase 1 Complete. Extracted Property: {property_meta.address}, Expenses: {len(raw_expenses)}")
 
-        # 5. Execute Phase 2 Parallel Tasks (Dependent on Property Meta)
+        # 6. Execute Phase 2 Parallel Tasks (Dependent on Property Meta)
         # Rent Roll extraction relies on total_units from property_meta for better context
         
         async def task_rent_roll():
@@ -466,10 +582,10 @@ class IngestionService:
         rent_roll, historical_expenses = results_phase2
         logger.info(f"Phase 2 Complete. Rent Roll Items: {len(rent_roll)}, Normalized Expenses: {len(historical_expenses)}")
 
-        # 6. Post-Processing & Aggregation
+        # 7. Post-Processing & Aggregation
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
 
-        # 7. Build Audit Trail
+        # 8. Build Audit Trail
         audit_trail_entries = []
         
         # Property Meta Logs
@@ -492,7 +608,7 @@ class IngestionService:
             if normalized_exp.audit_log:
                 audit_trail_entries.append(normalized_exp.audit_log.model_dump())
 
-        # 8. Create Analysis Object
+        # 9. Create Analysis Object
         analysis = UnderwritingAnalysis(
             document_id=document_id,
             pass_fail_status="PASS",
@@ -505,7 +621,7 @@ class IngestionService:
             tax_assumptions=tax_assumptions
         )
         
-        # 9. Income Reconciliation Warning
+        # 10. Income Reconciliation Warning
         rent_roll_income = analysis.rent_roll_summary.total_annual_rent
         income_discrepancy_warning = self.compare_income_sources(rent_roll_income, pnl_income)
         
