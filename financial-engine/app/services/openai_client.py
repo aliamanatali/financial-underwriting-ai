@@ -15,7 +15,7 @@ class OpenAIClient:
         else:
             self.client = AsyncOpenAI(api_key=self.api_key)
         
-        self.model = settings.openai_model or "gpt-4o"
+        self.model = settings.openai_model or "gpt-5.2-2025-12-11"
 
     async def generate_content_async(self, prompt: str) -> str:
         """

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     
     # OpenAI API settings
     openai_api_key: Optional[str] = None
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-5.2-2025-12-11"
     # Server settings
     port: int = 8001
     host: str = "0.0.0.0"
