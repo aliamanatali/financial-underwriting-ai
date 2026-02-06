@@ -152,7 +152,9 @@ class FinancialService:
         params = analysis.deal_parameters or DealParameters()
         
         # 1. Unit Count Check
-        unit_count = analysis.property_meta.total_units or 0
+        # FIX: Use Rent Roll count as primary source of truth (Document Metadata is often wrong)
+        unit_count = len(analysis.rent_roll) if analysis.rent_roll else (analysis.property_meta.total_units or 0)
+
         if not (params.min_unit_count <= unit_count <= params.max_unit_count):
             status = "FAIL"
             reasons.append(f"Unit count FAIL: {unit_count} units is outside range {params.min_unit_count}-{params.max_unit_count}.")
@@ -362,8 +364,18 @@ class FinancialService:
 
         # Determine Scaling Factor (if Total Units overridden)
         extracted_unit_count = len(analysis.rent_roll)
-        target_unit_count = analysis.property_meta.total_units or extracted_unit_count
         
+        # FIX: Trust Rent Roll count over Document Metadata for Total Units
+        # If rent roll is present, that IS the unit count.
+        if extracted_unit_count > 0:
+            target_unit_count = extracted_unit_count
+            # Update property meta to reflect the correct count
+            if analysis.property_meta.total_units != extracted_unit_count:
+                logger.info(f"Correcting Property Meta Unit Count from {analysis.property_meta.total_units} to {extracted_unit_count} (based on Rent Roll)")
+                analysis.property_meta.total_units = extracted_unit_count
+        else:
+            target_unit_count = analysis.property_meta.total_units or 0
+
         # If rent_roll is empty but summary exists, rely on summary (legacy path), else scale
         scaling_factor = 1.0
         if extracted_unit_count > 0 and target_unit_count > 0:
@@ -672,7 +684,8 @@ class FinancialService:
         # Marketing ~ $150 - $300 per unit per year
         
         # Only estimate if unit count > 5 (small properties might not have payroll)
-        unit_count = analysis.property_meta.total_units or len(analysis.rent_roll) or 0
+        # FIX: Prioritize Rent Roll count
+        unit_count = len(analysis.rent_roll) or analysis.property_meta.total_units or 0
         
         if unit_count > 5:
             if not has_payroll:

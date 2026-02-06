@@ -618,7 +618,7 @@ async def normalize_package_documents(
         vacancy_rate=0.03,
         loan_amount=5000000,
         min_unit_count=15,
-        max_unit_count=80,
+        max_unit_count=8000,
         max_build_year=1970,
         management_fee_rate=0.04,
         tax_rate=0.012,

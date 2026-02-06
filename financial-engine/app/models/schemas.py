@@ -183,7 +183,7 @@ class DealParameters(BaseModel):
     # Gating Thresholds
     min_loan_amount: float = 5_000_000
     min_unit_count: int = 15
-    max_unit_count: int = 80
+    max_unit_count: int = 8000
     max_build_year: int = 1970
 
 class StandardizedExpense(BaseModel):
