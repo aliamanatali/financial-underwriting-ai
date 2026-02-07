@@ -75,49 +75,115 @@ class IngestionService:
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta) -> List[RentRollItem]:
         import os
         filename = os.path.basename(file_path)
-        # Read with no header initially
-        df = pd.read_excel(file_path, header=None)
-
-        # logic to find the row that contains "Unit" AND ("Rent" OR "Month" OR "Amount")
-        # Relaxed logic to catch "$/Month"
-        header_row_idx = None
-        for i, row in df.iterrows():
-            # Clean string conversion handling NaNs
-            row_str = []
-            for x in row.tolist():
-                s = str(x).lower().strip()
-                if s in ['nan', 'none', '', 'nat']:
-                    s = ""
-                row_str.append(s)
-
-            # Check for Unit identifier
-            has_unit = any("unit" in x for x in row_str)
-            # Check for Rent identifier (Rent, $/Month, Amount, Rate)
-            has_rent = any(k in x for x in row_str for k in ["rent", "month", "amount", "rate"])
-            
-            if has_unit and has_rent:
-                # Check for multiple non-empty columns to avoid matching title rows like "Rental Income and Unit Mix Summary"
-                non_empty_count = sum(1 for x in row_str if x)
-                if non_empty_count > 1:
-                    header_row_idx = i
-                    break
-
-        if header_row_idx is None:
-            # Fallback: Just look for "Unit" or "Tenant"
-            for i, row in df.iterrows():
-                row_str = row.astype(str).str.lower().tolist()
-                if any("unit" in x for x in row_str) or any("tenant" in x for x in row_str):
-                    header_row_idx = i
-                    break
         
-        if header_row_idx is None:
-            raise ValueError("Could not find Rent Roll headers in Excel")
+        # Support Multi-Sheet Extraction
+        try:
+            xls = pd.ExcelFile(file_path)
+        except Exception as e:
+            raise ValueError(f"Failed to read Excel file: {e}")
 
-        # Reload with correct header
-        df = pd.read_excel(file_path, header=header_row_idx)
-        df = df.fillna("")
+        best_rent_roll = []
+        best_sheet_name = ""
+        
+        # Iterate through all sheets to find the best candidate
+        for sheet_name in xls.sheet_names:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                if df.empty:
+                    continue
+                    
+                # logic to find the row that contains "Unit" AND ("Rent" OR "Month" OR "Amount")
+                header_row_idx = None
+                for i, row in df.iterrows():
+                    # Limit to first 30 rows for header search to improve performance
+                    if i > 30:
+                        break
+                        
+                    # Clean string conversion handling NaNs
+                    row_str = []
+                    for x in row.tolist():
+                        s = str(x).lower().strip()
+                        if s in ['nan', 'none', '', 'nat']:
+                            s = ""
+                        row_str.append(s)
 
-        rent_roll = []
+                    # Check for Unit identifier (Unit, Apt, Suite, #)
+                    unit_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["unit", "apt", "apartment", "suite", "#"]) and len(x) < 30]
+                    
+                    # Check for Rent identifier (Rent, $/Month, Amount, Rate)
+                    rent_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["rent", "month", "amount", "rate", "price", "charge"]) and len(x) < 30]
+                    
+                    # Check for Tenant identifier (Tenant, Resident, Name)
+                    tenant_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["tenant", "resident", "name", "lessee"]) and len(x) < 30]
+
+                    has_unit = len(unit_indices) > 0
+                    has_rent = len(rent_indices) > 0
+                    has_tenant = len(tenant_indices) > 0
+                    
+                    if has_unit and (has_rent or has_tenant):
+                        # Robustness Check: Ensure we have matches in DISTINCT columns to avoid Title rows
+                        all_match_indices = set(unit_indices + rent_indices + tenant_indices)
+                        
+                        # If we have matches in at least 2 distinct columns, it's likely a real header.
+                        if len(all_match_indices) >= 2:
+                            header_row_idx = i
+                            break
+
+                if header_row_idx is None:
+                    continue
+
+                # Reload with correct header
+                df_data = pd.read_excel(xls, sheet_name=sheet_name, header=header_row_idx)
+                df_data = df_data.fillna("")
+
+                current_sheet_roll = []
+                for _, row in df_data.iterrows():
+                    # Use case-insensitive lookup
+                    unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit", "Apt No"], ""))
+                    tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident", "Tenant(s)", "Name"], ""))
+                    
+                    # Skip empty rows or summary rows
+                    if not unit_number and not tenant_name:
+                        continue
+                    if str(unit_number).lower() in ["total", "totals", "average", "averages", "nan", ""]:
+                        continue
+                        
+                    # Skip rows where unit number is too long (likely a note)
+                    if len(unit_number) > 20:
+                        continue
+
+                    current_sheet_roll.append(RentRollItem(
+                            unit_number=unit_number,
+                            unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                            unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                            tenant_name=tenant_name,
+                            current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
+                            stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                            market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                            move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                            lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start", "Start Date"], "")),
+                            lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End", "End Date", "Lease Exp"], "")),
+                            deposit=self._parse_float(self._get_val(row, ["Deposit", "Security Deposit", "Sec Dep"], 0.0)),
+                            parking=str(self._get_val(row, ["Parking", "Parking Space", "Parking Space #"], "")),
+                            comments=str(self._get_val(row, ["Comments", "Comment", "Coment", "Notes"], "")),
+                            source_file=f"{filename} | Sheet: {sheet_name}",
+                            floor=str(self._get_val(row, ["Floor", "Level"], ""))
+                    ))
+                
+                # Heuristic: The sheet with the most valid unit rows is likely the Rent Roll
+                if len(current_sheet_roll) > len(best_rent_roll):
+                    best_rent_roll = current_sheet_roll
+                    best_sheet_name = sheet_name
+                    
+            except Exception as e:
+                # Log but continue to next sheet
+                print(f"Error processing sheet {sheet_name}: {e}")
+                continue
+
+        if not best_rent_roll:
+            raise ValueError("Could not find valid Rent Roll data in any sheet of the Excel file")
+
+        return best_rent_roll
         for _, row in df.iterrows():
             # Use case-insensitive lookup
             unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit"], ""))
@@ -160,84 +226,101 @@ class IngestionService:
         logger = logging.getLogger(__name__)
         
         try:
-            # Read Excel from bytes
-            df = pd.read_excel(io.BytesIO(excel_content), header=None)
+            # Load Excel File
+            xls = pd.ExcelFile(io.BytesIO(excel_content))
             
-            # Find the row that contains "Unit" AND "Rent" (or variants)
-            header_row_idx = None
-            for i, row in df.iterrows():
-                # Clean string conversion handling NaNs
-                row_str = []
-                for x in row.tolist():
-                    s = str(x).lower().strip()
-                    if s in ['nan', 'none', '', 'nat']:
-                        s = ""
-                    row_str.append(s)
-
-                has_unit = any("unit" in x for x in row_str)
-                has_rent = any(k in x for x in row_str for k in ["rent", "month", "amount", "rate"])
-                
-                if has_unit and has_rent:
-                    # Check for multiple non-empty columns to avoid matching title rows like "Rental Income and Unit Mix Summary"
-                    non_empty_count = sum(1 for x in row_str if x)
-                    if non_empty_count > 1:
-                        header_row_idx = i
-                        break
+            best_rent_roll = []
+            best_sheet_name = ""
             
-            if header_row_idx is None:
-                # Fallback
-                for i, row in df.iterrows():
-                    row_str = row.astype(str).str.lower().tolist()
-                    if any("unit" in x for x in row_str) or any("tenant" in x for x in row_str):
-                        header_row_idx = i
-                        break
-            
-            if header_row_idx is None:
-                logger.warning("Could not find Rent Roll headers in Excel file")
-                return []
-            
-            # Reload with correct header
-            df = pd.read_excel(io.BytesIO(excel_content), header=header_row_idx)
-            df = df.fillna("")
-            
-            rent_roll = []
-            for _, row in df.iterrows():
-                # Use case-insensitive lookup
-                unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit"], ""))
-                tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident"], ""))
-                
-                # Skip empty rows
-                if not unit_number and not tenant_name:
-                    continue
-                
-                if str(unit_number).lower() in ["total", "totals", "average", "averages"]:
-                    continue
-                
+            # Iterate through all sheets
+            for sheet_name in xls.sheet_names:
                 try:
-                    rent_roll.append(RentRollItem(
-                        unit_number=unit_number,
-                        unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
-                        unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
-                        tenant_name=tenant_name,
-                        current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate"], 0.0)),
-                        stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
-                        market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
-                        move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
-                        lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start", "Start Date"], "")),
-                        lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End", "End Date"], "")),
-                        deposit=self._parse_float(self._get_val(row, ["Deposit", "Security Deposit"], 0.0)),
-                        parking=str(self._get_val(row, ["Parking", "Parking Space"], "")),
-                        comments=str(self._get_val(row, ["Comments", "Comment", "Coment", "Notes"], "")),
-                        source_file=filename,
-                        floor=str(self._get_val(row, ["Floor", "Level"], ""))
-                    ))
+                    df = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                    if df.empty:
+                        continue
+                        
+                    # Find Header Row
+                    header_row_idx = None
+                    for i, row in df.iterrows():
+                        if i > 30: break
+                        
+                        row_str = []
+                        for x in row.tolist():
+                            s = str(x).lower().strip()
+                            if s in ['nan', 'none', '', 'nat']:
+                                s = ""
+                            row_str.append(s)
+
+                        # Check identifiers
+                        unit_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["unit", "apt", "apartment", "suite", "#"]) and len(x) < 30]
+                        rent_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["rent", "month", "amount", "rate", "price"]) and len(x) < 30]
+                        
+                        if len(unit_indices) > 0 and len(rent_indices) > 0:
+                            all_indices = set(unit_indices + rent_indices)
+                            if len(all_indices) >= 2:
+                                header_row_idx = i
+                                break
+                    
+                    if header_row_idx is None:
+                        continue
+                    
+                    # Reload with correct header
+                    df_data = pd.read_excel(xls, sheet_name=sheet_name, header=header_row_idx)
+                    df_data = df_data.fillna("")
+                    
+                    current_sheet_roll = []
+                    for _, row in df_data.iterrows():
+                        # Use case-insensitive lookup
+                        unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit", "Apt No"], ""))
+                        tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident", "Tenant(s)", "Name"], ""))
+                        
+                        if not unit_number and not tenant_name:
+                            continue
+                        
+                        if str(unit_number).lower() in ["total", "totals", "average", "averages", "nan", ""]:
+                            continue
+
+                        # Skip rows where unit number is too long (likely a note)
+                        if len(unit_number) > 20:
+                            continue
+                        
+                        try:
+                            current_sheet_roll.append(RentRollItem(
+                                unit_number=unit_number,
+                                unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                                unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                                tenant_name=tenant_name,
+                                current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
+                                stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                                market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                                move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                                lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start", "Start Date"], "")),
+                                lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End", "End Date", "Lease Exp"], "")),
+                                deposit=self._parse_float(self._get_val(row, ["Deposit", "Security Deposit", "Sec Dep"], 0.0)),
+                                parking=str(self._get_val(row, ["Parking", "Parking Space", "Parking Space #"], "")),
+                                comments=str(self._get_val(row, ["Comments", "Comment", "Coment", "Notes"], "")),
+                                source_file=f"{filename} | Sheet: {sheet_name}",
+                                floor=str(self._get_val(row, ["Floor", "Level"], ""))
+                            ))
+                        except Exception as e:
+                            # logger.warning(f"Failed to parse rent roll row: {e}")
+                            continue
+                    
+                    if len(current_sheet_roll) > len(best_rent_roll):
+                        best_rent_roll = current_sheet_roll
+                        best_sheet_name = sheet_name
+                        
                 except Exception as e:
-                    logger.warning(f"Failed to parse rent roll row: {e}")
+                    logger.warning(f"Failed to process sheet {sheet_name}: {e}")
                     continue
             
-            logger.info(f"Extracted {len(rent_roll)} rent roll items from Excel file")
-            return rent_roll
-            
+            if best_rent_roll:
+                logger.info(f"Extracted {len(best_rent_roll)} rent roll items from Excel file {filename} (Sheet: {best_sheet_name})")
+                return best_rent_roll
+            else:
+                logger.warning(f"Could not find Rent Roll headers in any sheet of {filename}")
+                return []
+                
         except Exception as e:
             logger.error(f"Failed to extract rent roll from Excel: {e}")
             return []
@@ -685,6 +768,12 @@ class IngestionService:
 
         # 7. Post-Processing & Aggregation
         rent_roll_summary = self._summarize_rent_roll(rent_roll)
+        
+        # FIX: Sync Property Meta Total Units with Actual Extracted Rent Roll Count
+        # If we extracted units from the Rent Roll, that count is the source of truth.
+        if len(rent_roll) > 0 and property_meta.total_units != len(rent_roll):
+            logger.info(f"Updating Property Meta Total Units from {property_meta.total_units} to {len(rent_roll)} based on Rent Roll extraction.")
+            property_meta.total_units = len(rent_roll)
 
         # 8. Build Audit Trail
         audit_trail_entries = []
@@ -695,7 +784,7 @@ class IngestionService:
             {"field_name": "Year Built", "extracted_value": property_meta.year_built, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
             {"field_name": "Building Size (Sq Ft)", "extracted_value": property_meta.building_size, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
             {"field_name": "Purchase Price", "extracted_value": property_meta.purchase_price, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from offering summary", "document_id": document_id},
-            {"field_name": "Total Units", "extracted_value": property_meta.total_units, "source": "Rent Roll / PDF", "confidence_score": 0.95, "method": "Counted from rent roll line items", "document_id": document_id}
+            {"field_name": "Total Units", "extracted_value": property_meta.total_units, "source": "Rent Roll / PDF", "confidence_score": 0.95, "method": f"Counted {len(rent_roll)} units from rent roll", "document_id": document_id}
         ])
         
         # Rent Roll Logs

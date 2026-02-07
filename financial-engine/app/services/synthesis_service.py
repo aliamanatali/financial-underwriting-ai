@@ -43,7 +43,31 @@ class SynthesisService:
     def __init__(self):
         """Initialize the synthesis service."""
         pass
-    
+
+    def _normalize_unit_id(self, unit_id: str) -> str:
+        """
+        Normalize unit ID for deduplication.
+        - Removes leading zeros (01 -> 1)
+        - Lowercase
+        - Removes 'unit', '#', 'apt' prefixes
+        - Handles 'vacant' or 'n/a'
+        """
+        if not unit_id:
+            return ""
+        
+        s = str(unit_id).lower().strip()
+        
+        # Remove common prefixes
+        for prefix in ["unit", "apt", "#", "suite", "no."]:
+            if s.startswith(prefix):
+                s = s[len(prefix):].strip()
+        
+        # Remove leading zeros if it looks like a number
+        if s.isdigit():
+            s = str(int(s))
+            
+        return s
+
     def _get_document_score(self, source_document: str) -> int:
         """
         Calculate priority score for a source document.
@@ -294,14 +318,17 @@ class SynthesisService:
         logger.info(f"Selected Primary Rent Roll Source: '{best_source}' with {len(primary_items)} items")
         
         # Initialize master dictionary with items from the best source
-        # We use a dictionary keyed by unit_number for fast lookup
+        # We use a dictionary keyed by NORMALIZED unit_number for fast lookup
         master_roll: Dict[str, RentRollItem] = {}
         
         # Add primary items first (they have authority)
         for item in primary_items:
-            # Simple deduplication within primary source
-            if item.unit_number not in master_roll:
-                master_roll[item.unit_number] = item
+            unit_id = self._normalize_unit_id(item.unit_number)
+            if not unit_id: continue
+            
+            # Deduplication within primary source
+            if unit_id not in master_roll:
+                master_roll[unit_id] = item
         
         # Scan other sources for UNIQUE items
         added_unique_count = 0
@@ -310,11 +337,18 @@ class SynthesisService:
                 continue
                 
             for item in items:
+                unit_id = self._normalize_unit_id(item.unit_number)
+                if not unit_id: continue
+
                 # If unit number is NOT in master roll, it's unique to this secondary source
-                if item.unit_number not in master_roll:
-                    master_roll[item.unit_number] = item
+                if unit_id not in master_roll:
+                    master_roll[unit_id] = item
                     added_unique_count += 1
-                    logger.debug(f"Added unique unit {item.unit_number} from secondary source {source}")
+                    logger.debug(f"Added unique unit {item.unit_number} (norm: {unit_id}) from secondary source {source}")
+                else:
+                    # Optional: Enrich master item with missing data from duplicate?
+                    # For now, we trust Best Source completely.
+                    pass
         
         if added_unique_count > 0:
             logger.info(f"Added {added_unique_count} unique items from secondary sources")

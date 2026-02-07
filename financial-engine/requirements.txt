@@ -17,3 +17,4 @@ motor
 redis
 PyPDF2
 xlrd
+tenacity

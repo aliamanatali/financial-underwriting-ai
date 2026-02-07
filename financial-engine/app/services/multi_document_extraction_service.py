@@ -11,6 +11,8 @@ from typing import List, Dict, Any, Optional
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from google import genai
+from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential, retry_if_exception_type
+from google.genai import errors as genai_errors
 from google.genai import types
 from app.models.schemas import (
     NormalizedDataItem, DocumentType, CategoryGroup, DataClassification,
@@ -126,6 +128,11 @@ class MultiDocumentExtractionService:
                     )
                 
                 if items:
+                    # FIX: Append with source file info to allow deduplication later
+                    # (Ingestion service already sets source_file, but just in case)
+                    for item in items:
+                        if not item.source_file:
+                            item.source_file = filename
                     all_rent_roll_items.extend(items)
                     logger.info(f"Extracted {len(items)} rent roll items from {filename}")
                 
@@ -134,7 +141,17 @@ class MultiDocumentExtractionService:
             except Exception as e:
                 logger.error(f"Error processing Rent Roll {filename}: {e}")
                 await update_progress(filename, "failed")
-                
+        
+        # Deduplicate Rent Roll based on unit numbers
+        # If we have multiple Rent Roll files, we should prioritize the one with the most data
+        # or merge unique units. For simplicity and robustness, we'll deduplicate by Unit Number.
+        # Prefer the first occurrence (or last? usually the last processed file might be better/worse).
+        # Actually, SynthesisService handles the master rent roll creation logic.
+        # But `process_rent_roll_documents` returns the RAW list.
+        # It's better to let SynthesisService handle the logic, BUT we should ensure we don't just sum them up blindly.
+        # However, the current flow returns `all_rent_roll_items` which is then passed to `synthesis_service.build_master_rent_roll`.
+        # So we are good here, assuming SynthesisService does its job.
+        
         return all_rent_roll_items, list(completed_files)
 
     async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
@@ -521,14 +538,22 @@ class MultiDocumentExtractionService:
                 model_name = self.gemini_service.model_name
                 
                 try:
-                    response = await asyncio.wait_for(
-                        client.aio.models.generate_content(
-                            model=model_name,
-                            contents=parts,
-                            config=types.GenerateContentConfig(temperature=0.0)
-                        ),
-                        timeout=120.0
-                    )
+                    # Retry logic for 500 errors
+                    async for attempt in AsyncRetrying(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential(multiplier=1, min=2, max=10),
+                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError)),
+                        reraise=True
+                    ):
+                        with attempt:
+                            response = await asyncio.wait_for(
+                                client.aio.models.generate_content(
+                                    model=model_name,
+                                    contents=parts,
+                                    config=types.GenerateContentConfig(temperature=0.0)
+                                ),
+                                timeout=120.0
+                            )
                 except asyncio.TimeoutError:
                     logger.error(f"Gemini visual extraction timed out for {filename}")
                     return [{
@@ -536,6 +561,14 @@ class MultiDocumentExtractionService:
                         "amount": 0.0,
                         "source_document": filename,
                         "error": "Timeout"
+                    }]
+                except (genai_errors.ServerError, genai_errors.APIError) as e:
+                    logger.error(f"Gemini visual extraction failed after retries for {filename}: {e}")
+                    return [{
+                        "raw_text": f"Document - {filename} (Gemini Error: {str(e)})",
+                        "amount": 0.0,
+                        "source_document": filename,
+                        "error": str(e)
                     }]
                 
                 # Parse JSON response
@@ -679,16 +712,27 @@ class MultiDocumentExtractionService:
                 model_name = self.gemini_service.model_name
                 
                 try:
-                    response = await asyncio.wait_for(
-                        client.aio.models.generate_content(
-                            model=model_name,
-                            contents=parts,
-                            config=types.GenerateContentConfig(temperature=0.0)
-                        ),
-                        timeout=120.0
-                    )
+                    # Retry logic for 500 errors
+                    async for attempt in AsyncRetrying(
+                        stop=stop_after_attempt(3),
+                        wait=wait_exponential(multiplier=1, min=2, max=10),
+                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError)),
+                        reraise=True
+                    ):
+                        with attempt:
+                            response = await asyncio.wait_for(
+                                client.aio.models.generate_content(
+                                    model=model_name,
+                                    contents=parts,
+                                    config=types.GenerateContentConfig(temperature=0.0)
+                                ),
+                                timeout=120.0
+                            )
                 except asyncio.TimeoutError:
                     logger.error(f"Gemini OM extraction timed out for {filename}")
+                    return []
+                except (genai_errors.ServerError, genai_errors.APIError) as e:
+                    logger.error(f"Gemini OM extraction failed after retries for {filename}: {e}")
                     return []
                 
                 if not response.text:
