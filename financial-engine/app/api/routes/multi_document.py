@@ -548,14 +548,20 @@ async def normalize_package_documents(
     
     # --- 1. Process Rent Rolls (Segmented) ---
     extracted_rent_roll = []
+    processed_rent_roll_files = []
     if rent_roll_docs:
         try:
             logger.info("Normalizing Rent Roll folder...")
             extracted_rent_roll = await extraction_service.process_rent_roll_documents(
                 rent_roll_docs,
                 progress_service=progress_service,
-                task_id=package_id
+                task_id=package_id,
+                progress_start=20,
+                progress_end=35
             )
+            # Track processed files for progress continuity
+            processed_rent_roll_files = [d.get("filename") for d in rent_roll_docs if d.get("filename")]
+            
             package.rent_roll_data = extracted_rent_roll
             logger.info(f"Saved {len(extracted_rent_roll)} rent roll items to package")
         except Exception as e:
@@ -572,7 +578,10 @@ async def normalize_package_documents(
             extracted_financials, extracted_om_proforma = await extraction_service.process_financial_documents(
                 financial_docs,
                 progress_service=progress_service,
-                task_id=package_id
+                task_id=package_id,
+                progress_start=35,
+                progress_end=60,
+                initial_completed_files=processed_rent_roll_files
             )
             
             # Assign unique IDs to financials

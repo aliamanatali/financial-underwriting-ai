@@ -40,7 +40,10 @@ class MultiDocumentExtractionService:
         self,
         documents: List[Dict[str, Any]],
         progress_service: Any = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        progress_start: int = 20,
+        progress_end: int = 30,
+        initial_completed_files: List[str] = None
     ) -> List[RentRollItem]:
         """
         Process multiple rent roll documents and return a list of RentRollItems.
@@ -48,11 +51,64 @@ class MultiDocumentExtractionService:
         """
         all_rent_roll_items = []
         
+        # Progress tracking variables
+        completed_count = 0
+        total_count = len(documents)
+        active_files = set()
+        completed_files = set(initial_completed_files or [])
+
+        async def update_progress(filename: str, status: str):
+            nonlocal completed_count
+            
+            if status == "started":
+                active_files.add(filename)
+            elif status in ["completed", "failed"]:
+                if filename in active_files:
+                    active_files.remove(filename)
+                completed_count += 1
+                completed_files.add(filename)
+            
+            if progress_service and task_id:
+                # Calculate percentage: Map 0..total to progress_start..progress_end
+                pct_range = progress_end - progress_start
+                if total_count > 0:
+                    current_pct = progress_start + int((completed_count / total_count) * pct_range)
+                else:
+                    current_pct = progress_start
+                
+                # Calculate cumulative stats
+                initial_count = len(initial_completed_files or [])
+                cumulative_index = initial_count + completed_count
+                cumulative_total = initial_count + total_count
+                
+                # Determine message
+                if status == "started":
+                    msg = f"Processing {filename}..."
+                else:
+                    msg = f"Processed {cumulative_index}/{cumulative_total} documents"
+
+                await progress_service.update_progress(
+                    task_id,
+                    current_pct,
+                    msg,
+                    details={
+                        "current_file": filename,
+                        "document_category": "Rent Roll",
+                        "file_index": cumulative_index,
+                        "total_files": cumulative_total,
+                        "active_files": list(active_files),
+                        "completed_files": list(completed_files),
+                        "status": "processing"
+                    }
+                )
+
         for doc in documents:
             file_content = doc.get("content")
             filename = doc.get("filename", "unknown")
             file_type = doc.get("type", "").lower()
             
+            await update_progress(filename, "started")
+
             # Estimate total units if possible or pass 0
             # Ideally we get this from property meta but we might not have it yet.
             # Passing 0 usually works for extraction prompts.
@@ -72,8 +128,12 @@ class MultiDocumentExtractionService:
                 if items:
                     all_rent_roll_items.extend(items)
                     logger.info(f"Extracted {len(items)} rent roll items from {filename}")
+                
+                await update_progress(filename, "completed")
+
             except Exception as e:
                 logger.error(f"Error processing Rent Roll {filename}: {e}")
+                await update_progress(filename, "failed")
                 
         return all_rent_roll_items
 
@@ -986,7 +1046,8 @@ class MultiDocumentExtractionService:
         progress_service: Any = None,
         task_id: Optional[str] = None,
         progress_start: int = 20,
-        progress_end: int = 80
+        progress_end: int = 80,
+        initial_completed_files: List[str] = None
     ) -> (List[NormalizedDataItem], List[OMProformaTable]):
         """
         Process multiple financial documents and return normalized expense items and OM proforma data.
@@ -997,6 +1058,7 @@ class MultiDocumentExtractionService:
             task_id: Optional task ID for progress updates
             progress_start: Starting percentage for progress updates (default: 20)
             progress_end: Ending percentage for progress updates (default: 80)
+            initial_completed_files: Optional list of files already completed in previous steps
             
         Returns:
             A tuple containing:
@@ -1016,7 +1078,7 @@ class MultiDocumentExtractionService:
         completed_count = 0
         total_count = len(documents)
         active_files = set()
-        completed_files = set()
+        completed_files = set(initial_completed_files or [])
 
         async def update_progress(filename: str, status: str, category: str):
             nonlocal completed_count
@@ -1037,11 +1099,16 @@ class MultiDocumentExtractionService:
                 else:
                     current_pct = progress_start
                 
+                # Calculate cumulative stats
+                initial_count = len(initial_completed_files or [])
+                cumulative_index = initial_count + completed_count
+                cumulative_total = initial_count + total_count
+
                 # Determine message
                 if status == "started":
                     msg = f"Processing {filename}..."
                 else:
-                    msg = f"Processed {completed_count}/{total_count} files"
+                    msg = f"Processed {cumulative_index}/{cumulative_total} documents"
 
                 await progress_service.update_progress(
                     task_id,
@@ -1050,8 +1117,8 @@ class MultiDocumentExtractionService:
                     details={
                         "current_file": filename, # Most recently changed file
                         "document_category": category,
-                        "file_index": completed_count,
-                        "total_files": total_count,
+                        "file_index": cumulative_index,
+                        "total_files": cumulative_total,
                         "active_files": list(active_files),
                         "completed_files": list(completed_files),
                         "status": "processing"
