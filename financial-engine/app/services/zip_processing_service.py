@@ -3,6 +3,7 @@ import zipfile
 import io
 import os
 import uuid
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
@@ -199,6 +200,7 @@ class ZipProcessingService:
         files_skipped = 0
         empty_folders = []
         file_cache_data = {}
+        seen_hashes = set()
         
         # List to hold files that need classification
         files_to_classify: List[Dict[str, Any]] = []
@@ -223,6 +225,26 @@ class ZipProcessingService:
                             batch_logging_service.log_classification(filename, "Skipped", 0.0, "duplicate_skipped")
                         files_skipped += 1
                         continue
+
+                    # Read content to check for content duplication
+                    try:
+                        file_content = zip_ref.read(file_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to read file {filename}: {e}")
+                        continue
+
+                    if len(file_content) == 0:
+                        continue
+                        
+                    # Calculate hash
+                    file_hash = hashlib.md5(file_content).hexdigest()
+                    if file_hash in seen_hashes:
+                        logger.warning(f"Skipping content duplicate file: {filename}")
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(filename, "Skipped", 0.0, "content_duplicate_skipped")
+                        files_skipped += 1
+                        continue
+                    seen_hashes.add(file_hash)
                     
                     # Try to determine type from folder structure first
                     path_parts = Path(file_path).parts
@@ -241,13 +263,6 @@ class ZipProcessingService:
                     # If not found in folder, and we have a classification service,
                     # we will queue it for classification
                     if not doc_type and classification_service:
-                         # Read content for classification
-                        file_content = zip_ref.read(file_path)
-                        if len(file_content) == 0:
-                             if batch_logging_service:
-                                 batch_logging_service.log_error(filename, "process_zip", "Skipped empty file")
-                             continue
-                        
                         files_to_classify.append({
                             "filename": filename,
                             "content": file_content,
@@ -268,9 +283,6 @@ class ZipProcessingService:
                             continue
 
                     # If we got here, we have a doc_type from folder structure
-                    file_content = zip_ref.read(file_path)
-                    if len(file_content) == 0: continue
-
                     await self._add_file_to_package(
                         package, package_id, filename, doc_type, file_content, now, file_cache_data
                     )
@@ -389,11 +401,19 @@ class ZipProcessingService:
         # 1. separate files into known (by folder/path) and unknown (need classification)
         files_to_classify = []
         known_files = [] # list of (filename, content, doc_type)
+        seen_hashes = set()
         
         for filename, content in files:
             # Check for skip first (in case not filtered upstream)
             if self._should_skip_file(filename):
                 continue
+            
+            # Content deduplication
+            file_hash = hashlib.md5(content).hexdigest()
+            if file_hash in seen_hashes:
+                 logger.warning(f"Skipping duplicate file in smart upload: {filename}")
+                 continue
+            seen_hashes.add(file_hash)
 
             # Try to determine type from folder structure first
             path_parts = Path(filename).parts
@@ -482,11 +502,19 @@ class ZipProcessingService:
         # 1. separate files into known (by folder/path) and unknown (need classification)
         files_to_classify = []
         known_files = [] # list of (filename, content, doc_type)
+        seen_hashes = set()
         
         for filename, content in files:
             # Check for skip first
             if self._should_skip_file(filename):
                 continue
+
+            # Content deduplication
+            file_hash = hashlib.md5(content).hexdigest()
+            if file_hash in seen_hashes:
+                 logger.warning(f"Skipping duplicate file in add_files: {filename}")
+                 continue
+            seen_hashes.add(file_hash)
 
             # Try to determine type from folder structure first
             path_parts = Path(filename).parts

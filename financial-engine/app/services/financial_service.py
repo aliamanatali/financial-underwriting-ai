@@ -27,22 +27,67 @@ class FinancialService:
             return 0.0
         return value
 
-    def _deduplicate_expenses(self, expenses: List[ProFormaExpenseItem]) -> List[ProFormaExpenseItem]:
+    def _deduplicate_expenses(self, expenses: List[Any]) -> List[Any]:
         """
         Deduplicates expenses to avoid summing 'Total' lines AND individual line items.
-        Also aggregates multiple years of data by taking the MAXIMUM value for a category if it looks like year-over-year data.
+        Also filters out expenses from different years if multiple years are detected.
         
         Logic:
-        1. Group by Category.
-        2. If a category has multiple items:
+        1. Year-based Filtering: If multiple years found (e.g. 2022, 2023), pick the most relevant one.
+        2. Group by Category.
+        3. If a category has multiple items:
            - Check for "Total" lines and prefer them if they cover the whole amount.
-           - If multiple large items exist (e.g. Tax 2022, Tax 2023), picking the largest might be safer than summing.
+           - If multiple large items exist, deduplicate based on value.
         """
-        from collections import defaultdict
+        from collections import defaultdict, Counter
         
         if not expenses:
             return []
+
+        # --- Step 0: Year-Based Filtering ---
+        # Collect years from all expenses
+        years = []
+        for exp in expenses:
+            # Check for expense_year attribute (StandardizedExpense)
+            if hasattr(exp, 'expense_year') and exp.expense_year:
+                years.append(exp.expense_year)
+        
+        if years:
+            year_counts = Counter(years)
+            unique_years = sorted(year_counts.keys(), reverse=True) # Descending (Recent first)
             
+            if len(unique_years) > 1:
+                # We have mixed years. We need to pick a winner.
+                target_year = unique_years[0] # Default to most recent
+                most_frequent_year = year_counts.most_common(1)[0][0]
+                
+                # Heuristic: Use most recent unless it's very sparse compared to another year
+                # e.g. 2024 (2 items) vs 2023 (50 items) -> Use 2023
+                if year_counts[target_year] < 5 and year_counts[most_frequent_year] > 15:
+                    target_year = most_frequent_year
+                    logger.info(f"Multi-year data detected. Prioritizing most frequent year {target_year} over most recent {unique_years[0]} due to data volume.")
+                else:
+                    logger.info(f"Multi-year data detected. Prioritizing most recent year {target_year}.")
+                
+                # Filter out expenses that have a year explicitly different from target_year
+                filtered_expenses = []
+                excluded_count = 0
+                
+                for exp in expenses:
+                    if hasattr(exp, 'expense_year') and exp.expense_year:
+                        if exp.expense_year == target_year:
+                            filtered_expenses.append(exp)
+                        else:
+                            excluded_count += 1
+                    else:
+                        # Keep items with no year (they might be generic or applicable to all)
+                        filtered_expenses.append(exp)
+                
+                if excluded_count > 0:
+                    logger.info(f"Excluded {excluded_count} expenses from non-target years to ensure consistency.")
+                    expenses = filtered_expenses
+
+        # --- Step 1: Group by Category ---
         by_category = defaultdict(list)
         for exp in expenses:
             by_category[exp.mapped_category].append(exp)

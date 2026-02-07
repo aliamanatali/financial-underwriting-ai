@@ -8,7 +8,7 @@ that finds data regardless of which document contains it.
 
 import logging
 from typing import List, Dict, Any, Optional
-from app.models.schemas import NormalizedDataItem, RentRollItem
+from app.models.schemas import NormalizedDataItem, RentRollItem, StandardizedExpense
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ class SynthesisService:
         for item in normalized_items:
             # Check if this is a rent roll item
             if item.field_type == "rent_roll_item" or (
-                item.metadata and 
+                item.metadata and
                 item.metadata.get("is_rent_roll_item", False)
             ):
                 try:
@@ -381,3 +381,48 @@ class SynthesisService:
         
         logger.info(f"Extracted {len(rent_roll_items)} rent roll items from normalized data")
         return rent_roll_items
+
+    def deduplicate_expenses(
+        self,
+        expenses: List[StandardizedExpense]
+    ) -> List[StandardizedExpense]:
+        """
+        Deduplicate expenses that appear to be identical across multiple documents
+        (e.g. duplicate file uploads or same invoice in multiple files).
+        """
+        if not expenses:
+            return []
+            
+        logger.info(f"Deduplicating {len(expenses)} expenses...")
+        
+        unique_expenses = []
+        seen_hashes = set()
+        duplicates_removed = 0
+        
+        for exp in expenses:
+            # Create a hash based on key attributes to identify duplicates
+            # 1. Amount (rounded to 2 decimals)
+            # 2. Category
+            # 3. Year (if available)
+            # 4. Normalized Text (alphanumeric only, first 30 chars)
+            
+            amount_key = round(exp.amount, 2)
+            cat_key = exp.mapped_category
+            year_key = exp.expense_year or 0
+            
+            # Simple text normalization for fuzzy matching
+            # "PG&E Gas Charges" -> "pgegascharges"
+            text_key = "".join(e for e in exp.original_text.lower() if e.isalnum())[:30]
+            
+            dedup_key = (amount_key, cat_key, year_key, text_key)
+            
+            if dedup_key in seen_hashes:
+                # This is a duplicate
+                duplicates_removed += 1
+                continue
+                
+            seen_hashes.add(dedup_key)
+            unique_expenses.append(exp)
+            
+        logger.info(f"Deduplication complete. Removed {duplicates_removed} duplicates. Final count: {len(unique_expenses)}")
+        return unique_expenses

@@ -18,16 +18,59 @@ class IngestionService:
     def _get_val(self, row, keys, default=None):
         """Helper to get value from row using multiple possible keys (case-insensitive)."""
         # Convert row keys to lower for lookup
-        row_keys_lower = {k.lower().strip(): k for k in row.keys()}
+        row_keys_lower = {str(k).lower().strip(): k for k in row.keys()}
         
         for key in keys:
             key_lower = key.lower().strip()
             if key_lower in row_keys_lower:
                 actual_key = row_keys_lower[key_lower]
                 val = row.get(actual_key)
-                if val is not None and val != "":
+                if val is not None and str(val).strip() != "":
                     return val
         return default
+
+    def _parse_float(self, val):
+        """Safely parse float from string, handling currency symbols and other junk."""
+        if val is None:
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        
+        s = str(val).strip()
+        if not s or s == "-":
+            return 0.0
+            
+        # Remove currency symbols and commas
+        s = s.replace("$", "").replace(",", "").replace(" ", "")
+        
+        # Handle parentheses for negative numbers (e.g. "(500)" -> "-500")
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+            
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _parse_int(self, val):
+        """Safely parse int from string."""
+        if val is None:
+            return 0
+        if isinstance(val, int):
+            return val
+        if isinstance(val, float):
+            return int(val)
+            
+        s = str(val).strip()
+        if not s or s == "-":
+            return 0
+            
+        # Remove commas and non-numeric chars except digits
+        # Keep it simple: try float first then int
+        try:
+            return int(self._parse_float(val))
+        except (ValueError, TypeError):
+            return 0
 
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta) -> List[RentRollItem]:
         import os
@@ -35,14 +78,38 @@ class IngestionService:
         # Read with no header initially
         df = pd.read_excel(file_path, header=None)
 
-        # logic to find the row that contains "Unit" AND "Rent"
+        # logic to find the row that contains "Unit" AND ("Rent" OR "Month" OR "Amount")
+        # Relaxed logic to catch "$/Month"
         header_row_idx = None
         for i, row in df.iterrows():
-            row_str = row.astype(str).str.lower().tolist()
-            if any("unit" in x for x in row_str) and any("rent" in x for x in row_str):
-                header_row_idx = i
-                break
+            # Clean string conversion handling NaNs
+            row_str = []
+            for x in row.tolist():
+                s = str(x).lower().strip()
+                if s in ['nan', 'none', '', 'nat']:
+                    s = ""
+                row_str.append(s)
 
+            # Check for Unit identifier
+            has_unit = any("unit" in x for x in row_str)
+            # Check for Rent identifier (Rent, $/Month, Amount, Rate)
+            has_rent = any(k in x for x in row_str for k in ["rent", "month", "amount", "rate"])
+            
+            if has_unit and has_rent:
+                # Check for multiple non-empty columns to avoid matching title rows like "Rental Income and Unit Mix Summary"
+                non_empty_count = sum(1 for x in row_str if x)
+                if non_empty_count > 1:
+                    header_row_idx = i
+                    break
+
+        if header_row_idx is None:
+            # Fallback: Just look for "Unit" or "Tenant"
+            for i, row in df.iterrows():
+                row_str = row.astype(str).str.lower().tolist()
+                if any("unit" in x for x in row_str) or any("tenant" in x for x in row_str):
+                    header_row_idx = i
+                    break
+        
         if header_row_idx is None:
             raise ValueError("Could not find Rent Roll headers in Excel")
 
@@ -58,20 +125,27 @@ class IngestionService:
             
             if not unit_number and not tenant_name:
                 continue
+                
+            # Skip summary rows
+            if str(unit_number).lower() in ["total", "totals", "average", "averages"]:
+                continue
 
             rent_roll.append(RentRollItem(
                     unit_number=unit_number,
-                    unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan"], "")),
-                    unit_size=int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                    unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                    unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
                     tenant_name=tenant_name,
-                    current_rent=float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent"], 0.0)),
-                stabilized_rent=float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
-                market_rent=float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
-                move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
-                lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start"], "")),
-                lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End"], "")),
-                source_file=filename,
-                floor=str(self._get_val(row, ["Floor", "Level"], ""))
+                    current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate"], 0.0)),
+                    stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                    market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                    move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                    lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start", "Start Date"], "")),
+                    lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End", "End Date"], "")),
+                    deposit=self._parse_float(self._get_val(row, ["Deposit", "Security Deposit"], 0.0)),
+                    parking=str(self._get_val(row, ["Parking", "Parking Space"], "")),
+                    comments=str(self._get_val(row, ["Comments", "Comment", "Coment", "Notes"], "")),
+                    source_file=filename,
+                    floor=str(self._get_val(row, ["Floor", "Level"], ""))
             ))
 
         return rent_roll
@@ -89,13 +163,34 @@ class IngestionService:
             # Read Excel from bytes
             df = pd.read_excel(io.BytesIO(excel_content), header=None)
             
-            # Find the row that contains "Unit" AND "Rent"
+            # Find the row that contains "Unit" AND "Rent" (or variants)
             header_row_idx = None
             for i, row in df.iterrows():
-                row_str = row.astype(str).str.lower().tolist()
-                if any("unit" in x for x in row_str) and any("rent" in x for x in row_str):
-                    header_row_idx = i
-                    break
+                # Clean string conversion handling NaNs
+                row_str = []
+                for x in row.tolist():
+                    s = str(x).lower().strip()
+                    if s in ['nan', 'none', '', 'nat']:
+                        s = ""
+                    row_str.append(s)
+
+                has_unit = any("unit" in x for x in row_str)
+                has_rent = any(k in x for x in row_str for k in ["rent", "month", "amount", "rate"])
+                
+                if has_unit and has_rent:
+                    # Check for multiple non-empty columns to avoid matching title rows like "Rental Income and Unit Mix Summary"
+                    non_empty_count = sum(1 for x in row_str if x)
+                    if non_empty_count > 1:
+                        header_row_idx = i
+                        break
+            
+            if header_row_idx is None:
+                # Fallback
+                for i, row in df.iterrows():
+                    row_str = row.astype(str).str.lower().tolist()
+                    if any("unit" in x for x in row_str) or any("tenant" in x for x in row_str):
+                        header_row_idx = i
+                        break
             
             if header_row_idx is None:
                 logger.warning("Could not find Rent Roll headers in Excel file")
@@ -115,21 +210,27 @@ class IngestionService:
                 if not unit_number and not tenant_name:
                     continue
                 
+                if str(unit_number).lower() in ["total", "totals", "average", "averages"]:
+                    continue
+                
                 try:
                     rent_roll.append(RentRollItem(
                         unit_number=unit_number,
-                        unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan"], "")),
-                        unit_size=int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                        unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                        unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
                         tenant_name=tenant_name,
-                        current_rent=float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent"], 0.0)),
-                            stabilized_rent=float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
-                            market_rent=float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
-                            move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
-                            lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start"], "")),
-                            lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End"], "")),
-                            source_file=filename,
-                            floor=str(self._get_val(row, ["Floor", "Level"], ""))
-                        ))
+                        current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate"], 0.0)),
+                        stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
+                        market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
+                        move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
+                        lease_start=str(self._get_val(row, ["Lease Start", "Lease Start Date", "Start", "Start Date"], "")),
+                        lease_end=str(self._get_val(row, ["Lease End", "Lease End Date", "End", "End Date"], "")),
+                        deposit=self._parse_float(self._get_val(row, ["Deposit", "Security Deposit"], 0.0)),
+                        parking=str(self._get_val(row, ["Parking", "Parking Space"], "")),
+                        comments=str(self._get_val(row, ["Comments", "Comment", "Coment", "Notes"], "")),
+                        source_file=filename,
+                        floor=str(self._get_val(row, ["Floor", "Level"], ""))
+                    ))
                 except Exception as e:
                     logger.warning(f"Failed to parse rent roll row: {e}")
                     continue

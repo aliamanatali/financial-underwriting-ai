@@ -435,14 +435,18 @@ function ProcessingContent() {
 
                   <div className="space-y-4">
                     {/* Status Message */}
-                    {(progress.percentage >= 80 || progress.message?.toLowerCase().includes('generat') || progress.message?.toLowerCase().includes('analyz')) && progress.percentage < 100 && (
+                    {progress.percentage >= 60 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">Status</span>
                         <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg">
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600 animate-spin">
                             <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
                           </svg>
-                          <span className="text-xs font-medium text-blue-700">Generating Financial Report...</span>
+                          <span className="text-xs font-medium text-blue-700">
+                            {progress.percentage >= 100 ? "Finalizing Report..." :
+                             progress.percentage >= 80 ? "Generating Financial Report..." :
+                             "Normalizing Extracted Data..."}
+                          </span>
                         </div>
                       </div>
                     )}

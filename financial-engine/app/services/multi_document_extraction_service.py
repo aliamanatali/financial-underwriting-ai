@@ -44,7 +44,7 @@ class MultiDocumentExtractionService:
         progress_start: int = 20,
         progress_end: int = 30,
         initial_completed_files: List[str] = None
-    ) -> List[RentRollItem]:
+    ) -> (List[RentRollItem], List[str]):
         """
         Process multiple rent roll documents and return a list of RentRollItems.
         Does not perform deduplication/synthesis; that happens in SynthesisService.
@@ -135,7 +135,7 @@ class MultiDocumentExtractionService:
                 logger.error(f"Error processing Rent Roll {filename}: {e}")
                 await update_progress(filename, "failed")
                 
-        return all_rent_roll_items
+        return all_rent_roll_items, list(completed_files)
 
     async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
@@ -481,8 +481,9 @@ class MultiDocumentExtractionService:
                 2. The amount (annual or monthly) if applicable
                 3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
                 4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
-                5. The page number where this item is found
-                6. The bounding box of the area containing this item
+                5. The expense year (if identifiable, e.g. 2022, 2023)
+                6. The page number where this item is found
+                7. The bounding box of the area containing this item
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -492,6 +493,7 @@ class MultiDocumentExtractionService:
                         "period": "annual" or "monthly" or "one-time",
                         "type": "revenue", // or "expense", "property_info", "capex", "receivable"
                         "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
+                        "expense_year": 2023, // Integer year if found, null otherwise
                         "page_number": 1, // Integer, 1-based page number
                         "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
                     }
@@ -1048,7 +1050,7 @@ class MultiDocumentExtractionService:
         progress_start: int = 20,
         progress_end: int = 80,
         initial_completed_files: List[str] = None
-    ) -> (List[NormalizedDataItem], List[OMProformaTable]):
+    ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str]):
         """
         Process multiple financial documents and return normalized expense items and OM proforma data.
         
@@ -1064,6 +1066,7 @@ class MultiDocumentExtractionService:
             A tuple containing:
             - List of NormalizedDataItem objects ready for user verification
             - List of OMProformaTable objects
+            - List of completed filenames
         """
         all_expenses = []
         om_proforma_results = []
@@ -1252,7 +1255,7 @@ class MultiDocumentExtractionService:
             # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
-            return [], om_proforma_results
+            return [], om_proforma_results, list(completed_files)
         
         # Validate and fix expenses (filtering out totals, tuition, etc.) BEFORE batching
         # to ensure batch sizes align with normalization results.
@@ -1306,12 +1309,16 @@ class MultiDocumentExtractionService:
                             except:
                                 group_enum = CategoryGroup.OTHER
                         
+                        # Extract year
+                        expense_year = expense.get("expense_year")
+                        
                         meta = {
                             "amount": amount,
                             "reasoning": normalization.get("reasoning", ""),
                             "row_count": expense.get("row_count"),
                             "categories_found": expense.get("categories_found"),
                             "original_type": item_type,
+                            "expense_year": expense_year,
                             "page_number": expense.get("page_number"),
                             "bbox": expense.get("bbox"),
                             "document_id": expense.get("document_id")
@@ -1371,4 +1378,4 @@ class MultiDocumentExtractionService:
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
         logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items and {len(om_proforma_results)} OM proforma tables.")
-        return normalized_items, om_proforma_results
+        return normalized_items, om_proforma_results, list(completed_files)

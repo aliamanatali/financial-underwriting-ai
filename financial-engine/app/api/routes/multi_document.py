@@ -552,7 +552,7 @@ async def normalize_package_documents(
     if rent_roll_docs:
         try:
             logger.info("Normalizing Rent Roll folder...")
-            extracted_rent_roll = await extraction_service.process_rent_roll_documents(
+            extracted_rent_roll, rr_completed_files = await extraction_service.process_rent_roll_documents(
                 rent_roll_docs,
                 progress_service=progress_service,
                 task_id=package_id,
@@ -560,7 +560,7 @@ async def normalize_package_documents(
                 progress_end=35
             )
             # Track processed files for progress continuity
-            processed_rent_roll_files = [d.get("filename") for d in rent_roll_docs if d.get("filename")]
+            processed_rent_roll_files = rr_completed_files
             
             package.rent_roll_data = extracted_rent_roll
             logger.info(f"Saved {len(extracted_rent_roll)} rent roll items to package")
@@ -572,10 +572,13 @@ async def normalize_package_documents(
     extracted_financials = []
     extracted_om_proforma = []
     
+    # We maintain a full list of completed files for progress continuity
+    all_completed_files = list(processed_rent_roll_files)
+    
     if financial_docs:
         try:
             logger.info("Normalizing Financials/OM folders...")
-            extracted_financials, extracted_om_proforma = await extraction_service.process_financial_documents(
+            extracted_financials, extracted_om_proforma, fin_completed_files = await extraction_service.process_financial_documents(
                 financial_docs,
                 progress_service=progress_service,
                 task_id=package_id,
@@ -583,6 +586,10 @@ async def normalize_package_documents(
                 progress_end=60,
                 initial_completed_files=processed_rent_roll_files
             )
+            
+            # Update comprehensive list
+            # We use a set to avoid duplicates if any file was processed twice (unlikely but safe)
+            all_completed_files = list(set(all_completed_files + fin_completed_files))
             
             # Assign unique IDs to financials
             for idx, item in enumerate(extracted_financials):
@@ -645,7 +652,9 @@ async def normalize_package_documents(
             deal_parameters=default_params.model_dump(),
             gemini_service=gemini_service,
             progress_service=progress_service,
-            explainability_service=explainability_service
+            explainability_service=explainability_service,
+            progress_base=60,
+            completed_files=all_completed_files
         )
         
         logger.info(f"Financial report generated successfully for package {package_id}")
@@ -1014,7 +1023,9 @@ async def analyze_deal_package(
     gemini_service: GeminiService = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
-    explainability_service: ExplainabilityService = Depends(get_explainability_service)
+    explainability_service: ExplainabilityService = Depends(get_explainability_service),
+    progress_base: int = 0,
+    completed_files: List[str] = None
 ):
     """
     Perform financial analysis on a multi-document deal package.
@@ -1057,7 +1068,24 @@ async def analyze_deal_package(
     logger.info(f"Starting FRESH multi-document analysis for package: {package_id}")
     logger.info(f"Received deal parameters: {deal_parameters}")
     
-    await progress_service.update_progress(package_id, 5, "Initializing analysis...")
+    async def update_progress(pct: int, msg: str):
+        # Scale pct from 0-100 to progress_base-100
+        # If pct is 0 (error), keep it 0
+        details = None
+        if completed_files:
+            details = {
+                "completed_files": completed_files,
+                "status": "processing" if pct < 100 else "completed"
+            }
+            
+        if pct == 0:
+            await progress_service.update_progress(package_id, 0, msg, details=details)
+            return
+            
+        scaled_pct = progress_base + int((pct / 100) * (100 - progress_base))
+        await progress_service.update_progress(package_id, scaled_pct, msg, details=details)
+
+    await update_progress(5, "Initializing analysis...")
     
     # Get the deal package
     if package_id in deal_packages_cache:
@@ -1118,7 +1146,7 @@ async def analyze_deal_package(
     # ===== STEP 1: LOAD PACKAGE DATA (NEW SEGMENTED FLOW) =====
     # We load from the segmented data stores in the package.
     
-    await progress_service.update_progress(package_id, 20, "Aggregating package data...")
+    await update_progress(20, "Aggregating package data...")
     
     # Financials (Expenses)
     normalized_items = package.financials_data if package.financials_data else package.normalized_data
@@ -1130,7 +1158,7 @@ async def analyze_deal_package(
     
     # ===== STEP 2: SYNTHESIZE DATA FROM ALL DOCUMENTS (OMNISCIENT PATTERN) =====
     
-    await progress_service.update_progress(package_id, 30, "Synthesizing property metadata from all documents...")
+    await update_progress(30, "Synthesizing property metadata from all documents...")
     
     # Run Metadata Synthesizer (Priority-based selection)
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
@@ -1161,7 +1189,7 @@ async def analyze_deal_package(
     )
     
     # Extract rent roll items (Use pre-processed Rent Roll data if available)
-    await progress_service.update_progress(package_id, 40, "Building master rent roll from all documents...")
+    await update_progress(40, "Building master rent roll from all documents...")
     
     rent_roll: List[RentRollItem] = []
     
@@ -1275,6 +1303,7 @@ async def analyze_deal_package(
                 doc_id = item.metadata.get("document_id") if item.metadata else None
                 page_number = item.metadata.get("page_number") if item.metadata else None
                 bbox = item.metadata.get("bbox") if item.metadata else None
+                expense_year = item.metadata.get("expense_year") if item.metadata else None
 
                 expense = StandardizedExpense(
                     original_text=item.raw_text,
@@ -1292,12 +1321,19 @@ async def analyze_deal_package(
                         bbox=bbox
                     ),
                     user_verified=item.user_verified,
-                    user_corrected_category=ExpenseCategory(item.user_correction) if item.user_correction else None
+                    user_corrected_category=ExpenseCategory(item.user_correction) if item.user_correction else None,
+                    expense_year=expense_year
                 )
                 historical_expenses.append(expense)
             except Exception as e:
                 logger.warning(f"Could not parse expense item: {item.raw_text}, error: {str(e)}")
     
+    # Deduplicate expenses (Handle duplicate files or overlapping invoices)
+    if historical_expenses:
+        logger.info(f"Expenses before deduplication: {len(historical_expenses)}")
+        historical_expenses = synthesis_service.deduplicate_expenses(historical_expenses)
+        logger.info(f"Expenses after deduplication: {len(historical_expenses)}")
+
     # (Rent Roll extraction logic moved to start of function)
 
     # Check for Rent Roll in Manual Overrides
@@ -1463,7 +1499,7 @@ async def analyze_deal_package(
     audit_log_service.add_ingestion_logs(analysis)
     
     # ===== STEP 3: CHECK DEAL VIABILITY =====
-    await progress_service.update_progress(package_id, 50, "Checking deal viability criteria...")
+    await update_progress(50, "Checking deal viability criteria...")
     viability_check = financial_service.check_deal_viability(analysis)
     logger.info(f"Viability check: {viability_check['status']}")
     
@@ -1486,7 +1522,7 @@ async def analyze_deal_package(
     
     # ===== STEP 4: CALCULATE FINANCIALS =====
     try:
-        await progress_service.update_progress(package_id, 70, "Calculating financial projections...")
+        await update_progress(70, "Calculating financial projections...")
         # Calculate historical metrics
         historical_data = financial_service.calculate_historical(analysis)
         logger.info(f"Historical NOI: ${historical_data['historical_noi']:,.2f}")
@@ -1504,12 +1540,12 @@ async def analyze_deal_package(
         
     except Exception as e:
         logger.error(f"Financial calculation failed: {str(e)}", exc_info=True)
-        await progress_service.update_progress(package_id, 0, f"Calculations failed: {str(e)}")
+        await update_progress(0, f"Calculations failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Financial calculation failed: {str(e)}")
     
     # ===== STEP 4.5: GENERATE EXPLAINABILITY & CONCLUSION =====
     try:
-        await progress_service.update_progress(package_id, 80, "Generating insights and explanations...")
+        await update_progress(80, "Generating insights and explanations...")
         analysis = await explainability_service.generate_explanations(analysis)
         
         # Generate Analyst Commentary
@@ -1525,7 +1561,7 @@ async def analyze_deal_package(
     # ===== STEP 5: GENERATE OUTPUTS (Excel, Memo & Commentary) =====
     try:
         import asyncio
-        await progress_service.update_progress(package_id, 90, "Generating output models and AI commentary...")
+        await update_progress(90, "Generating output models and AI commentary...")
         
         # 1. Excel (Synchronous/Fast)
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
@@ -1574,7 +1610,7 @@ async def analyze_deal_package(
     logger.info(f"Multi-document analysis complete for package {package_id}")
     logger.info(f"Final status: {analysis.pass_fail_status}")
     
-    await progress_service.update_progress(package_id, 100, "Analysis complete!")
+    await update_progress(100, "Analysis complete!")
     return analysis
 
 

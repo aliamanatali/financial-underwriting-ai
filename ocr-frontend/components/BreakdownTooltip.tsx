@@ -11,8 +11,10 @@ interface BreakdownTooltipProps {
 
 export default function BreakdownTooltip({ items, formatCurrency, className = "", position = 'top' }: BreakdownTooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
 
   const updatePosition = () => {
     if (triggerRef.current) {
@@ -42,13 +44,46 @@ export default function BreakdownTooltip({ items, formatCurrency, className = ""
   };
 
   const handleMouseEnter = () => {
-    updatePosition();
-    setIsVisible(true);
+    if (!isLocked) {
+      updatePosition();
+      setIsVisible(true);
+    }
   };
 
   const handleMouseLeave = () => {
-    setIsVisible(false);
+    if (!isLocked) {
+      setIsVisible(false);
+    }
   };
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newLocked = !isLocked;
+    setIsLocked(newLocked);
+    
+    if (newLocked) {
+      setIsVisible(true);
+      updatePosition();
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isLocked &&
+          triggerRef.current && !triggerRef.current.contains(event.target as Node) &&
+          tooltipRef.current && !tooltipRef.current.contains(event.target as Node)) {
+        setIsLocked(false);
+        setIsVisible(false);
+      }
+    };
+
+    if (isLocked) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isLocked]);
 
   useEffect(() => {
     if (isVisible) {
@@ -63,11 +98,12 @@ export default function BreakdownTooltip({ items, formatCurrency, className = ""
 
   return (
     <>
-      <div 
+      <div
         ref={triggerRef}
         className={`inline-block ${className}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
       >
         <span className="cursor-help">
            <span className="w-4 h-4 rounded-full border border-neutral-400 text-neutral-400 flex items-center justify-center text-[10px] font-serif italic hover:border-[#FF5E00] hover:text-[#FF5E00] hover:bg-[#FFF5F0] transition-colors bg-white">
@@ -77,26 +113,29 @@ export default function BreakdownTooltip({ items, formatCurrency, className = ""
       </div>
 
       {isVisible && (
-        <PortalTooltip 
+        <PortalTooltip
           items={items}
           formatCurrency={formatCurrency}
-          top={coords.top} 
+          top={coords.top}
           left={coords.left}
           position={position}
+          isLocked={isLocked}
+          tooltipRef={tooltipRef}
         />
       )}
     </>
   );
 }
 
-function PortalTooltip({ items, formatCurrency, top, left, position }: any) {
+function PortalTooltip({ items, formatCurrency, top, left, position, isLocked, tooltipRef }: any) {
   if (typeof document === 'undefined') return null;
 
   return createPortal(
-    <div 
-      className="absolute z-[9999] w-96 p-0 bg-white border border-slate-200 rounded-lg shadow-xl text-left text-sm font-normal normal-case pointer-events-none transition-opacity duration-200 overflow-hidden"
-      style={{ 
-        top: top, 
+    <div
+      ref={tooltipRef}
+      className={`absolute z-[9999] w-96 p-0 bg-white border border-slate-200 rounded-lg shadow-xl text-left text-sm font-normal normal-case transition-opacity duration-200 overflow-hidden ${isLocked ? 'pointer-events-auto' : 'pointer-events-none'}`}
+      style={{
+        top: top,
         left: left,
         transform: getTransform(position)
       }}
