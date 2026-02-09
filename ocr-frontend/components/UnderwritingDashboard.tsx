@@ -490,17 +490,19 @@ export default function UnderwritingDashboard({
         fullAnalysis={analysis} // Pass full analysis for export purposes
       />
 
-      {/* Combined Rent Roll Table (Read-Only Aggregated View) */}
+      {/* Combined Rent Roll Table (Read-Only Aggregated View) - HIDDEN
       <CombinedRentRollTable
         rentRoll={analysis.rent_roll || []}
         formatCurrency={formatCurrency}
       />
+      */}
 
-      {/* Expense & Revenue List (Historical Financials) */}
+      {/* Expense & Revenue List (Historical Financials) - HIDDEN
       <ExpenseRevenueList
         expenses={analysis.historical_expenses || []}
         formatCurrency={formatCurrency}
       />
+      */}
 
       {/* AI Underwriting Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
