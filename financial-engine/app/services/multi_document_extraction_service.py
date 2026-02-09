@@ -391,14 +391,7 @@ class MultiDocumentExtractionService:
             response = await self.gemini_service.generate_content_async(f"{prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
             
             # Clean and parse JSON
-            cleaned_text = response.strip()
-            if cleaned_text.startswith("```json"):
-                cleaned_text = cleaned_text[7:]
-            if cleaned_text.startswith("```"):
-                cleaned_text = cleaned_text[3:]
-            if cleaned_text.endswith("```"):
-                cleaned_text = cleaned_text[:-3]
-            cleaned_text = cleaned_text.strip()
+            cleaned_text = self._extract_json_from_response(response)
             
             try:
                 expenses_data = json.loads(cleaned_text)
@@ -601,6 +594,40 @@ class MultiDocumentExtractionService:
             logger.error(f"Error inside sync Excel extraction for {filename}: {str(e)}", exc_info=True)
             raise
     
+    def _extract_json_from_response(self, response_text: str) -> str:
+        """
+        Helper to robustly extract JSON from LLM response which might contain
+        conversational filler or markdown code blocks.
+        """
+        response_text = response_text.strip()
+        
+        # Try finding JSON markdown block
+        import re
+        json_match = re.search(r"```json\s*(.*?)```", response_text, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+            
+        # Try generic code block
+        code_match = re.search(r"```\s*(.*?)```", response_text, re.DOTALL)
+        if code_match:
+            return code_match.group(1).strip()
+            
+        # Fallback: look for outer list brackets
+        start_idx = response_text.find("[")
+        end_idx = response_text.rfind("]")
+        
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            return response_text[start_idx:end_idx+1]
+            
+        # Fallback: look for outer object brackets
+        start_idx = response_text.find("{")
+        end_idx = response_text.rfind("}")
+        
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            return response_text[start_idx:end_idx+1]
+            
+        return response_text
+
     async def extract_from_visual_document(self, file_content: bytes, filename: str, mime_type: str = "application/pdf") -> List[Dict[str, Any]]:
         """
         Extract expense line items from visual files (PDFs, Images) using Gemini Vision API.
@@ -700,17 +727,10 @@ class MultiDocumentExtractionService:
                 response_text = response.text.strip()
                 logger.info(f"Gemini response for {filename}: {response_text[:200]}...")
                 
-                # Remove markdown code blocks if present
-                if response_text.startswith("```json"):
-                    response_text = response_text[7:]
-                if response_text.startswith("```"):
-                    response_text = response_text[3:]
-                if response_text.endswith("```"):
-                    response_text = response_text[:-3]
+                # Clean and parse JSON
+                cleaned_text = self._extract_json_from_response(response_text)
                 
-                response_text = response_text.strip()
-                
-                expenses_data = json.loads(response_text)
+                expenses_data = json.loads(cleaned_text)
                 
                 # Validate that we got a list
                 if not isinstance(expenses_data, list):
@@ -861,12 +881,9 @@ class MultiDocumentExtractionService:
                     return []
 
                 response_text = response.text.strip()
-                if response_text.startswith("```json"):
-                    response_text = response_text[7:]
-                if response_text.endswith("```"):
-                    response_text = response_text[:-3]
+                cleaned_text = self._extract_json_from_response(response_text)
                 
-                proforma_data = json.loads(response_text)
+                proforma_data = json.loads(cleaned_text)
 
                 if not isinstance(proforma_data, list):
                     logger.error(f"Expected a list for OM Proforma, but got {type(proforma_data)}")
@@ -1047,14 +1064,7 @@ class MultiDocumentExtractionService:
             response_text = await self.gemini_service.generate_content_async(prompt)
             
             # Clean and parse JSON
-            cleaned_text = response_text.strip()
-            if cleaned_text.startswith("```json"):
-                cleaned_text = cleaned_text[7:]
-            if cleaned_text.startswith("```"):
-                cleaned_text = cleaned_text[3:]
-            if cleaned_text.endswith("```"):
-                cleaned_text = cleaned_text[:-3]
-            cleaned_text = cleaned_text.strip()
+            cleaned_text = self._extract_json_from_response(response_text)
             
             try:
                 results = json.loads(cleaned_text)
@@ -1207,6 +1217,99 @@ class MultiDocumentExtractionService:
             "reasoning": "No clear category match found"
         }
     
+    def _convert_om_proforma_to_expenses(self, proforma_tables: List[OMProformaTable], filename: str, document_id: str) -> List[Dict[str, Any]]:
+        """
+        Converts extracted OM Proforma tables into raw expense items for normalization.
+        Prioritizes 'Current', 'Actual', 'T12' scenarios.
+        """
+        if not proforma_tables:
+            return []
+            
+        # 1. Identify Best Scenario
+        # Priority keywords
+        priority_keywords = ["current", "actual", "t12", "trailing", "in-place", "inplace", "t-12"]
+        
+        selected_table = None
+        
+        # Try finding exact matches first
+        for table in proforma_tables:
+            name = (table.scenario_name or "").lower()
+            if any(k in name for k in priority_keywords) and "pro forma" not in name and "proforma" not in name:
+                 # "Current Pro Forma" is ambiguous, but usually means Current.
+                 # But "Pro Forma" alone usually means Year 1.
+                 selected_table = table
+                 break
+        
+        # If no "Current", try "Year 1" or "Pro Forma" (some OMs only have proforma)
+        if not selected_table:
+             # Just pick the first one or look for "Pro Forma"
+             # If we only have one, use it.
+             if len(proforma_tables) == 1:
+                 selected_table = proforma_tables[0]
+             else:
+                 # Try to find "Year 1" or "Stabilized"
+                 for table in proforma_tables:
+                     name = (table.scenario_name or "").lower()
+                     if "year 1" in name or "stabilized" in name or "pro forma" in name:
+                         selected_table = table
+                         break
+        
+        if not selected_table and proforma_tables:
+            selected_table = proforma_tables[0] # Fallback
+            
+        if not selected_table:
+            return []
+            
+        logger.info(f"Selected OM Financials Scenario: '{selected_table.scenario_name}' from {filename}")
+        
+        expenses = []
+        for row in selected_table.rows:
+            # Skip empty amounts
+            if not row.annual and not row.monthly:
+                continue
+                
+            # Determine amount (prefer annual)
+            amount = row.annual if row.annual is not None else (row.monthly * 12 if row.monthly else 0.0)
+            
+            if amount == 0:
+                continue
+                
+            # Simple type heuristic
+            row_name = row.row_name
+            row_lower = row_name.lower()
+            item_type = "expense" # Default
+            subtype = None
+            
+            if "income" in row_lower or "rent" in row_lower or "revenue" in row_lower or "reimbursement" in row_lower:
+                item_type = "revenue"
+                if "rent" in row_lower:
+                    subtype = "rent"
+                elif "reimbursement" in row_lower:
+                    subtype = "reimbursement"
+                else:
+                    subtype = "other_income"
+            
+            # Exclude NOI, Total Income, Total Expenses lines to avoid double counting
+            # These are usually summary lines. We want line items.
+            if any(x in row_lower for x in ["total income", "total expense", "net operating income", "gross operating income", "effective gross income", "total operating expense", "noi", "egi", "goi"]):
+                # Skip summaries
+                continue
+
+            expenses.append({
+                "raw_text": row_name,
+                "amount": amount,
+                "period": "annual",
+                "type": item_type,
+                "subtype": subtype,
+                "source_document": filename,
+                "document_id": document_id,
+                "source_type": "OM_Proforma", # Marker for priority logic
+                "expense_year": None # OM usually implies current/forward, not specific year unless stated
+            })
+            
+        logger.info(f"Converted {len(expenses)} rows from OM Proforma to Expense Items")
+        return expenses
+
     def _convert_om_data_to_normalized(self, om_data: Dict[str, Any], filename: str, document_id: str) -> List[NormalizedDataItem]:
         """
         Converts extracted OM data into NormalizedDataItem objects for synthesis.
@@ -1435,7 +1538,13 @@ class MultiDocumentExtractionService:
                             if proforma_tables:
                                 local_om_results.extend(proforma_tables)
                                 logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
-                            
+                                
+                                # FIX: Convert OM Proforma to Expenses immediately
+                                om_expenses = self._convert_om_proforma_to_expenses(proforma_tables, filename, document_id)
+                                if om_expenses:
+                                    local_expenses.extend(om_expenses)
+                                    logger.info(f"Added {len(om_expenses)} expense items from OM Proforma")
+
                             # 2. Key Data Extraction (Price, Units, Rent Roll)
                             mime_type = "application/pdf"
                             if filename.lower().endswith(".png"):

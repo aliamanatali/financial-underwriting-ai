@@ -49,6 +49,11 @@ class OMScraperService:
         - If multiple Proforma tables exist (e.g. "Current" vs "Market"), extract all of them.
         - Look for "Asking Price", "Purchase Price", "CAP Rate", "GRM" usually at the bottom of the proforma.
 
+        FILTERING RULES:
+        - EXCLUDE "Rent Comparables" or "Sales Comparables" tables.
+        - EXCLUDE data belonging to other properties (e.g. in a portfolio, only extract the subject property).
+        - Ensure the extracted financials correspond to the Subject Property identified in the OM.
+
         Return ONLY the JSON array.
         """
 
@@ -129,6 +134,10 @@ class OMScraperService:
         - Extract all rows found in the table.
         - Look for "Asking Price", "Purchase Price", "CAP Rate", "GRM" usually at the bottom.
 
+        FILTERING RULES:
+        - EXCLUDE "Rent Comparables", "Sale Comparables", or "Comps" tables.
+        - Ensure data belongs to the SUBJECT PROPERTY only.
+
         Return ONLY the JSON array.
         """
         
@@ -162,7 +171,9 @@ class OMScraperService:
         Analyze this {file_type_desc} and extract the following key information:
         
         1. Property Details:
-           - Property Name (if explicitly mentioned, e.g. "The Oakwood Apartments", otherwise null)
+           - Property Name: The explicit name of the SUBJECT PROPERTY (e.g., "The Oakwood Apartments").
+             * CRITICAL: Do NOT pick names of Comparable Properties ("Rent Comps", "Sales Comps") or the Brokerage Firm.
+             * If the property has no specific name, use the Street Address (e.g., "123 Main Street Apartments").
            - Purchase Price / Asking Price
            - Total Units (Unit Count)
            - Property Address
@@ -226,7 +237,9 @@ class OMScraperService:
                 )
                 
                 if response.text:
-                    return json.loads(response.text)
+                    # Use GeminiClient's cleaning method for robustness
+                    cleaned_text = self.gemini_client._clean_json_string(response.text)
+                    return json.loads(cleaned_text)
                 return {}
              else:
                  logger.warning("Gemini Client does not support async generation")

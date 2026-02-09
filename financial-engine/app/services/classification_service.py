@@ -382,16 +382,25 @@ class ClassificationService:
             
             response = await self.gemini_service.generate_content_async(prompt)
             
-            # Clean response
+            # Clean response using robust extraction
             cleaned_text = response.strip()
-            if cleaned_text.startswith("```json"):
-                cleaned_text = cleaned_text[7:]
-            if cleaned_text.startswith("```"):
-                cleaned_text = cleaned_text[3:]
-            if cleaned_text.endswith("```"):
-                cleaned_text = cleaned_text[:-3]
             
-            results_dict = json.loads(cleaned_text.strip())
+            # Use regex to find JSON content between ```json and ``` or ``` and ```
+            import re
+            match = re.search(r"```json\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            if not match:
+                match = re.search(r"```\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            
+            if match:
+                cleaned_text = match.group(1).strip()
+            else:
+                # Fallback: look for outer object brackets
+                start_idx = cleaned_text.find("{")
+                end_idx = cleaned_text.rfind("}")
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    cleaned_text = cleaned_text[start_idx:end_idx+1]
+            
+            results_dict = json.loads(cleaned_text)
             
             # Map strings to Enums
             final_map = {}

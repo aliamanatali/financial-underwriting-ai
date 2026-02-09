@@ -196,6 +196,7 @@ class StandardizedExpense(BaseModel):
     user_verified: bool = False  # Track if user has manually verified/corrected this mapping
     user_corrected_category: Optional[ExpenseCategory] = None  # If user changed the mapping
     expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
+    source_document: Optional[str] = None # Source file name for traceability and deduplication
 
 # --- 2.2 Explainability Models ---
 

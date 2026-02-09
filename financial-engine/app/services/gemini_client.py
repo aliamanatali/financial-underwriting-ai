@@ -446,11 +446,38 @@ Error: {e}
 
     def _clean_json_string(self, json_string: str) -> str:
         """
-        Cleans a JSON string that may be wrapped in markdown.
+        Cleans a JSON string that may be wrapped in markdown or contain conversational text.
         """
+        json_string = json_string.strip()
+        
         # Use regex to find JSON content between ```json and ```
         import re
         match = re.search(r"```json\s*([\s\S]*?)\s*```", json_string, re.DOTALL)
         if match:
             return match.group(1).strip()
-        return json_string.strip()
+            
+        # Try generic code block
+        match = re.search(r"```\s*(.*?)```", json_string, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+            
+        # Find first valid start char ({ or [)
+        first_brace = json_string.find("{")
+        first_bracket = json_string.find("[")
+        
+        if first_brace == -1 and first_bracket == -1:
+            return json_string
+            
+        # Determine which comes first to decide if Object or List
+        if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+            # Object starts first
+            last_brace = json_string.rfind("}")
+            if last_brace > first_brace:
+                return json_string[first_brace:last_brace+1]
+        else:
+            # List starts first
+            last_bracket = json_string.rfind("]")
+            if last_bracket > first_bracket:
+                return json_string[first_bracket:last_bracket+1]
+                
+        return json_string

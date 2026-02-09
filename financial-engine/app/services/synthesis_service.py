@@ -30,7 +30,13 @@ class SynthesisService:
         "MANAGEMENT AGREEMENT": 95,
         "GRANT OF EASEMENT": 90,
         "PRELIM": 90,
-        "RENT ROLL": 80, # Standalone Rent Roll is usually better, but if OM is present, user wants OM.
+        "RENT ROLL": 80, # Priority 2
+        "T12": 75,      # Priority 3 (Financials)
+        "P&L": 75,
+        "PROFIT & LOSS": 75,
+        "INCOME STATEMENT": 75,
+        "OPERATING STATEMENT": 75,
+        "FINANCIALS": 75,
         "TAX BILL": 70,
         "TAX": 70,
         "FIRE INSPECTION": 60,
@@ -324,6 +330,26 @@ class SynthesisService:
         if not items_by_source:
              return []
 
+        # --- OM PRIMACY LOGIC ---
+        # If OM has rent roll items, use ONLY OM items (unless very sparse/error).
+        om_source = None
+        for source in items_by_source.keys():
+            if "OM" in source.upper() or "OFFERING" in source.upper() or "MEMORANDUM" in source.upper():
+                # Check if it has decent data
+                if len(items_by_source[source]) > 0:
+                    om_source = source
+                    break
+        
+        if om_source:
+            logger.info(f"OM Primacy: Found Rent Roll in OM ('{om_source}'). Using this source exclusively per priority rules.")
+            final_items = items_by_source[om_source]
+            
+            # Log summary
+            total_rent = sum(item.current_rent or 0.0 for item in final_items)
+            logger.info(f"OM Rent Roll Summary: {len(final_items)} units, ${total_rent:,.2f} monthly rent")
+            return final_items
+
+        # --- Fallback to Best Source Selection (if no OM) ---
         # FIX: Use document priority to select best source (OM > Rent Roll)
         def get_source_priority(source_name: str, items: List[RentRollItem]) -> int:
             base_score = self._get_document_score(source_name)

@@ -29,22 +29,49 @@ class FinancialService:
 
     def _deduplicate_expenses(self, expenses: List[Any]) -> List[Any]:
         """
-        Deduplicates expenses to avoid summing 'Total' lines AND individual line items.
-        Also filters out expenses from different years if multiple years are detected.
+        Deduplicates expenses with Document Priority Enforcement (OM > Financials).
         
         Logic:
-        1. Year-based Filtering: If multiple years found (e.g. 2022, 2023), pick the most relevant one.
-        2. Group by Category.
-        3. If a category has multiple items:
-           - Check for "Total" lines and prefer them if they cover the whole amount.
-           - If multiple large items exist, deduplicate based on value.
+        1. Document Priority: If expenses exist from an OM (Offering Memorandum),
+           and they appear sufficient, we IGNORE other sources (T12, Excel, etc.)
+           per the "OM Primacy" rule.
+        2. Year-based Filtering: If multiple years found, pick the most relevant one.
+        3. Deduplication: Group by category and clean up duplicates/totals.
         """
         from collections import defaultdict, Counter
         
         if not expenses:
             return []
 
-        # --- Step 0: Year-Based Filtering ---
+        # --- Step 0: Document Priority Filtering (OM > Others) ---
+        # "if we have OM, we should be able to get all the data... we dont need to pick supporting documents"
+        
+        om_expenses = []
+        other_expenses = []
+        
+        for exp in expenses:
+            src = (exp.source_document or "").upper()
+            if "OM" in src or "OFFERING" in src or "MEMORANDUM" in src:
+                om_expenses.append(exp)
+            else:
+                other_expenses.append(exp)
+        
+        # If we have substantial data from OM, we use OM ONLY.
+        # Threshold: > 5 items suggests we extracted a table (Income, Taxes, Utilities, etc.)
+        if len(om_expenses) > 5:
+            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring {len(other_expenses)} items from supporting documents.")
+            expenses = om_expenses
+        elif len(om_expenses) > 0:
+             # OM exists but has very few items. Maybe just Property Tax/Price?
+             # Check if we have better data in supporting docs.
+             if len(other_expenses) > 10:
+                 logger.info(f"OM Primacy: Found OM items ({len(om_expenses)}) but supporting docs have more data ({len(other_expenses)}). Using ALL (merging).")
+                 # We kept expenses as is (both OM and others)
+             else:
+                 # Both are sparse, keep both
+                 pass
+        
+        # --- Step 1: Year-Based Filtering ---
         # Collect years from all expenses
         years = []
         for exp in expenses:
