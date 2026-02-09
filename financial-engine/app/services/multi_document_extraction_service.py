@@ -48,7 +48,8 @@ class MultiDocumentExtractionService:
         progress_start: int = 20,
         progress_end: int = 30,
         initial_completed_files: List[str] = None,
-        total_files_override: Optional[int] = None
+        total_files_override: Optional[int] = None,
+        target_property_address: Optional[str] = None
     ) -> (List[RentRollItem], List[str]):
         """
         Process multiple rent roll documents and return a list of RentRollItems.
@@ -123,11 +124,17 @@ class MultiDocumentExtractionService:
                 items = []
                 if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
                     items = await self.ingestion_service.extract_rent_roll_from_excel(
-                        file_content, total_units=total_units, filename=filename
+                        file_content,
+                        total_units=total_units,
+                        filename=filename,
+                        target_property_address=target_property_address
                     )
                 elif file_type in ["pdf", "visual"] or filename.endswith((".pdf", ".png", ".jpg")):
                     items = await self.ingestion_service.extract_rent_roll_from_pdf(
-                        file_content, total_units=total_units, filename=filename
+                        file_content,
+                        total_units=total_units,
+                        filename=filename,
+                        target_property_address=target_property_address
                     )
                 
                 if items:
@@ -1330,6 +1337,19 @@ class MultiDocumentExtractionService:
                     confidence=0.95,
                     source_document=filename,
                     metadata={"text_value": meta["property_name"], "document_id": document_id}
+                ))
+
+            # Property Address
+            if meta.get("address"):
+                items.append(NormalizedDataItem(
+                    id=f"om_address_{document_id}",
+                    raw_text=f"Property Address: {meta['address']}",
+                    normalized_value="Property Address",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"text_value": meta["address"], "document_id": document_id}
                 ))
 
             # Purchase Price

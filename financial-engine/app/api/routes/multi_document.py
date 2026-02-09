@@ -3,7 +3,7 @@ Multi-Document Upload and Normalization API Routes.
 Handles the ingestion of ZIP files containing 8 folders of documents for a deal package.
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Body, Request
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
@@ -13,6 +13,8 @@ import io
 import os
 from pathlib import Path
 import shutil
+import asyncio
+import math
 
 from app.models.schemas import (
     DocumentType,
@@ -20,7 +22,11 @@ from app.models.schemas import (
     DealPackage,
     DocumentNormalizationResult,
     NormalizedDataItem,
-    OMProformaTable
+    OMProformaTable,
+    UnderwritingAnalysis, DealParameters, PropertyMeta,
+    RentRollItem, RentRollSummary, StandardizedExpense,
+    ExpenseCategory, AuditLog,
+    StudentHousingConfig
 )
 from app.services.ingestion_service import IngestionService
 from app.services.normalization_service import NormalizationService
@@ -33,6 +39,13 @@ from app.services.classification_service import ClassificationService
 from app.services.batch_logging_service import BatchLoggingService
 from app.dependencies import get_gemini_service, get_openai_service, get_progress_service, get_explainability_service, get_classification_service, get_batch_logging_service
 from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAPPING
+
+# Import Services for Logic Function
+from app.services.financial_service import FinancialService
+from app.services.audit_log_service import AuditLogService
+from app.services.excel_service import ExcelService
+from app.services.memo_service import MemoService
+from app.services.synthesis_service import SynthesisService
 
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
@@ -477,67 +490,173 @@ async def normalize_package_documents(
     
     await progress_service.update_progress(package_id, 20, f"Processing {documents_count} documents folder by folder...")
     
-    # --- 1. Process Rent Rolls (Segmented) ---
-    extracted_rent_roll = []
-    processed_rent_roll_files = []
-    if rent_roll_docs:
+    # --- Simplified Parallel Processing with Basic Progress Aggregation ---
+    
+    # 1. Separate documents
+    om_documents = [d for d in financial_docs if d.get("document_category") == DocumentType.OFFERING_MEMORANDUM]
+    remaining_financial_docs = [d for d in financial_docs if d.get("document_category") != DocumentType.OFFERING_MEMORANDUM]
+    
+    # Shared State for Parallel Progress Tracking
+    progress_lock = asyncio.Lock()
+    task_progress = {"om": 0.0, "rr": 0.0, "fin": 0.0}
+    global_completed_files = set()
+    global_active_files = {}  # task_key -> current_file
+    
+    async def update_aggregate_progress(task_key, percent, msg, details=None):
+        async with progress_lock:
+            # 1. Update Percentage
+            task_progress[task_key] = percent
+            # OM: 10pts, RentRoll: 15pts, Financials: 15pts -> Total 40pts + Base 20
+            total_added = (task_progress["om"] * 0.10) + (task_progress["rr"] * 0.15) + (task_progress["fin"] * 0.15)
+            global_pct = 20 + int(total_added)
+            
+            # 2. Update File Tracking
+            if details:
+                # Merge completed files (Accumulate, never replace with partials)
+                if 'completed_files' in details:
+                    global_completed_files.update(details['completed_files'])
+                
+                # Update active file for this task
+                if 'current_file' in details:
+                    global_active_files[task_key] = details['current_file']
+                elif 'active_files' in details and details['active_files']:
+                    # Take the first one if multiple
+                    global_active_files[task_key] = details['active_files'][0]
+                else:
+                    # Clear active file for this task if not provided or empty
+                    if task_key in global_active_files:
+                        del global_active_files[task_key]
+            
+            # Construct Unified Details
+            # We want to show ALL completed files from ALL tasks
+            unified_details = {
+                "completed_files": list(global_completed_files),
+                "active_files": list(global_active_files.values()),
+                "status": "processing"
+            }
+            
+            # Send Update
+            await progress_service.update_progress(package_id, global_pct, msg, details=unified_details)
+
+    class SimpleProgressAdapter:
+        def __init__(self, key):
+            self.key = key
+            
+        async def update_progress(self, task_id, pct, msg, details=None):
+            await update_aggregate_progress(self.key, pct, msg, details)
+
+    # Task A: Process OM Documents
+    async def process_om_task():
+        if not om_documents:
+            await update_aggregate_progress("om", 100, "OM processing skipped")
+            return None, [], [], []
         try:
-            logger.info("Normalizing Rent Roll folder...")
-            extracted_rent_roll, rr_completed_files = await extraction_service.process_rent_roll_documents(
-                rent_roll_docs,
-                progress_service=progress_service,
+            logger.info(f"Starting OM Extraction task ({len(om_documents)} docs)...")
+            res = await extraction_service.process_financial_documents(
+                om_documents,
+                progress_service=SimpleProgressAdapter("om"),
                 task_id=package_id,
-                progress_start=20,
-                progress_end=35,
+                progress_start=0, progress_end=100,
+                initial_completed_files=[], # Don't pass global list, we handle merging in adapter
                 total_files_override=documents_count
             )
-            # Track processed files for progress continuity
-            processed_rent_roll_files = rr_completed_files
+            extracted_expenses, extracted_proforma, completed_files = res
             
-            package.rent_roll_data = extracted_rent_roll
-            logger.info(f"Saved {len(extracted_rent_roll)} rent roll items to package")
+            # Extract Address
+            address = None
+            for item in extracted_expenses:
+                if item.field_type == "property_meta" and item.normalized_value == "Property Address":
+                    if item.metadata and item.metadata.get("text_value"):
+                        address = item.metadata.get("text_value")
+                        logger.info(f"Found Target Property Address from OM: {address}")
+                        break
+            
+            return address, extracted_expenses, extracted_proforma, completed_files
         except Exception as e:
-            logger.error(f"Error processing Rent Rolls: {e}")
-            # Continue to other folders
+            logger.error(f"Error in OM Task: {e}")
+            return None, [], [], []
+
+    # Task B: Process Rent Rolls (Dependent on OM)
+    async def process_rent_rolls_task(om_task_future):
+        if not rent_roll_docs:
+            await update_aggregate_progress("rr", 100, "Rent Roll processing skipped")
+            return [], []
+        
+        await update_aggregate_progress("rr", 0, "Rent Roll waiting for OM analysis...")
+        
+        # Wait for OM task to finish to get the address
+        om_result = await om_task_future
+        target_address = om_result[0] if om_result else None
+        # Note: We don't need to pass om_completed_files here because the adapter merges them globally
+        
+        logger.info(f"Starting Rent Roll Processing (Target Address: {target_address})...")
+        
+        return await extraction_service.process_rent_roll_documents(
+            rent_roll_docs,
+            progress_service=SimpleProgressAdapter("rr"),
+            task_id=package_id,
+            progress_start=0, progress_end=100,
+            initial_completed_files=[],
+            total_files_override=documents_count,
+            target_property_address=target_address
+        )
+
+    # Task C: Process Remaining Financials
+    async def process_financials_task():
+        if not remaining_financial_docs:
+            await update_aggregate_progress("fin", 100, "Financials processing skipped")
+            return [], [], []
+        
+        logger.info("Starting Remaining Financials Processing immediately...")
+        return await extraction_service.process_financial_documents(
+            remaining_financial_docs,
+            progress_service=SimpleProgressAdapter("fin"),
+            task_id=package_id,
+            progress_start=0, progress_end=100,
+            initial_completed_files=[],
+            total_files_override=documents_count
+        )
+
+    try:
+        # Launch Tasks
+        om_task = asyncio.create_task(process_om_task())
+        fin_task = asyncio.create_task(process_financials_task())
+        rr_task = asyncio.create_task(process_rent_rolls_task(om_task))
+        
+        logger.info("Launching parallel extraction tasks...")
+        results = await asyncio.gather(om_task, rr_task, fin_task)
+        
+        # Unpack Results
+        (om_address, extracted_om_expenses, extracted_om_proforma, om_completed_files) = results[0]
+        (extracted_rent_roll, rr_completed_files) = results[1]
+        (extracted_other_financials, other_om_proforma, other_fin_completed_files) = results[2]
+        
+        # Merge Financials
+        all_financials = extracted_om_expenses + extracted_other_financials
+        
+        # Assign unique IDs
+        for idx, item in enumerate(all_financials):
+            item.id = str(uuid.uuid4())
             
-    # --- 2. Process Financials / OM (Segmented) ---
-    extracted_financials = []
-    extracted_om_proforma = []
-    
-    # We maintain a full list of completed files for progress continuity
-    all_completed_files = list(processed_rent_roll_files)
-    
-    if financial_docs:
-        try:
-            logger.info("Normalizing Financials/OM folders...")
-            extracted_financials, extracted_om_proforma, fin_completed_files = await extraction_service.process_financial_documents(
-                financial_docs,
-                progress_service=progress_service,
-                task_id=package_id,
-                progress_start=35,
-                progress_end=60,
-                initial_completed_files=processed_rent_roll_files,
-                total_files_override=documents_count
-            )
+        package.financials_data = all_financials
+        
+        # Merge OM Proforma
+        all_om_proforma = extracted_om_proforma + other_om_proforma
+        if all_om_proforma:
+            package.om_proforma_data = all_om_proforma
             
-            # Update comprehensive list
-            # We use a set to avoid duplicates if any file was processed twice (unlikely but safe)
-            all_completed_files = list(set(all_completed_files + fin_completed_files))
-            
-            # Assign unique IDs to financials
-            for idx, item in enumerate(extracted_financials):
-                item.id = str(uuid.uuid4())
-                
-            package.financials_data = extracted_financials
-            if extracted_om_proforma:
-                package.om_proforma_data = extracted_om_proforma
-                
-            logger.info(f"Saved {len(extracted_financials)} financial items and {len(extracted_om_proforma)} OM tables to package")
-            
-        except Exception as e:
-             logger.error(f"Error processing Financials: {e}")
-             await progress_service.update_progress(package_id, 0, f"Normalization failed: {str(e)}")
-             raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
+        # Save Rent Roll
+        package.rent_roll_data = extracted_rent_roll
+        
+        # Collect all completed files
+        all_completed_files = list(set(om_completed_files + rr_completed_files + other_fin_completed_files))
+        
+        logger.info(f"Processing Complete. Saved {len(all_financials)} financial items.")
+
+    except Exception as e:
+         logger.error(f"Error in parallel processing: {e}")
+         await progress_service.update_progress(package_id, 0, f"Processing failed: {str(e)}")
+         raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
 
     # Consolidate normalized_data for backward compatibility / Verification UI
     package.normalized_data = package.financials_data
@@ -572,8 +691,8 @@ async def normalize_package_documents(
     )
     
     try:
-        # Call the analyze endpoint internally
-        analysis_result = await analyze_deal_package(
+        # Call the analyze logic internally
+        analysis_result = await _analyze_deal_package_logic(
             package_id=package_id,
             deal_parameters=default_params.model_dump(),
             gemini_service=gemini_service,
@@ -886,25 +1005,97 @@ def _clean_address(address: str) -> str:
     # If no pattern match, return cleaned version
     return address.strip()
 
+@router.get("/packages/{package_id}/analysis")
+async def get_package_analysis(package_id: str):
+    """
+    Retrieve the analysis result for a deal package.
+    """
+    analysis_data = await storage_service.get_analysis_result(package_id)
+    if not analysis_data:
+        raise HTTPException(status_code=404, detail=f"Analysis not found for package {package_id}")
+    
+    return analysis_data
+
 
 @router.post("/packages/{package_id}/analyze")
 async def analyze_deal_package(
     package_id: str,
-    deal_parameters: Dict[str, Any],
+    request: Request,
     gemini_service: GeminiService = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
-    progress_base: int = 0,
-    completed_files: List[str] = None
 ):
     """
     Perform financial analysis on a multi-document deal package.
     """
+    # Initialize locals from request
+    progress_base = 0
+    completed_files = None
+    deal_parameters = {}
+
+    # DEBUG: Handle Request Body Manually to avoid 422
+    try:
+        body = await request.json()
+        logger.info(f"DEBUG: /analyze raw body for package {package_id}: {body}")
+        
+        # Handle deal_parameters
+        if "deal_parameters" in body and isinstance(body["deal_parameters"], dict):
+            deal_parameters = body["deal_parameters"]
+        else:
+            # Assume root is params if not wrapped, but exclude known other keys
+            deal_parameters = {k: v for k, v in body.items() if k not in ["progress_base", "completed_files"]}
+            
+        # Handle other params from body if present
+        if "progress_base" in body:
+            try:
+                progress_base = int(body["progress_base"])
+            except: pass
+            
+        if "completed_files" in body and isinstance(body["completed_files"], list):
+             completed_files = body["completed_files"]
+                 
+    except Exception as e:
+        logger.error(f"Failed to parse request body: {e}")
+        deal_parameters = {}
+    
+    # Also check Query Params for progress_base/completed_files just in case
+    # (Though internal calls pass them directly, external API calls use body or query)
+    if not progress_base and "progress_base" in request.query_params:
+         try:
+             progress_base = int(request.query_params["progress_base"])
+         except: pass
+
+    # Delegate to logic function
+    return await _analyze_deal_package_logic(
+        package_id=package_id,
+        deal_parameters=deal_parameters,
+        gemini_service=gemini_service,
+        openai_service=openai_service,
+        progress_service=progress_service,
+        explainability_service=explainability_service,
+        progress_base=progress_base,
+        completed_files=completed_files
+    )
+
+async def _analyze_deal_package_logic(
+    package_id: str,
+    deal_parameters: Dict[str, Any],
+    gemini_service: GeminiService,
+    openai_service: Any,
+    progress_service: ProgressService,
+    explainability_service: ExplainabilityService,
+    progress_base: int = 0,
+    completed_files: List[str] = None
+):
+    """
+    Internal logic for financial analysis, extracted for reuse.
+    """
+    # Import schemas locally to avoid circular deps if any
     from app.models.schemas import (
         UnderwritingAnalysis, DealParameters, PropertyMeta,
         RentRollItem, RentRollSummary, StandardizedExpense,
-        ExpenseCategory, AuditLog
+        ExpenseCategory, AuditLog, StudentHousingConfig
     )
     from app.services.financial_service import FinancialService
     from app.services.audit_log_service import AuditLogService
@@ -922,7 +1113,7 @@ async def analyze_deal_package(
         except (ValueError, TypeError):
             return 0.0
     
-    logger.info(f"Starting FRESH multi-document analysis for package: {package_id}")
+    logger.info(f"Starting FRESH multi-document analysis (Optimized V2) for package: {package_id}")
     logger.info(f"Received deal parameters: {deal_parameters}")
     
     async def update_progress(pct: int, msg: str):
@@ -1296,6 +1487,8 @@ async def analyze_deal_package(
     # Check for existing analysis to preserve persistent configurations (like student housing config)
     existing_analysis_dict = await storage_service.get_analysis_result(package_id)
     existing_student_config = None
+    existing_commentary = None
+    existing_memo = None
     
     # Priority 1: Check Manual Overrides (from Frontend Save)
     if package.manual_overrides and "student_housing_config" in package.manual_overrides:
@@ -1309,15 +1502,25 @@ async def analyze_deal_package(
             logger.warning(f"Failed to restore student housing config from overrides: {e}")
 
     # Priority 2: Check Existing Analysis (Fallback)
-    if not existing_student_config and existing_analysis_dict and "student_housing_config" in existing_analysis_dict:
-        try:
-            # Parse it to ensure validity
-            from app.models.schemas import StudentHousingConfig
-            if existing_analysis_dict["student_housing_config"]:
-                existing_student_config = StudentHousingConfig(**existing_analysis_dict["student_housing_config"])
-                logger.info("Restored student housing config from Previous Analysis")
-        except Exception as e:
-            logger.warning(f"Failed to restore student housing config from analysis: {e}")
+    if existing_analysis_dict:
+        # Student Config
+        if not existing_student_config and "student_housing_config" in existing_analysis_dict:
+            try:
+                # Parse it to ensure validity
+                from app.models.schemas import StudentHousingConfig
+                if existing_analysis_dict["student_housing_config"]:
+                    existing_student_config = StudentHousingConfig(**existing_analysis_dict["student_housing_config"])
+                    logger.info("Restored student housing config from Previous Analysis")
+            except Exception as e:
+                logger.warning(f"Failed to restore student housing config from analysis: {e}")
+        
+        # Restore Commentary & Memo (Avoid regeneration)
+        existing_commentary = existing_analysis_dict.get("analyst_commentary")
+        existing_memo = existing_analysis_dict.get("investment_memo")
+        if existing_commentary:
+            logger.info("Preserving existing analyst commentary.")
+        if existing_memo:
+            logger.info("Preserving existing investment memo.")
 
     # Create analysis object
     analysis = UnderwritingAnalysis(
@@ -1339,7 +1542,9 @@ async def analyze_deal_package(
         historical_total_expenses=0.0,
         historical_cap_rate=0.0,
         om_proforma=package.om_proforma_data,
-        student_housing_config=existing_student_config
+        student_housing_config=existing_student_config,
+        analyst_commentary=existing_commentary,
+        investment_memo=existing_memo
     )
     
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")
@@ -1396,11 +1601,7 @@ async def analyze_deal_package(
         await update_progress(80, "Generating insights and explanations...")
         analysis = await explainability_service.generate_explanations(analysis)
         
-        # Generate Analyst Commentary
-        logger.info("Generating analyst commentary...")
-        await explainability_service.generate_analyst_commentary(analysis)
-        
-        logger.info("Explainability metadata, conclusion, and commentary generated successfully.")
+        logger.info("Explainability metadata and conclusion generated successfully.")
     except Exception as e:
         logger.error(f"Explainability generation failed: {str(e)}")
         # Don't fail the pipeline for this, but log it
@@ -1416,8 +1617,10 @@ async def analyze_deal_package(
         await excel_service.create_side_by_side_excel(pro_forma_entries)
         logger.info(f"Excel model generated for package: {package_id}")
         
-        # 2. Parallel AI Tasks (Memo & Commentary)
+        # 2. Parallel AI Tasks (Memo & Commentary) - ONLY IF MISSING
         async def task_commentary():
+            if analysis.analyst_commentary:
+                return
             try:
                 await explainability_service.generate_analyst_commentary(analysis)
                 logger.info("Analyst commentary generated.")
@@ -1426,6 +1629,8 @@ async def analyze_deal_package(
                 analysis.analyst_commentary = "Commentary unavailable."
 
         async def task_memo():
+            if analysis.investment_memo:
+                return
             try:
                 logger.info("Generating investment memo...")
                 memo_content = await memo_service.generate_investment_memo(analysis)
@@ -1459,167 +1664,3 @@ async def analyze_deal_package(
     
     await update_progress(100, "Analysis complete!")
     return analysis
-
-
-@router.get("/packages/{package_id}/analysis")
-async def get_deal_analysis(package_id: str):
-    """
-    Retrieve the stored financial analysis for a deal package.
-    """
-    from app.services.storage_service import storage_service
-    
-    # First, verify the package exists
-    package_data = await storage_service.get_deal_package(package_id)
-    if not package_data:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Package {package_id} not found. It may have been deleted or never existed."
-        )
-    
-    # Check storage for analysis result
-    analysis_data = await storage_service.get_analysis_result(package_id)
-    
-    if not analysis_data:
-        # Package exists but analysis hasn't been run yet
-        raise HTTPException(
-            status_code=404,
-            detail=f"NO_ANALYSIS_YET"
-        )
-    
-    return analysis_data
-
-
-@router.patch("/packages/{package_id}/rename")
-async def rename_deal_package(package_id: str, new_name: str):
-    """
-    Rename a deal package.
-    """
-    # Get the package
-    package_data = await storage_service.get_deal_package(package_id)
-    if not package_data:
-        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-    package = DealPackage(**package_data)
-    
-    # Update the property name
-    package.property_name = new_name
-    package.updated_at = datetime.utcnow().isoformat()
-    
-    # Save changes
-    package_dict = package.model_dump()
-    await storage_service.save_deal_package(package_dict)
-    
-    logger.info(f"Renamed package {package_id} to '{new_name}'")
-    
-    return {
-        "message": "Package renamed successfully",
-        "package_id": package_id,
-        "property_name": new_name
-    }
-
-
-@router.delete("/packages/{package_id}")
-async def delete_deal_package(package_id: str):
-    """
-    Delete a deal package and all its documents.
-    """
-    # Delete from storage service
-    deleted = await storage_service.delete_deal_package(package_id)
-    
-    if not deleted:
-        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-    
-    # Remove associated files from cache
-    file_ids_to_remove = [
-        doc_id for doc_id, file_data in file_storage_cache.items()
-        if file_data.get("package_id") == package_id
-    ]
-    for doc_id in file_ids_to_remove:
-        del file_storage_cache[doc_id]
-    
-    
-@router.get("/packages/{package_id}/documents/{document_id}/content")
-async def get_package_document_content(package_id: str, document_id: str):
-    """
-    Get the raw content of a document within a package.
-    Returns a signed URL if GCP is configured, otherwise returns base64-encoded content.
-    """
-    # Check cache first
-    package_data = await storage_service.get_deal_package(package_id)
-    if not package_data:
-        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-    package = DealPackage(**package_data)
-
-    # Find document metadata
-    target_doc = None
-    for doc_list in package.documents.values():
-        for doc in doc_list:
-            if doc.document_id == document_id:
-                target_doc = doc
-                break
-        if target_doc:
-            break
-            
-    if not target_doc:
-        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
-
-    extension = Path(target_doc.filename).suffix
-    storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
-    
-    # Try to generate a signed URL first (preferred method)
-    try:
-        if storage_service.use_gcp:
-            signed_url = await storage_service.get_signed_url(storage_path)
-            if signed_url:
-                logger.info(f"Generated signed URL for document {document_id}")
-                return {"signed_url": signed_url}
-            else:
-                logger.warning(f"Signed URL generation returned None for {storage_path}")
-        else:
-            logger.warning("GCP not configured, cannot generate signed URL")
-    except Exception as e:
-        logger.error(f"Error generating signed URL for {storage_path}: {e}", exc_info=True)
-    
-    # Fallback: Try to get document from cache
-    if document_id in file_storage_cache:
-        try:
-            import base64
-            file_data = file_storage_cache[document_id]
-            content = file_data.get("content")
-            if content:
-                # Return base64-encoded content for frontend to decode
-                encoded_content = base64.b64encode(content).decode('utf-8')
-                logger.info(f"Returning cached content for document {document_id} (base64)")
-                return {
-                    "content": encoded_content,
-                    "filename": target_doc.filename,
-                    "content_type": storage_service._get_content_type(target_doc.filename),
-                    "encoding": "base64"
-                }
-        except Exception as e:
-            logger.error(f"Error retrieving from cache: {e}", exc_info=True)
-    
-    # Fallback: Try to download from GCP storage directly
-    if storage_service.use_gcp:
-        try:
-            import base64
-            file_content = await storage_service.get_document_file(storage_path)
-            if file_content:
-                # Return base64-encoded content
-                encoded_content = base64.b64encode(file_content).decode('utf-8')
-                logger.info(f"Downloaded and returning content for document {document_id} (base64)")
-                return {
-                    "content": encoded_content,
-                    "filename": target_doc.filename,
-                    "content_type": storage_service._get_content_type(target_doc.filename),
-                    "encoding": "base64"
-                }
-            else:
-                logger.error(f"Document file not found in storage: {storage_path}")
-        except Exception as e:
-            logger.error(f"Error downloading from GCP: {e}", exc_info=True)
-    
-    # All methods failed
-    raise HTTPException(
-        status_code=404,
-        detail=f"Document file not accessible. Path: {storage_path}. Check GCP configuration and file existence."
-    )
