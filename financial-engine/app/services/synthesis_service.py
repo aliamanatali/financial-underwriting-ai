@@ -21,6 +21,8 @@ class SynthesisService:
     
     # Document Priority Weights (Higher = More Reliable)
     DOCUMENT_WEIGHTS = {
+        "OFFERING MEMORANDUM": 110, # User requested First Priority
+        "OM": 110,
         "PSA": 100,
         "PURCHASE": 100,
         "AGREEMENT": 100,
@@ -28,14 +30,12 @@ class SynthesisService:
         "MANAGEMENT AGREEMENT": 95,
         "GRANT OF EASEMENT": 90,
         "PRELIM": 90,
-        "RENT ROLL": 80,
+        "RENT ROLL": 80, # Standalone Rent Roll is usually better, but if OM is present, user wants OM.
         "TAX BILL": 70,
         "TAX": 70,
         "FIRE INSPECTION": 60,
         "FIRE": 60,
         "INSPECTION": 60,
-        "OFFERING MEMORANDUM": 50,
-        "OM": 50,
         "DISCLOSURE": 30,
         "UNKNOWN": 10
     }
@@ -121,6 +121,7 @@ class SynthesisService:
         
         # Initialize best values with score -1 (will be beaten by any real data)
         best_values = {
+            "property_name": {"value": None, "source": None, "score": -1},
             "purchase_price": {"value": 0.0, "source": None, "score": -1},
             "total_units": {"value": 0, "source": None, "score": -1},
             "year_built": {"value": 0, "source": None, "score": -1},
@@ -149,8 +150,19 @@ class SynthesisService:
                     except (ValueError, TypeError):
                         amount = 0.0
             
+            # PROPERTY NAME
+            if "property name" in normalized_val:
+                text_val = item.metadata.get("text_value")
+                if text_val and doc_score > best_values["property_name"]["score"]:
+                    best_values["property_name"] = {
+                        "value": text_val,
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                    logger.info(f"Updated Property Name: {text_val} from {source_doc} (score: {doc_score})")
+
             # PURCHASE PRICE
-            if ("purchase price" in normalized_val or
+            elif ("purchase price" in normalized_val or
                 "purchase price" in raw_text or
                 "sales price" in raw_text or
                 "contract price" in raw_text or
@@ -312,10 +324,16 @@ class SynthesisService:
         if not items_by_source:
              return []
 
-        best_source = max(items_by_source, key=lambda s: len(items_by_source[s]))
+        # FIX: Use document priority to select best source (OM > Rent Roll)
+        def get_source_priority(source_name: str, items: List[RentRollItem]) -> int:
+            base_score = self._get_document_score(source_name)
+            # Weight priority heavily, use count as tie-breaker
+            return (base_score * 10000) + len(items)
+
+        best_source = max(items_by_source, key=lambda s: get_source_priority(s, items_by_source[s]))
         primary_items = items_by_source[best_source]
         
-        logger.info(f"Selected Primary Rent Roll Source: '{best_source}' with {len(primary_items)} items")
+        logger.info(f"Selected Primary Rent Roll Source: '{best_source}' with {len(primary_items)} items (Score: {self._get_document_score(best_source)})")
         
         # Initialize master dictionary with items from the best source
         # We use a dictionary keyed by NORMALIZED unit_number for fast lookup

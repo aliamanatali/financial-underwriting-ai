@@ -34,7 +34,7 @@ const FilePreviewModal = dynamic(() => import("./FilePreviewModal"), {
 
 // --- Types ---
 
-interface DocumentFile {
+export interface DocumentFile {
   id: string; // document_id
   name: string; // filename
   type: string; // document_type
@@ -43,7 +43,7 @@ interface DocumentFile {
 interface FileOrganizationProps {
   packageId: string;
   initialPackage: DealPackage;
-  onComplete: () => void;
+  onComplete: (files: Record<string, DocumentFile[]>) => void;
 }
 
 // --- Draggable File Component ---
@@ -221,6 +221,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeFile, setActiveFile] = useState<DocumentFile | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Modals
@@ -262,11 +263,21 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
             if (!map[type]) map[type] = [];
             if (Array.isArray(docs)) {
                 docs.forEach(doc => {
-                    map[type].push({
-                        id: doc.document_id,
-                        name: doc.filename,
-                        type: doc.document_type
-                    });
+                    // Filter out system files
+                    const lowerName = doc.filename.toLowerCase();
+                    const isSystemFile = lowerName.endsWith('thumbs.db') ||
+                                       lowerName.endsWith('desktop.ini') ||
+                                       lowerName.endsWith('.ds_store') ||
+                                       doc.filename.startsWith('.') ||
+                                       doc.filename.includes('__MACOSX');
+                    
+                    if (!isSystemFile) {
+                        map[type].push({
+                            id: doc.document_id,
+                            name: doc.filename,
+                            type: doc.document_type
+                        });
+                    }
                 });
             }
         });
@@ -356,6 +367,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
 
     if (activeContainer && overContainer && activeContainer !== overContainer) {
        // Backend Update
+       setIsUpdating(true);
        try {
            console.log(`Moving document ${file.id} from ${activeContainer} to ${overContainer}`);
            await apiClient.updateDocumentCategory(packageId, file.id, overContainer);
@@ -368,6 +380,8 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
                title: "Move Failed",
                message: "Failed to move file. Please try again."
            });
+       } finally {
+           setIsUpdating(false);
        }
     }
 
@@ -395,6 +409,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
   };
 
   const executeDeleteFile = async (fileId: string) => {
+      setIsUpdating(true);
       try {
           await apiClient.deleteDocumentFromPackage(packageId, fileId);
           // Remove from local state
@@ -412,6 +427,8 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
               title: "Delete Failed",
               message: "Failed to delete file. Please try again."
           });
+      } finally {
+          setIsUpdating(false);
       }
   };
 
@@ -471,12 +488,12 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
             title: "Missing Documents",
             message: `You are missing critical documents:\n\n${missingCritical.map(d => `• ${d}`).join('\n')}\n\nAnalysis quality may be significantly reduced. Are you sure you want to continue?`,
             confirmLabel: "Continue Anyway",
-            onConfirm: () => onComplete()
+            onConfirm: () => onComplete(filesByCategory)
         });
         return;
     }
     
-    onComplete();
+    onComplete(filesByCategory);
   };
 
   return (
@@ -517,10 +534,10 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
             </button>
             <button
                 onClick={handleContinue}
-                disabled={isUploading}
+                disabled={isUploading || isUpdating}
                 className="px-6 py-2 bg-neutral-900 text-white rounded-lg font-medium hover:bg-neutral-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-                Confirm & Start Analysis
+                {isUpdating ? "Updating..." : "Confirm & Start Analysis"}
             </button>
         </div>
       </div>

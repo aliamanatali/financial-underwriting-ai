@@ -76,6 +76,7 @@ class ExplainabilityService:
                 
             # Prepare context
             context = {
+                "property_name": self.analysis.property_meta.property_name,
                 "address": self.analysis.property_meta.address,
                 "purchase_price": self.analysis.property_meta.purchase_price,
                 "units": self.analysis.property_meta.total_units,
@@ -770,7 +771,8 @@ class ExplainabilityService:
         # Dynamic near_campus determination
         # TODO: Integrate with geocoding API to determine proximity to universities
         address = self.analysis.property_meta.address or ""
-        near_campus = await self._determine_campus_proximity(address)
+        prop_name = self.analysis.property_meta.property_name or ""
+        near_campus = await self._determine_campus_proximity(address, prop_name)
         
         # Dynamic primary risks based on deal characteristics
         primary_risks = self._identify_primary_risks()
@@ -821,12 +823,13 @@ class ExplainabilityService:
             investment_checklist=checklist
         )
     
-    async def _determine_campus_proximity(self, address: str) -> str:
+    async def _determine_campus_proximity(self, address: str, property_name: str = "") -> str:
         """
         Determines if the property is near a university campus using LLM logic.
         
         Args:
             address: Property address string
+            property_name: Name of the property (optional, helps with identification)
             
         Returns:
             String indicating campus proximity status
@@ -834,10 +837,12 @@ class ExplainabilityService:
         if not address or address == "Unknown":
             return "Unknown (Address Not Provided)"
         
-        prompt = f"""
-        Act as a location analyst. Determine if the following address is within 6 blocks (approx 0.5 miles) of a major university campus.
+        prop_info = f'Property: "{property_name}"\n' if property_name else ""
         
-        Address: "{address}"
+        prompt = f"""
+        Act as a location analyst. Determine if the following property is within 6 blocks (approx 0.5 miles) of a major university campus.
+        
+        {prop_info}Address: "{address}"
         
         Instructions:
         1. Identify the nearest major university or college.

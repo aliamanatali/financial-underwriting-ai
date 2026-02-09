@@ -6,7 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import LoginPage from "@/components/LoginPage";
-import FileOrganization from "@/components/FileOrganization";
+import FileOrganization, { DocumentFile } from "@/components/FileOrganization";
 import { apiClient } from "@/lib/api";
 import { FinancialAnalysisProgress, DealPackage } from "@/lib/types";
 
@@ -58,16 +58,29 @@ function ProcessingContent() {
   const fetchPackage = useCallback(async () => {
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}`,
+        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}?t=${Date.now()}`,
         { cache: 'no-store' }
       );
       if (response.ok) {
         const data = await response.json();
+        console.log("Fetched package data for processing:", data);
         setDealPackage(data);
         
         // Build categories from documents
         const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => {
-          const docArray = Array.isArray(docs) ? docs : [];
+          let docArray = Array.isArray(docs) ? docs : [];
+          
+          // Filter out system files and unsupported types that won't be processed
+          // This prevents "0/1 processed" for ignored files like Thumbs.db
+          docArray = docArray.filter((d: any) => {
+             const lowerName = d.filename.toLowerCase();
+             return !lowerName.endsWith('thumbs.db') &&
+                    !lowerName.endsWith('desktop.ini') &&
+                    !lowerName.endsWith('.ds_store') &&
+                    !d.filename.startsWith('.') &&
+                    !d.filename.includes('__MACOSX');
+          });
+
           return {
             name: type,
             count: docArray.length,
@@ -122,9 +135,26 @@ function ProcessingContent() {
     }
   }, [dealPackage, fetchPackage]);
 
-  const handleReviewComplete = async () => {
+  const handleReviewComplete = async (updatedFiles?: Record<string, DocumentFile[]>) => {
       // Force refresh of package data before starting
       await fetchPackage();
+
+      // If we have updated files from the review component, update categories to reflect user's changes
+      // This ensures the summary matches exactly what the user just approved, overriding any potential API lag
+      if (updatedFiles) {
+          console.log("Using locally updated files for categories summary");
+          const cats: DocumentCategory[] = Object.entries(updatedFiles).map(([type, docs]) => {
+              return {
+                  name: type,
+                  count: docs.length,
+                  completedCount: 0,
+                  status: 'queued' as const,
+                  fileNames: docs.map(d => d.name)
+              };
+          });
+          setCategories(cats);
+      }
+
       setIsReviewing(false);
       setStartProcessing(true);
   };
@@ -511,7 +541,8 @@ function ProcessingContent() {
                     {categories.map((category) => (
                       <div
                         key={category.name}
-                        className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors ${
+                        title={category.fileNames.join('\n')}
+                        className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors cursor-help ${
                           category.status === 'processing' ? 'bg-neutral-50/80 border-l-2 border-l-neutral-900' : ''
                         } ${category.status === 'queued' ? 'opacity-60' : ''}`}
                       >

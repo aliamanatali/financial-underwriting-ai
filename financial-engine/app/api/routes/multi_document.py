@@ -37,9 +37,9 @@ from app.services.zip_processing_service import ZipProcessingService, FOLDER_MAP
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
 
-# In-memory cache for quick access (backed by GCP storage)
-deal_packages_cache = {}
-# In-memory file storage (backed by GCP storage)
+# In-memory file storage cache for processing session (backed by GCP storage)
+# We keep file content cache to avoid repeated downloads during the same processing session
+# but we remove the metadata cache (deal_packages_cache) to ensure consistency.
 file_storage_cache = {}
 
 # Initialize services
@@ -83,8 +83,7 @@ async def upload_zip_package(
             batch_logging_service=batch_logging_service
         )
         
-        # Update caches
-        deal_packages_cache[package.package_id] = package
+        # Update file cache
         file_storage_cache.update(file_data_map)
         
         return package
@@ -168,17 +167,6 @@ async def complete_chunk_upload(
              raise HTTPException(status_code=400, detail="No chunks found")
 
         # Combine chunks into a single file
-        # If it's smart upload with multiple files, this logic might need adjustment if we uploaded multiple files separately
-        # But assuming we zip them on frontend or upload 1 big zip for now?
-        # WAIT: The prompt says "User can upload Zip/pngs/pdf/csv/exels/docs".
-        # If the user uploads multiple individual files, the frontend typically sends them one by one or as a formData list.
-        # But our chunk endpoint is designed for one large file stream.
-        # Strategy: The frontend should ZIP the selected files if there are multiple loose files,
-        # OR we need a new endpoint for multi-file upload.
-        # Given "upload-chunk" flow, it assumes one binary blob.
-        # Let's assume the frontend Zips selected files on the client side before chunking, OR sends a single Zip file.
-        # If "is_smart_upload" is true, we treat the content as a ZIP that might contain loose files needing classification.
-
         combined_path = os.path.join(upload_dir, "combined_upload.tmp")
         
         with open(combined_path, "wb") as outfile:
@@ -192,17 +180,8 @@ async def complete_chunk_upload(
              property_name = original_filename.replace('.zip', '').replace('_Inputs', '')
 
         if is_smart_upload:
-            # For smart upload, we extract the zip (created by client or user) and process loose files
             # Check if it is a zip
             if not zipfile.is_zipfile(combined_path):
-                 # It might be a single file uploaded directly?
-                 # If so, we can wrap it in a list and process it.
-                 # But our chunk flow is generic. Let's see if we can just pass it to zip_service
-                 # If it's NOT a zip, we can't use zip_service.process_zip_file directly without modification or wrapper
-                 
-                 # Let's assume for now the frontend packages multiple files into a ZIP if needed.
-                 # If single file (e.g. PDF), we should probably support that too.
-                 
                  # Read file content
                  with open(combined_path, "rb") as f:
                      content = f.read()
@@ -242,8 +221,7 @@ async def complete_chunk_upload(
                 task_id=upload_id
             )
         
-        # Update caches
-        deal_packages_cache[package.package_id] = package
+        # Update file cache
         file_storage_cache.update(file_data_map)
         
         # Cleanup
@@ -251,24 +229,6 @@ async def complete_chunk_upload(
             shutil.rmtree(upload_dir)
         except Exception as e:
             logger.warning(f"Failed to cleanup temp dir {upload_dir}: {str(e)}")
-        
-        # Check for missing info and attach validation warning to response if needed
-        # We can calculate missing docs here
-        required_types = {
-            DocumentType.OFFERING_MEMORANDUM,
-            DocumentType.RENT_ROLL,
-            DocumentType.FINANCIALS
-        }
-        present_types = set()
-        for dt, docs in package.documents.items():
-            if docs:
-                present_types.add(dt)
-        
-        missing = [dt.value for dt in required_types if dt not in present_types]
-        
-        # We can't easily change the return type schema dynamically to add "missing_info",
-        # but we can add a transient field or frontend can check "documents" map.
-        # Let's rely on frontend checking the returned package.documents
         
         return package
         
@@ -291,7 +251,7 @@ async def validate_smart_upload_files(
     filenames = [f.filename for f in files]
     
     # Batch classify
-    classification_map = await classification_service.classify_files_batch(filenames)
+    classification_map = await classification_service.classify_files_batch(filenames=filenames)
     
     for file in files:
         doc_type = classification_map.get(file.filename, "Unknown")
@@ -316,7 +276,6 @@ async def upload_additional_documents(
     """
     try:
         # Read all files into memory (assuming they are reasonable size for now)
-        # For larger files, we might need a streaming approach or chunked upload similar to the main upload
         file_data = []
         for file in files:
             content = await file.read()
@@ -328,8 +287,7 @@ async def upload_additional_documents(
             classification_service=classification_service
         )
         
-        # Update caches
-        deal_packages_cache[package.package_id] = package
+        # Update file cache
         file_storage_cache.update(file_map)
         
         return package
@@ -346,16 +304,10 @@ async def get_deal_package(package_id: str):
     """
     Retrieve a deal package with all its documents.
     """
-    # Check cache first
-    if package_id in deal_packages_cache:
-        return deal_packages_cache[package_id]
-    
-    # Try to load from GCP storage
+    # Load from storage service (Source of Truth)
     package_data = await storage_service.get_deal_package(package_id)
     if package_data:
         package = DealPackage(**package_data)
-        # Update cache
-        deal_packages_cache[package_id] = package
         return package
     
     raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
@@ -368,15 +320,8 @@ async def list_deal_packages(
 ):
     """
     List deal packages with pagination.
-    
-    Args:
-        limit: Maximum number of packages to return (default: 5)
-        offset: Number of packages to skip (default: 0)
-    
-    Returns:
-        Paginated response with packages and metadata
     """
-    # Get paginated packages from GCP storage (optimized - only downloads what we need)
+    # Get paginated packages from storage service
     packages_data, total = await storage_service.list_deal_packages(limit=limit, offset=offset)
     
     # Convert to DealPackage objects
@@ -385,8 +330,6 @@ async def list_deal_packages(
         try:
             package = DealPackage(**pkg_data)
             packages.append(package)
-            # Update cache
-            deal_packages_cache[package.package_id] = package
         except Exception as e:
             logger.error(f"Error parsing package data: {str(e)}")
             continue
@@ -410,31 +353,21 @@ async def normalize_package_documents(
     package_id: str,
     document_type: Optional[DocumentType] = None,
     gemini_service: GeminiService = Depends(get_gemini_service),
+    openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
     batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """
     Normalize documents in a package and automatically generate financial report.
-    If document_type is provided, normalize only documents of that type.
-    Otherwise, normalize all documents in the package.
-    
-    This endpoint extracts data, maps it to standardized categories,
-    and automatically generates the financial analysis report.
-    The user can then verify/modify categories and regenerate if needed.
     """
     await progress_service.update_progress(package_id, 5, "Initializing normalization...")
     
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage service
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
     
     # Initialize extraction service
     extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
@@ -523,9 +456,7 @@ async def normalize_package_documents(
                 rent_roll_docs.append(doc_info)
             elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
                 om_docs.append(doc_info)
-                # OMs also contain financials, so add to financial_docs too?
-                # Actually, standard flow extracts proforma from OM.
-                # Let's add to financial_docs as well so expenses are extracted.
+                # OMs also contain financials, so add to financial_docs too for extraction
                 financial_docs.append(doc_info)
             else:
                 # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
@@ -557,7 +488,8 @@ async def normalize_package_documents(
                 progress_service=progress_service,
                 task_id=package_id,
                 progress_start=20,
-                progress_end=35
+                progress_end=35,
+                total_files_override=documents_count
             )
             # Track processed files for progress continuity
             processed_rent_roll_files = rr_completed_files
@@ -584,7 +516,8 @@ async def normalize_package_documents(
                 task_id=package_id,
                 progress_start=35,
                 progress_end=60,
-                initial_completed_files=processed_rent_roll_files
+                initial_completed_files=processed_rent_roll_files,
+                total_files_override=documents_count
             )
             
             # Update comprehensive list
@@ -607,18 +540,11 @@ async def normalize_package_documents(
              raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
 
     # Consolidate normalized_data for backward compatibility / Verification UI
-    # The UI likely consumes package.normalized_data
-    # We should populate it with everything that needs verification (Financials)
-    # Rent Roll items usually have their own widget, but if we want them in the "Data Verification" table?
-    # Usually Rent Roll is separate. The "normalized_data" field in schema is List[NormalizedDataItem].
-    # RentRollItem is NOT NormalizedDataItem.
-    # So normalized_data should contain the financials_data.
     package.normalized_data = package.financials_data
     
     package.normalization_status = "in_progress"
     
     # Update cache and persist to GCP
-    deal_packages_cache[package_id] = package
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
     
@@ -651,6 +577,7 @@ async def normalize_package_documents(
             package_id=package_id,
             deal_parameters=default_params.model_dump(),
             gemini_service=gemini_service,
+            openai_service=openai_service,
             progress_service=progress_service,
             explainability_service=explainability_service,
             progress_base=60,
@@ -670,10 +597,10 @@ async def normalize_package_documents(
         result = DocumentNormalizationResult(
             document_id="multiple",
             document_type=document_type or DocumentType.FINANCIALS,
-            normalized_items=normalized_items,
-            total_items=len(normalized_items),
+            normalized_items=package.financials_data,
+            total_items=len(package.financials_data),
             verified_items=0,
-            confidence_average=sum(item.confidence for item in normalized_items) / len(normalized_items) if normalized_items else 0
+            confidence_average=0.0
         )
         return result
 
@@ -687,18 +614,12 @@ async def verify_normalized_item(
 ):
     """
     Mark a normalized item as verified by the user.
-    If user_correction is provided, it means the user changed the mapping.
     """
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
     
     # Find and update the item in normalized_data
     item_found = False
@@ -719,7 +640,6 @@ async def verify_normalized_item(
     package.verification_progress = (verified_items / total_items) * 100 if total_items > 0 else 0
     
     # Save changes
-    deal_packages_cache[package_id] = package
     await storage_service.save_deal_package(package.model_dump())
     
     return {
@@ -738,32 +658,12 @@ async def verify_items_batch(
 ):
     """
     Batch verify multiple normalized items at once.
-    
-    Args:
-        package_id: The deal package ID
-        items: List of items to verify, each with:
-            - item_id: str (required)
-            - user_correction: str (optional)
-    
-    Returns:
-        Summary of verification results
-    
-    Example payload:
-    [
-        {"item_id": "abc-123"},
-        {"item_id": "def-456", "user_correction": "Real Estate Taxes"}
-    ]
     """
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
     
     # Track results
     verified_count = 0
@@ -791,8 +691,7 @@ async def verify_items_batch(
     total_verified = sum(1 for item in package.normalized_data if item.user_verified)
     package.verification_progress = (total_verified / total_items) * 100 if total_items > 0 else 0
     
-    # Save changes once
-    deal_packages_cache[package_id] = package
+    # Save changes
     await storage_service.save_deal_package(package.model_dump())
     
     logger.info(f"Batch verified {verified_count} items for package {package_id}")
@@ -814,29 +713,17 @@ async def update_manual_overrides(
 ):
     """
     Update manual overrides for a deal package.
-    Useful when documents are missing or extraction fails.
-    
-    Expected keys in overrides:
-    - total_units: int
-    - gross_potential_rent: float
-    - etc.
     """
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
         
     # Update overrides
     package.manual_overrides.update(overrides)
     
     # Save changes
-    deal_packages_cache[package_id] = package
     await storage_service.save_deal_package(package.model_dump())
     
     return {
@@ -853,16 +740,11 @@ async def delete_document_from_package(
     """
     Delete a document from a deal package.
     """
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
 
     # Find the document
     found_doc = None
@@ -884,16 +766,12 @@ async def delete_document_from_package(
     package.updated_at = datetime.utcnow().isoformat()
     
     # Save changes
-    deal_packages_cache[package_id] = package
     await storage_service.save_deal_package(package.model_dump())
     
-    # Remove from file storage cache
+    # Remove from file storage cache if present
     if document_id in file_storage_cache:
         del file_storage_cache[document_id]
         
-    # TODO: Also remove from actual storage (GCP/Local) to save space?
-    # For now, we just remove reference from package.
-    
     return {
         "message": "Document deleted successfully",
         "document_id": document_id
@@ -915,16 +793,11 @@ async def update_document_category(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid category: {new_category}")
 
-    # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        # Try to load from GCP storage
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
 
     # Find the document
     found_doc = None
@@ -956,7 +829,6 @@ async def update_document_category(
     package.updated_at = datetime.utcnow().isoformat()
     
     # Save changes
-    deal_packages_cache[package_id] = package
     await storage_service.save_deal_package(package.model_dump())
     
     return {
@@ -996,7 +868,6 @@ def _clean_address(address: str) -> str:
     address = re.sub(r'^(Rent Roll|Offering Memorandum|Financials|Tax Bills?|Utilities|Leases|Disclosures|Building Plans & Permits|Images)[/\\]', '', address, flags=re.IGNORECASE)
     
     # Extract street address pattern: number + street name
-    # Match patterns like "2715 Dwight" or "2715 Dwight Way"
     match = re.search(r'(\d+)\s+([A-Za-z\s]+?)(?:\s+(?:Way|Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Circle|Cir|Place|Pl))?(?:[,\s]|$)', address)
     if match:
         street_num = match.group(1)
@@ -1029,20 +900,6 @@ async def analyze_deal_package(
 ):
     """
     Perform financial analysis on a multi-document deal package.
-    
-    This endpoint is designed for the multi-document workflow and does NOT
-    require documents to be in the OCR backend. It uses the normalized data
-    from the package to perform analysis.
-    
-    This endpoint ALWAYS performs a fresh analysis from scratch, ensuring all
-    calculations use the latest deal parameters provided.
-    
-    Args:
-        package_id: The deal package ID
-        deal_parameters: Deal parameters (growth_rate, exit_cap_rate, etc.)
-    
-    Returns:
-        UnderwritingAnalysis object with complete financial analysis
     """
     from app.models.schemas import (
         UnderwritingAnalysis, DealParameters, PropertyMeta,
@@ -1087,15 +944,11 @@ async def analyze_deal_package(
 
     await update_progress(5, "Initializing analysis...")
     
-    # Get the deal package
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    # Get the deal package from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
     
     # Check if package has been normalized
     if package.normalization_status == "pending":
@@ -1109,7 +962,7 @@ async def analyze_deal_package(
         logger.info(f"Raw deal_parameters received: {deal_parameters}")
         params = DealParameters(**deal_parameters)
         
-        # Explicitly force loan_amount from raw dict if present (safety net)
+        # Explicitly force loan_amount from raw dict if present
         if "loan_amount" in deal_parameters and deal_parameters["loan_amount"] is not None:
             try:
                 raw_loan = float(deal_parameters["loan_amount"])
@@ -1141,10 +994,8 @@ async def analyze_deal_package(
     memo_service = MemoService(gemini_service=gemini_service, openai_service=openai_service)
     ingestion_service = IngestionService()
     synthesis_service = SynthesisService()
-    explainability_service = ExplainabilityService(gemini_client=gemini_service, openai_service=openai_service)
     
     # ===== STEP 1: LOAD PACKAGE DATA (NEW SEGMENTED FLOW) =====
-    # We load from the segmented data stores in the package.
     
     await update_progress(20, "Aggregating package data...")
     
@@ -1160,7 +1011,7 @@ async def analyze_deal_package(
     
     await update_progress(30, "Synthesizing property metadata from all documents...")
     
-    # Run Metadata Synthesizer (Priority-based selection)
+    # Run Metadata Synthesizer
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
     
     # Note: If rent roll has more units than found in expenses/OM, update it
@@ -1179,7 +1030,10 @@ async def analyze_deal_package(
     logger.info(f"Year Built: {synthesized_metadata['year_built']['value']} (from {synthesized_metadata['year_built']['source']})")
     
     # Initialize Property Meta with synthesized values
+    extracted_name = synthesized_metadata.get('property_name', {}).get('value')
+    
     property_meta = PropertyMeta(
+        property_name=str(extracted_name) if extracted_name else None,
         address=_clean_address(package.property_name),
         year_built=synthesized_metadata['year_built']['value'] if synthesized_metadata['year_built']['value'] > 0 else 1980,
         purchase_price=synthesized_metadata['purchase_price']['value'],
@@ -1195,7 +1049,6 @@ async def analyze_deal_package(
     
     if rent_roll_items:
         # We already extracted rent rolls during normalization phase
-        # Just need to synthesize/deduplicate them
         rent_roll = synthesis_service.build_master_rent_roll(rent_roll_items)
         logger.info(f"Master rent roll built from {len(rent_roll_items)} raw items -> {len(rent_roll)} unique units")
     else:
@@ -1267,6 +1120,7 @@ async def analyze_deal_package(
         if "current_loan_balance" in package.manual_overrides:
             property_meta.current_loan_balance = float(package.manual_overrides["current_loan_balance"])
             logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
+            
     historical_expenses: List[StandardizedExpense] = []
     
     # Parse normalized items for expenses only (property metadata already synthesized)
@@ -1281,7 +1135,6 @@ async def analyze_deal_package(
                 except ValueError:
                     category = ExpenseCategory.OTHER_OPERATING_EXPENSES
                 
-                # Fix for attribute error: type object 'ExpenseCategory' has no attribute 'MARKETING'
                 # If the normalized_value is MARKETING or ADVERTISING (legacy), remap it to ADVERTISING_MARKETING
                 if item.normalized_value in ["Marketing", "Advertising"]:
                     category = ExpenseCategory.ADVERTISING_MARKETING
@@ -1299,7 +1152,7 @@ async def analyze_deal_package(
                     if amount == 0.0:
                         amount = 1000.0  # Default fallback
                 
-                # Get document_id from metadata if available (it should be there now)
+                # Get document_id from metadata if available
                 doc_id = item.metadata.get("document_id") if item.metadata else None
                 page_number = item.metadata.get("page_number") if item.metadata else None
                 bbox = item.metadata.get("bbox") if item.metadata else None
@@ -1328,13 +1181,11 @@ async def analyze_deal_package(
             except Exception as e:
                 logger.warning(f"Could not parse expense item: {item.raw_text}, error: {str(e)}")
     
-    # Deduplicate expenses (Handle duplicate files or overlapping invoices)
+    # Deduplicate expenses
     if historical_expenses:
         logger.info(f"Expenses before deduplication: {len(historical_expenses)}")
         historical_expenses = synthesis_service.deduplicate_expenses(historical_expenses)
         logger.info(f"Expenses after deduplication: {len(historical_expenses)}")
-
-    # (Rent Roll extraction logic moved to start of function)
 
     # Check for Rent Roll in Manual Overrides
     if package.manual_overrides and "rent_roll" in package.manual_overrides:
@@ -1385,7 +1236,6 @@ async def analyze_deal_package(
     # Averages
     avg_unit_size = total_unit_size / total_units if total_units > 0 else 0
     
-    # Modified to use occupied units/sf for Current Rent averages (ignore 0$ rent)
     avg_rent_per_unit = total_monthly_rent / occupied_units if occupied_units > 0 else 0
     avg_rent_per_sf = total_monthly_rent / occupied_sf if occupied_sf > 0 else 0
 
@@ -1435,7 +1285,6 @@ async def analyze_deal_package(
         property_meta.total_units = total_units
 
     # Apply Transient Overrides from DealParameters (Frontend "Edit" Mode)
-    # These override extraction and package-level manual overrides
     if params.units_override is not None:
         property_meta.total_units = params.units_override
         logger.info(f"Applied transient override for Total Units: {property_meta.total_units}")
@@ -1518,7 +1367,6 @@ async def analyze_deal_package(
         analysis.pass_fail_status = "FAIL"
         analysis.gating_reasons = viability_check["reasons"]
         logger.warning(f"Deal failed viability check: {viability_check['reasons']}")
-        # Proceed to calculation anyway
     
     # ===== STEP 4: CALCULATE FINANCIALS =====
     try:
@@ -1602,8 +1450,7 @@ async def analyze_deal_package(
     analysis_dict = analysis.model_dump()
     await storage_service.save_analysis_result(package_id, analysis_dict)
     
-    # Update cache and persist package
-    deal_packages_cache[package_id] = package
+    # Update and persist package
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
     
@@ -1618,8 +1465,6 @@ async def analyze_deal_package(
 async def get_deal_analysis(package_id: str):
     """
     Retrieve the stored financial analysis for a deal package.
-    Returns 404 with a specific message if analysis hasn't been run yet.
-    This allows the frontend to distinguish between "package not found" and "analysis not run yet".
     """
     from app.services.storage_service import storage_service
     
@@ -1631,12 +1476,11 @@ async def get_deal_analysis(package_id: str):
             detail=f"Package {package_id} not found. It may have been deleted or never existed."
         )
     
-    # Check cache/storage for analysis result
+    # Check storage for analysis result
     analysis_data = await storage_service.get_analysis_result(package_id)
     
     if not analysis_data:
         # Package exists but analysis hasn't been run yet
-        # Return 404 with a clear message that frontend can handle
         raise HTTPException(
             status_code=404,
             detail=f"NO_ANALYSIS_YET"
@@ -1649,29 +1493,18 @@ async def get_deal_analysis(package_id: str):
 async def rename_deal_package(package_id: str, new_name: str):
     """
     Rename a deal package.
-    
-    Args:
-        package_id: Package identifier
-        new_name: New property name
-    
-    Returns:
-        Updated package information
     """
     # Get the package
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
     
     # Update the property name
     package.property_name = new_name
     package.updated_at = datetime.utcnow().isoformat()
     
     # Save changes
-    deal_packages_cache[package_id] = package
     package_dict = package.model_dump()
     await storage_service.save_deal_package(package_dict)
     
@@ -1689,15 +1522,11 @@ async def delete_deal_package(package_id: str):
     """
     Delete a deal package and all its documents.
     """
-    # Delete from GCP storage
+    # Delete from storage service
     deleted = await storage_service.delete_deal_package(package_id)
     
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-    
-    # Remove from cache
-    if package_id in deal_packages_cache:
-        del deal_packages_cache[package_id]
     
     # Remove associated files from cache
     file_ids_to_remove = [
@@ -1707,6 +1536,7 @@ async def delete_deal_package(package_id: str):
     for doc_id in file_ids_to_remove:
         del file_storage_cache[doc_id]
     
+    
 @router.get("/packages/{package_id}/documents/{document_id}/content")
 async def get_package_document_content(package_id: str, document_id: str):
     """
@@ -1714,14 +1544,10 @@ async def get_package_document_content(package_id: str, document_id: str):
     Returns a signed URL if GCP is configured, otherwise returns base64-encoded content.
     """
     # Check cache first
-    if package_id in deal_packages_cache:
-        package = deal_packages_cache[package_id]
-    else:
-        package_data = await storage_service.get_deal_package(package_id)
-        if not package_data:
-            raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
-        package = DealPackage(**package_data)
-        deal_packages_cache[package_id] = package
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
 
     # Find document metadata
     target_doc = None

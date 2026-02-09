@@ -28,7 +28,8 @@ class GeminiClient:
         self.model_name = settings.gemini_model or 'gemini-2.0-flash-exp'
         self.fast_model_name = settings.gemini_fast_model or 'gemini-2.0-flash-exp'
         
-        self.max_retries = 3
+        self.max_retries = getattr(settings, "gemini_max_retries", 5)
+        self.timeout = getattr(settings, "gemini_timeout", 300.0)
         self.base_delay = 1.0
 
     def generate_content(self, prompt: str, pdf_data: Optional[bytes] = None, mime_type: str = "application/pdf") -> str:
@@ -119,7 +120,7 @@ class GeminiClient:
                             contents=parts,
                             config=types.GenerateContentConfig(temperature=0.0)
                         ),
-                        timeout=90.0
+                        timeout=self.timeout
                     )
                 else:
                     response = await asyncio.wait_for(
@@ -128,7 +129,7 @@ class GeminiClient:
                             contents=prompt,
                             config=types.GenerateContentConfig(temperature=0.0)
                         ),
-                        timeout=90.0
+                        timeout=self.timeout
                     )
                 
                 # Cache and return (only cache successful responses)

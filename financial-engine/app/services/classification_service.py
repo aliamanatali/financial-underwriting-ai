@@ -2,7 +2,7 @@ import logging
 import json
 import io
 import asyncio
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from PyPDF2 import PdfReader
 from app.models.schemas import DocumentType
 from app.services.gemini_client import GeminiClient
@@ -263,7 +263,11 @@ class ClassificationService:
     async def classify_files_batch(
         self,
         files: List[Tuple[str, Optional[bytes]]] = None,
-        filenames: List[str] = None
+        filenames: List[str] = None,
+        progress_service: Any = None,
+        task_id: str = None,
+        progress_start: int = 20,
+        progress_end: int = 90
     ) -> Dict[str, DocumentType]:
         """
         Classify a batch of files using content-based analysis.
@@ -271,6 +275,10 @@ class ClassificationService:
         Args:
             files: List of tuples (filename, content_bytes) - preferred method
             filenames: List of filenames only - fallback to filename-based classification
+            progress_service: Optional service to update progress
+            task_id: Optional task ID for progress updates
+            progress_start: Starting progress percentage
+            progress_end: Ending progress percentage
             
         Returns:
             Dictionary mapping filename to DocumentType
@@ -285,11 +293,44 @@ class ClassificationService:
         # Content-based batch classification
         try:
             results = {}
+            total_files = len(files)
+            completed_count = 0
             
+            # Helper to wrap classification with progress update
+            async def classify_with_progress(filename, content):
+                nonlocal completed_count
+                try:
+                    res = await self.classify_file(filename, content=content)
+                except Exception as e:
+                    logger.error(f"Error classifying {filename}: {e}")
+                    res = None
+                
+                completed_count += 1
+                
+                if progress_service and task_id:
+                    pct_range = progress_end - progress_start
+                    if total_files > 0:
+                        current_pct = progress_start + int((completed_count / total_files) * pct_range)
+                    else:
+                        current_pct = progress_end
+                        
+                    await progress_service.update_progress(
+                        task_id,
+                        current_pct,
+                        f"Classified {completed_count}/{total_files} files...",
+                        details={
+                            "current_file": filename,
+                            "status": "classifying",
+                            "completed": completed_count,
+                            "total": total_files
+                        }
+                    )
+                return res
+
             # Process files in parallel
             tasks = []
             for filename, content in files:
-                tasks.append(self.classify_file(filename, content=content))
+                tasks.append(classify_with_progress(filename, content))
             
             classification_results = await asyncio.gather(*tasks)
             

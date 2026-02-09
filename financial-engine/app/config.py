@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     gemini_fast_model: str = "gemini-3-flash-preview"
     gemini_temperature: float = 0.0
     gemini_max_output_tokens: int = 8192
+    gemini_timeout: float = 600.0
+    gemini_max_retries: int = 5
     
     # OpenAI API settings
     openai_api_key: Optional[str] = None

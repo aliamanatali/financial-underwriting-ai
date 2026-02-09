@@ -258,8 +258,14 @@ class NormalizationService:
                     logger.error(f"Error processing batch: {e}")
                     return []
 
-            # Execute batches in parallel
-            results = await asyncio.gather(*[process_batch(batch) for batch in batches])
+            # Execute batches in parallel with limited concurrency
+            sem = asyncio.Semaphore(3)
+
+            async def process_batch_with_sem(batch):
+                async with sem:
+                    return await process_batch(batch)
+
+            results = await asyncio.gather(*[process_batch_with_sem(batch) for batch in batches])
             
             # Flatten results and prepare for merge
             for i, res in enumerate(results):
@@ -489,7 +495,8 @@ class NormalizationService:
                         mapped_category=category_enum,
                         amount=parsed_amount,
                         confidence=mapped_item.get("confidence", 0.85),
-                        audit_log=audit_log
+                        audit_log=audit_log,
+                        expense_year=expense.get("expense_year")
                     )
                 )
             return normalized_expenses

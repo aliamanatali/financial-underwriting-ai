@@ -333,7 +333,7 @@ class IngestionService:
         logger = logging.getLogger(__name__)
 
         property_meta_prompt = """
-        Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
+        Extract the property name, property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
         
         CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
         - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
@@ -348,10 +348,11 @@ class IngestionService:
         - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
         - This represents the total square footage of the building(s).
         
-        Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
+        Return a single JSON object with the following keys: "property_name", "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
 
         Example:
         {
+            "property_name": "The Oakwood Apartments",
             "address": "123 Main St, Anytown, USA",
             "year_built": 2022,
             "purchase_price": 5000000.0,
@@ -594,7 +595,7 @@ class IngestionService:
         async def task_property_meta():
             logger.info(f"Starting Property Meta Extraction. Raw text length: {len(raw_text)}")
             property_meta_prompt = """
-            Extract the property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
+            Extract the property name, property address, year built, purchase price, total units, current_loan_balance, AND building_size from the document.
             
             CRITICAL INSTRUCTIONS FOR PURCHASE PRICE:
             - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
@@ -607,7 +608,7 @@ class IngestionService:
             CRITICAL INSTRUCTIONS FOR BUILDING SIZE:
             - Look for "Rentable SF", "NRA", "Net Rentable Area", "Gross Building Area", "Building Size", "Total SF", or "Square Feet".
             
-            Return a single JSON object with the following keys: "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
+            Return a single JSON object with the following keys: "property_name", "address", "year_built", "purchase_price", "total_units", "current_loan_balance", "building_size".
             """
             try:
                 property_meta_data = await self.gemini_client.generate_structured_data_async(
@@ -841,8 +842,12 @@ class IngestionService:
         - If the amount is in parentheses like (500), it is a positive expense.
         - If the amount has a minus sign like -500, it is a positive expense.
         - Return the absolute value of the expense.
+
+        LATEST PERIOD ONLY:
+        - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
+        - Ignore columns for older years.
         
-        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00}, ...]
+        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00, "expense_year": 2023}, ...]
         """
 
         # Use async
@@ -861,6 +866,10 @@ class IngestionService:
 
         prompt = """
         Analyze this T12 Income Statement. Find the TOTAL ANNUAL INCOME.
+        
+        LATEST PERIOD ONLY:
+        - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), use ONLY the LATEST/MOST RECENT year/period.
+        
         Return a single JSON object with one key, "total_annual_income".
         Example: {"total_annual_income": 1250000.00}
         """

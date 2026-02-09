@@ -88,6 +88,7 @@ class AuditLog(BaseModel):
     bbox: Optional[List[float]] = None
 
 class PropertyMeta(BaseModel):
+    property_name: Optional[str] = None
     address: Optional[str] = "Unknown"
     year_built: Optional[int] = 0
     purchase_price: Optional[float] = 0.0

@@ -208,13 +208,19 @@ export default function SmartFileUpload({
         setProcessingMessage("Uploading...");
         
         const dealPackage = await apiClient.uploadZipChunked(
-            uploadFile, 
+            uploadFile,
             (progress) => {
                 setUploadProgress(progress);
+                if (progress.percentage === 100) {
+                    setProcessingMessage("Finalizing upload & starting analysis...");
+                }
             },
             (processing) => {
                 setProcessingMessage(processing.message);
-                // Map processing percentage to upper range if needed, or just display message
+                setUploadProgress(prev => ({
+                    ...prev,
+                    percentage: processing.percentage
+                }));
             },
             isSmartUpload
         );

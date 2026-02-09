@@ -20,6 +20,7 @@ from app.models.schemas import (
 )
 from app.services.batch_logging_service import BatchLoggingService
 from app.services.ingestion_service import IngestionService
+from app.services.extract_om_details import OMScraperService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class MultiDocumentExtractionService:
         self.gemini_service = gemini_service
         self.batch_logging_service = batch_logging_service
         self.ingestion_service = IngestionService()
+        self.om_scraper_service = OMScraperService()
     
     async def process_rent_roll_documents(
         self,
@@ -45,7 +47,8 @@ class MultiDocumentExtractionService:
         task_id: Optional[str] = None,
         progress_start: int = 20,
         progress_end: int = 30,
-        initial_completed_files: List[str] = None
+        initial_completed_files: List[str] = None,
+        total_files_override: Optional[int] = None
     ) -> (List[RentRollItem], List[str]):
         """
         Process multiple rent roll documents and return a list of RentRollItems.
@@ -81,8 +84,8 @@ class MultiDocumentExtractionService:
                 # Calculate cumulative stats
                 initial_count = len(initial_completed_files or [])
                 cumulative_index = initial_count + completed_count
-                cumulative_total = initial_count + total_count
-                
+                cumulative_total = total_files_override if total_files_override is not None else (initial_count + total_count)
+
                 # Determine message
                 if status == "started":
                     msg = f"Processing {filename}..."
@@ -154,105 +157,296 @@ class MultiDocumentExtractionService:
         
         return all_rent_roll_items, list(completed_files)
 
+    def _get_financial_extraction_prompt(self) -> str:
+        """
+        Returns the standard prompt for financial extraction.
+        Shared between Visual and Text extraction methods.
+        """
+        return """
+                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
+                
+                You must distinguish between:
+                1. Revenue / Income (e.g., Rent, Reimbursements, Other Income)
+                2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
+                3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
+                4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
+                
+                CRITICAL RULES TO AVOID ERRORS:
+                
+                1. PAST DUE / RECEIVABLES HANDLING:
+                   - "Past Due", "Delinquent Rent", "Arrears", "Outstanding Balance" should be type: "receivable" NOT "revenue"
+                   - These represent uncollected amounts, not actual income
+                   - Only extract actual rent payments as revenue
+                
+                2. REVENUE STREAM SEPARATION:
+                   - "Rent", "Monthly Rent", "Rental Income" → type: "revenue", subtype: "rent"
+                   - "Late Fee", "Late Charge", "Penalty" → type: "revenue", subtype: "late_fee"
+                   - "Laundry Income", "Parking Income", "Pet Fee" → type: "revenue", subtype: "other_income"
+                   - "Check Return Fee", "NSF Fee" → type: "revenue", subtype: "other_income"
+                   - "Utility Reimbursement", "CAM Reimbursement" → type: "revenue", subtype: "reimbursement"
+                
+                3. CAPITAL VS OPERATING EXPENSES:
+                   - Capital items (>$5,000, extends useful life): "New Roof", "HVAC Replacement", "Electrical Upgrade", "Major Renovation" → type: "capex"
+                   - Operating items: "Roof Repair", "HVAC Maintenance", "Minor Repairs" → type: "expense"
+                   - Permit fees for capital work → type: "capex"
+                   - Permit fees for repairs → type: "expense"
+                
+                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
+                
+                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
+                
+                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                
+                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
+
+                8. IGNORE INSURANCE LIMITS:
+                   - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
+                   - These are coverage limits, NOT the premium amount.
+                   - Only extract the "Premium" or "Total Premium" amount.
+
+                9. LATEST PERIOD ONLY:
+                   - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
+                   - Ignore columns for older years.
+                
+                For each item, provide:
+                1. The exact text/description as it appears in the document
+                2. The amount (annual or monthly) if applicable
+                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
+                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
+                5. The expense year (if identifiable, e.g. 2022, 2023)
+                6. The page number where this item is found
+                7. The bounding box of the area containing this item
+                
+                Return the data as a JSON array with this structure:
+                [
+                    {
+                        "raw_text": "Exact description",
+                        "amount": 12345.67, // or null
+                        "period": "annual" or "monthly" or "one-time",
+                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
+                        "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
+                        "expense_year": 2023, // Integer year if found, null otherwise
+                        "page_number": 1, // Integer, 1-based page number
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
+                    }
+                ]
+                
+                IMPORTANT:
+                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses
+                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses
+                - Do NOT categorize Past Due amounts as Revenue - they are Receivables
+                - Separate late fees from rent
+                - If the document is a Rent Roll or Lease, capture the Rental Income as type: "revenue", subtype: "rent"
+                
+                Return ONLY the JSON array, no additional text or explanation.
+        """
+
+    async def _extract_from_text_with_llm(self, text_content: str, filename: str) -> List[Dict[str, Any]]:
+        """
+        Helper to extract financials from text content using LLM.
+        """
+        if not self.gemini_service or not text_content.strip():
+            return []
+            
+        try:
+            prompt = self._get_financial_extraction_prompt()
+            
+            # Using generate_content_async (text-only)
+            response = await self.gemini_service.generate_content_async(f"{prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}") # Truncate if too huge
+            
+            # Clean and parse JSON
+            cleaned_text = response.strip()
+            if cleaned_text.startswith("```json"):
+                cleaned_text = cleaned_text[7:]
+            if cleaned_text.startswith("```"):
+                cleaned_text = cleaned_text[3:]
+            if cleaned_text.endswith("```"):
+                cleaned_text = cleaned_text[:-3]
+            cleaned_text = cleaned_text.strip()
+            
+            try:
+                expenses_data = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
+                return []
+                
+            if not isinstance(expenses_data, list):
+                return []
+                
+            # Add metadata
+            for expense in expenses_data:
+                expense["source_document"] = filename
+                if expense.get("amount") is None:
+                    expense["amount"] = 0.0
+                
+                # Convert monthly to annual
+                if expense.get("period") == "monthly":
+                    try:
+                        expense["amount"] = float(expense["amount"]) * 12
+                    except (ValueError, TypeError):
+                        expense["amount"] = 0.0
+                        
+            return expenses_data
+            
+        except Exception as e:
+            logger.error(f"LLM extraction failed for {filename}: {e}")
+            return []
+
+    def _get_financial_extraction_prompt(self) -> str:
+        """
+        Returns the standard prompt for financial extraction.
+        Shared between Visual and Text extraction methods.
+        """
+        return """
+                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
+                
+                You must distinguish between:
+                1. Revenue / Income (e.g., Rent, Reimbursements, Other Income)
+                2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
+                3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
+                4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
+                
+                CRITICAL RULES TO AVOID ERRORS:
+                
+                1. PAST DUE / RECEIVABLES HANDLING:
+                   - "Past Due", "Delinquent Rent", "Arrears", "Outstanding Balance" should be type: "receivable" NOT "revenue"
+                   - These represent uncollected amounts, not actual income
+                   - Only extract actual rent payments as revenue
+                
+                2. REVENUE STREAM SEPARATION:
+                   - "Rent", "Monthly Rent", "Rental Income" → type: "revenue", subtype: "rent"
+                   - "Late Fee", "Late Charge", "Penalty" → type: "revenue", subtype: "late_fee"
+                   - "Laundry Income", "Parking Income", "Pet Fee" → type: "revenue", subtype: "other_income"
+                   - "Check Return Fee", "NSF Fee" → type: "revenue", subtype: "other_income"
+                   - "Utility Reimbursement", "CAM Reimbursement" → type: "revenue", subtype: "reimbursement"
+                
+                3. CAPITAL VS OPERATING EXPENSES:
+                   - Capital items (>$5,000, extends useful life): "New Roof", "HVAC Replacement", "Electrical Upgrade", "Major Renovation" → type: "capex"
+                   - Operating items: "Roof Repair", "HVAC Maintenance", "Minor Repairs" → type: "expense"
+                   - Permit fees for capital work → type: "capex"
+                   - Permit fees for repairs → type: "expense"
+                
+                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
+                
+                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
+                
+                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                
+                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
+
+                8. IGNORE INSURANCE LIMITS:
+                   - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
+                   - These are coverage limits, NOT the premium amount.
+                   - Only extract the "Premium" or "Total Premium" amount.
+
+                9. LATEST PERIOD ONLY:
+                   - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
+                   - Ignore columns for older years.
+                
+                For each item, provide:
+                1. The exact text/description as it appears in the document
+                2. The amount (annual or monthly) if applicable
+                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
+                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
+                5. The expense year (if identifiable, e.g. 2022, 2023)
+                6. The page number where this item is found
+                7. The bounding box of the area containing this item
+                
+                Return the data as a JSON array with this structure:
+                [
+                    {
+                        "raw_text": "Exact description",
+                        "amount": 12345.67, // or null
+                        "period": "annual" or "monthly" or "one-time",
+                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
+                        "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
+                        "expense_year": 2023, // Integer year if found, null otherwise
+                        "page_number": 1, // Integer, 1-based page number
+                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
+                    }
+                ]
+                
+                IMPORTANT:
+                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses
+                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses
+                - Do NOT categorize Past Due amounts as Revenue - they are Receivables
+                - Separate late fees from rent
+                - If the document is a Rent Roll or Lease, capture the Rental Income as type: "revenue", subtype: "rent"
+                
+                Return ONLY the JSON array, no additional text or explanation.
+        """
+
+    async def _extract_from_text_with_llm(self, text_content: str, filename: str) -> List[Dict[str, Any]]:
+        """
+        Helper to extract financials from text content using LLM.
+        """
+        if not self.gemini_service or not text_content.strip():
+            return []
+            
+        try:
+            prompt = self._get_financial_extraction_prompt()
+            
+            # Using generate_content_async (text-only)
+            # Truncate content to avoid token limits if extremely large, though T12s usually fit.
+            response = await self.gemini_service.generate_content_async(f"{prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
+            
+            # Clean and parse JSON
+            cleaned_text = response.strip()
+            if cleaned_text.startswith("```json"):
+                cleaned_text = cleaned_text[7:]
+            if cleaned_text.startswith("```"):
+                cleaned_text = cleaned_text[3:]
+            if cleaned_text.endswith("```"):
+                cleaned_text = cleaned_text[:-3]
+            cleaned_text = cleaned_text.strip()
+            
+            try:
+                expenses_data = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
+                return []
+                
+            if not isinstance(expenses_data, list):
+                return []
+                
+            # Add metadata
+            for expense in expenses_data:
+                expense["source_document"] = filename
+                if expense.get("amount") is None:
+                    expense["amount"] = 0.0
+                
+                # Convert monthly to annual
+                if expense.get("period") == "monthly":
+                    try:
+                        expense["amount"] = float(expense["amount"]) * 12
+                    except (ValueError, TypeError):
+                        expense["amount"] = 0.0
+                        
+            return expenses_data
+            
+        except Exception as e:
+            logger.error(f"LLM extraction failed for {filename}: {e}")
+            return []
+
     async def extract_from_csv(self, file_content: bytes, filename: str) -> List[Dict[str, Any]]:
         """
-        Extract aggregated financial data from CSV files.
-        Returns a single summary entry per document.
-        
-        Args:
-            file_content: Raw bytes of the CSV file
-            filename: Name of the file for reference
-            
-        Returns:
-            List with a single dictionary containing aggregated expense data
+        Extract detailed financial data from CSV files using LLM.
         """
-        import csv
-        
         try:
-            logger.info(f"Processing CSV file: {filename}")
+            logger.info(f"Processing CSV file with LLM: {filename}")
             
             # Decode content
             try:
                 text_content = file_content.decode('utf-8')
             except UnicodeDecodeError:
                 text_content = file_content.decode('latin-1')
+            
+            expenses = await self._extract_from_text_with_llm(text_content, filename)
+            
+            if not expenses:
+                logger.warning(f"LLM found no expenses in CSV {filename}, falling back to aggregation if needed (skipping for now)")
                 
-            f = io.StringIO(text_content)
-            reader = csv.reader(f)
-            all_rows = list(reader)
-            
-            if not all_rows:
-                logger.warning(f"No rows found in {filename}")
-                return []
-            
-            # Check for header
-            first_row = all_rows[0] if all_rows else []
-            skip_first_row = False
-            if first_row:
-                first_row_str = " ".join([str(cell).lower() for cell in first_row])
-                if any(keyword in first_row_str for keyword in ["id", "description", "category", "amount", "date", "notes", "expense", "item"]):
-                    skip_first_row = True
-            
-            # Aggregate data
-            start_row = 1 if skip_first_row else 0
-            total_amount = 0.0
-            row_count = 0
-            categories = set()
-            
-            for row in all_rows[start_row:]:
-                if not row:
-                    continue
-                
-                # Find category
-                for cell in row:
-                    if cell and len(str(cell).strip()) > 1:
-                        # Check if it's NOT a number
-                        try:
-                            float(str(cell).replace(',', '').replace('$', ''))
-                        except ValueError:
-                            categories.add(str(cell).strip())
-                            break
-                
-                # Find amount
-                for cell in row:
-                    if cell:
-                        try:
-                            val = float(str(cell).replace(',', '').replace('$', ''))
-                            if val > 0:
-                                total_amount += val
-                                row_count += 1
-                                break
-                        except ValueError:
-                            continue
-            
-            if row_count == 0:
-                logger.warning(f"No valid data rows found in {filename}")
-                return []
-                
-            # Determine document type
-            doc_type = "Financial Statement"
-            if "t12" in filename.lower():
-                doc_type = "T12 Statement"
-            elif "rent" in filename.lower() and "roll" in filename.lower():
-                doc_type = "Rent Roll"
-            elif "p&l" in filename.lower() or "pl" in filename.lower():
-                doc_type = "P&L Statement"
-            
-            entry_type = "expense"
-            if "rent" in filename.lower() and "roll" in filename.lower():
-                entry_type = "property_info"
-            
-            aggregated_entry = {
-                "raw_text": f"{doc_type} - {filename}",
-                "amount": total_amount,
-                "source_document": filename,
-                "row_count": row_count,
-                "type": entry_type,
-                "categories_found": list(categories)[:5]
-            }
-            
-            logger.info(f"Extracted aggregated data from CSV {filename}: {row_count} rows, total amount: ${total_amount:,.2f}")
-            return [aggregated_entry]
+            return expenses
 
         except Exception as e:
             logger.error(f"Error extracting from CSV file {filename}: {str(e)}", exc_info=True)
@@ -451,80 +645,7 @@ class MultiDocumentExtractionService:
                 
                 logger.info(f"Processing file with Gemini: {filename} ({mime_type})")
 
-                prompt = """
-                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
-                
-                You must distinguish between:
-                1. Revenue / Income (e.g., Rent, Reimbursements, Other Income)
-                2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
-                3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
-                4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
-                
-                CRITICAL RULES TO AVOID ERRORS:
-                
-                1. PAST DUE / RECEIVABLES HANDLING:
-                   - "Past Due", "Delinquent Rent", "Arrears", "Outstanding Balance" should be type: "receivable" NOT "revenue"
-                   - These represent uncollected amounts, not actual income
-                   - Only extract actual rent payments as revenue
-                
-                2. REVENUE STREAM SEPARATION:
-                   - "Rent", "Monthly Rent", "Rental Income" → type: "revenue", subtype: "rent"
-                   - "Late Fee", "Late Charge", "Penalty" → type: "revenue", subtype: "late_fee"
-                   - "Laundry Income", "Parking Income", "Pet Fee" → type: "revenue", subtype: "other_income"
-                   - "Check Return Fee", "NSF Fee" → type: "revenue", subtype: "other_income"
-                   - "Utility Reimbursement", "CAM Reimbursement" → type: "revenue", subtype: "reimbursement"
-                
-                3. CAPITAL VS OPERATING EXPENSES:
-                   - Capital items (>$5,000, extends useful life): "New Roof", "HVAC Replacement", "Electrical Upgrade", "Major Renovation" → type: "capex"
-                   - Operating items: "Roof Repair", "HVAC Maintenance", "Minor Repairs" → type: "expense"
-                   - Permit fees for capital work → type: "capex"
-                   - Permit fees for repairs → type: "expense"
-                
-                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
-                
-                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
-                
-                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
-                
-                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
-
-                8. IGNORE INSURANCE LIMITS:
-                   - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
-                   - These are coverage limits, NOT the premium amount.
-                   - Only extract the "Premium" or "Total Premium" amount.
-                
-                For each item, provide:
-                1. The exact text/description as it appears in the document
-                2. The amount (annual or monthly) if applicable
-                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
-                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
-                5. The expense year (if identifiable, e.g. 2022, 2023)
-                6. The page number where this item is found
-                7. The bounding box of the area containing this item
-                
-                Return the data as a JSON array with this structure:
-                [
-                    {
-                        "raw_text": "Exact description",
-                        "amount": 12345.67, // or null
-                        "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
-                        "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
-                        "expense_year": 2023, // Integer year if found, null otherwise
-                        "page_number": 1, // Integer, 1-based page number
-                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
-                    }
-                ]
-                
-                IMPORTANT:
-                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses
-                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses
-                - Do NOT categorize Past Due amounts as Revenue - they are Receivables
-                - Separate late fees from rent
-                - If the document is a Rent Roll or Lease, capture the Rental Income as type: "revenue", subtype: "rent"
-                
-                Return ONLY the JSON array, no additional text or explanation.
-                """
+                prompt = self._get_financial_extraction_prompt()
                 
                 # Use gemini_service to generate content with file
                 # Create parts for multimodal input
@@ -1086,6 +1207,116 @@ class MultiDocumentExtractionService:
             "reasoning": "No clear category match found"
         }
     
+    def _convert_om_data_to_normalized(self, om_data: Dict[str, Any], filename: str, document_id: str) -> List[NormalizedDataItem]:
+        """
+        Converts extracted OM data into NormalizedDataItem objects for synthesis.
+        """
+        items = []
+        
+        # 1. Property Meta
+        meta = om_data.get("property_meta", {})
+        if meta:
+            # Property Name
+            if meta.get("property_name"):
+                items.append(NormalizedDataItem(
+                    id=f"om_name_{document_id}",
+                    raw_text=f"Property Name: {meta['property_name']}",
+                    normalized_value="Property Name",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"text_value": meta["property_name"], "document_id": document_id}
+                ))
+
+            # Purchase Price
+            if meta.get("purchase_price"):
+                items.append(NormalizedDataItem(
+                    id=f"om_price_{document_id}",
+                    raw_text=f"Purchase Price: {meta['purchase_price']}",
+                    normalized_value="Purchase Price",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"amount": meta["purchase_price"], "document_id": document_id}
+                ))
+            
+            # Total Units
+            if meta.get("total_units"):
+                items.append(NormalizedDataItem(
+                    id=f"om_units_{document_id}",
+                    raw_text=f"Total Units: {meta['total_units']}",
+                    normalized_value="Total Units",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"amount": meta["total_units"], "document_id": document_id}
+                ))
+            
+            # Year Built
+            if meta.get("year_built"):
+                items.append(NormalizedDataItem(
+                    id=f"om_year_{document_id}",
+                    raw_text=f"Year Built: {meta['year_built']}",
+                    normalized_value="Year Built",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"amount": meta["year_built"], "document_id": document_id}
+                ))
+                
+            # Rentable Area
+            if meta.get("rentable_sqft"):
+                items.append(NormalizedDataItem(
+                    id=f"om_sqft_{document_id}",
+                    raw_text=f"Rentable Sq Ft: {meta['rentable_sqft']}",
+                    normalized_value="Rentable Area",
+                    field_type="property_meta",
+                    category_group=CategoryGroup.PROPERTY_INFO,
+                    confidence=0.95,
+                    source_document=filename,
+                    metadata={"amount": meta["rentable_sqft"], "document_id": document_id}
+                ))
+
+        # 2. Rent Roll Items
+        rent_roll = om_data.get("rent_roll_items", [])
+        if rent_roll:
+            for idx, item in enumerate(rent_roll):
+                # Create a rent roll item metadata
+                # OM often gives Unit Types (summary), so we expand them if count > 1
+                count = int(item.get("count", 1))
+                
+                rr_base_meta = {
+                    "unit_type": item.get("unit_type", "Unknown"),
+                    "current_rent": item.get("current_rent", 0),
+                    "market_rent": item.get("market_rent", 0),
+                    "unit_size": item.get("unit_size", 0),
+                    "is_rent_roll_item": True,
+                    "document_id": document_id
+                }
+                
+                for i in range(count):
+                    # Generate a unique pseudo-unit number if not provided
+                    unit_num = f"OM-{idx+1}-{i+1}"
+                    rr_meta = rr_base_meta.copy()
+                    rr_meta["unit_number"] = unit_num
+                    
+                    items.append(NormalizedDataItem(
+                        id=f"om_rr_{document_id}_{idx}_{i}",
+                        raw_text=f"OM Unit Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
+                        normalized_value="Rent Roll Item",
+                        field_type="rent_roll_item",
+                        category_group=CategoryGroup.REVENUE,
+                        confidence=0.90,
+                        source_document=filename,
+                        metadata=rr_meta
+                    ))
+                    
+        return items
+
     async def process_financial_documents(
         self,
         documents: List[Dict[str, Any]],
@@ -1093,7 +1324,8 @@ class MultiDocumentExtractionService:
         task_id: Optional[str] = None,
         progress_start: int = 20,
         progress_end: int = 80,
-        initial_completed_files: List[str] = None
+        initial_completed_files: List[str] = None,
+        total_files_override: Optional[int] = None
     ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str]):
         """
         Process multiple financial documents and return normalized expense items and OM proforma data.
@@ -1149,8 +1381,8 @@ class MultiDocumentExtractionService:
                 # Calculate cumulative stats
                 initial_count = len(initial_completed_files or [])
                 cumulative_index = initial_count + completed_count
-                cumulative_total = initial_count + total_count
-
+                cumulative_total = total_files_override if total_files_override is not None else (initial_count + total_count)
+                
                 # Determine message
                 if status == "started":
                     msg = f"Processing {filename}..."
@@ -1196,14 +1428,30 @@ class MultiDocumentExtractionService:
 
                     # OM Extraction
                     if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
-                        logger.info(f"Running OM Proforma extraction on: {filename}")
+                        logger.info(f"Running OM Extraction (Proforma + Key Data) on: {filename}")
                         try:
+                            # 1. Proforma Extraction
                             proforma_tables = await self.extract_om_proforma_from_pdf(file_content, filename)
                             if proforma_tables:
                                 local_om_results.extend(proforma_tables)
                                 logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
+                            
+                            # 2. Key Data Extraction (Price, Units, Rent Roll)
+                            mime_type = "application/pdf"
+                            if filename.lower().endswith(".png"):
+                                mime_type = "image/png"
+                            elif filename.lower().endswith((".jpg", ".jpeg")):
+                                mime_type = "image/jpeg"
+
+                            om_key_data = await self.om_scraper_service.extract_om_key_data(file_content, filename, mime_type)
+                            
+                            if om_key_data:
+                                om_normalized_items = self._convert_om_data_to_normalized(om_key_data, filename, document_id)
+                                local_expenses.extend(om_normalized_items)
+                                logger.info(f"Extracted {len(om_normalized_items)} key data items from OM: {filename}")
+                                
                         except Exception as e:
-                            logger.error(f"Error extracting OM Proforma from {filename}: {e}")
+                            logger.error(f"Error extracting OM Data from {filename}: {e}")
 
                     expenses = []
                     if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
@@ -1270,19 +1518,31 @@ class MultiDocumentExtractionService:
         results = await asyncio.gather(*tasks)
         
         # Flatten results
+        pre_normalized_items = []
+        
         for doc_expenses, doc_om_results in results:
-            all_expenses.extend(doc_expenses)
+            for item in doc_expenses:
+                if isinstance(item, dict):
+                    all_expenses.append(item)
+                else:
+                    # It's already a NormalizedDataItem (e.g. from OM)
+                    pre_normalized_items.append(item)
+            
             om_proforma_results.extend(doc_om_results)
 
         # Update progress after all files are processed
         if progress_service and task_id:
+            initial_count = len(initial_completed_files or [])
+            final_cumulative_total = total_files_override if total_files_override is not None else (initial_count + total_count)
+            final_index = initial_count + total_count # The index reached at the end of this batch
+
             await progress_service.update_progress(
                 task_id,
                 progress_end,
                 f"Completed processing {len(documents)} files",
                 details={
-                    "file_index": len(documents),
-                    "total_files": len(documents),
+                    "file_index": final_index,
+                    "total_files": final_cumulative_total,
                     "active_files": [],
                     "completed_files": list(completed_files),
                     "status": "complete"
@@ -1306,6 +1566,46 @@ class MultiDocumentExtractionService:
         # This prevents misalignment in the zip() operation downstream.
         all_expenses = self._validate_and_fix_extraction(all_expenses)
         logger.info(f"Total expenses after validation/filtering: {len(all_expenses)}")
+
+        # --- Filter for Latest Fiscal Year ---
+        try:
+            # Group items by source document
+            doc_years = {}
+            for exp in all_expenses:
+                doc = exp.get("source_document")
+                year = exp.get("expense_year")
+                if doc and year and isinstance(year, int):
+                    if doc not in doc_years:
+                        doc_years[doc] = set()
+                    doc_years[doc].add(year)
+            
+            # Find max year per document
+            doc_max_years = {doc: max(years) for doc, years in doc_years.items() if years}
+            
+            if doc_max_years:
+                # Find global max year across all documents
+                global_max_year = max(doc_max_years.values())
+                logger.info(f"Global max fiscal year detected: {global_max_year}")
+                
+                # Identify documents to drop (those with max year < global max year)
+                # Note: We keep documents with NO detected year (doc_max_years.get(doc) is None)
+                # to avoid dropping Excel files or docs where year wasn't extracted.
+                docs_to_drop = set()
+                for doc, max_year in doc_max_years.items():
+                    # If a document's latest data is older than the global latest data, drop it.
+                    # e.g. Doc A (2021) vs Doc B (2023) -> Drop Doc A.
+                    # e.g. Doc A (2023) vs Doc B (2024 T12) -> Drop Doc A (2023).
+                    if max_year < global_max_year:
+                        docs_to_drop.add(doc)
+                
+                if docs_to_drop:
+                    logger.info(f"Dropping historical documents older than {global_max_year}: {docs_to_drop}")
+                    original_count = len(all_expenses)
+                    all_expenses = [e for e in all_expenses if e.get("source_document") not in docs_to_drop]
+                    logger.info(f"Filtered out {original_count - len(all_expenses)} items from older fiscal years.")
+        except Exception as e:
+            logger.error(f"Error filtering for latest fiscal year: {e}")
+            # Continue without filtering on error
 
         # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
@@ -1409,12 +1709,23 @@ class MultiDocumentExtractionService:
                     self.batch_logging_service.log_error("batch", "process_normalization_batch", str(batch_error))
                 return []
 
-        # Run normalization batches in parallel
-        norm_results = await asyncio.gather(*[process_normalization_batch(i, batch) for i, batch in enumerate(batches)])
+        # Run normalization batches in parallel with limited concurrency
+        sem_norm = asyncio.Semaphore(3)
+
+        async def process_normalization_batch_with_sem(i, batch):
+            async with sem_norm:
+                return await process_normalization_batch(i, batch)
+
+        norm_results = await asyncio.gather(*[process_normalization_batch_with_sem(i, batch) for i, batch in enumerate(batches)])
         
         # Flatten results
         for batch_items in norm_results:
             normalized_items.extend(batch_items)
+            
+        # Add pre-normalized items (from OM key data)
+        if pre_normalized_items:
+            logger.info(f"Adding {len(pre_normalized_items)} pre-normalized items from OM to final list")
+            normalized_items.extend(pre_normalized_items)
             
         # Re-assign sequential IDs
         for idx, item in enumerate(normalized_items):

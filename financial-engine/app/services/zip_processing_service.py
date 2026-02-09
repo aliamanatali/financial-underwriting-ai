@@ -167,6 +167,10 @@ class ZipProcessingService:
         # Skip macOS resource forks
         if "__MACOSX" in file_path:
             return True
+
+        # Skip Windows system files and common junk
+        if basename.lower() in ['thumbs.db', 'desktop.ini', 'icon\r', '.ds_store']:
+            return True
             
         return False
 
@@ -299,7 +303,13 @@ class ZipProcessingService:
                     
                     # Prepare files with content for content-based classification
                     files_with_content = [(f["filename"], f["content"]) for f in files_to_classify]
-                    classification_results = await classification_service.classify_files_batch(files=files_with_content)
+                    classification_results = await classification_service.classify_files_batch(
+                        files=files_with_content,
+                        progress_service=progress_service,
+                        task_id=task_id,
+                        progress_start=70,
+                        progress_end=95
+                    )
                     
                     for f_item in files_to_classify:
                         fname = f_item["filename"]
@@ -438,7 +448,13 @@ class ZipProcessingService:
                 await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} files based on content...")
                 
             # Pass files with content for content-based classification
-            classifications = await classification_service.classify_files_batch(files=files_to_classify)
+            classifications = await classification_service.classify_files_batch(
+                files=files_to_classify,
+                progress_service=progress_service,
+                task_id=task_id,
+                progress_start=20,
+                progress_end=90
+            )
         else:
             classifications = {}
 

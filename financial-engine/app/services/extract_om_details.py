@@ -1,8 +1,10 @@
 import json
-from typing import Dict
-from typing import List
+import logging
+from typing import Dict, List, Any, Optional
 from app.services.gemini_client import GeminiClient
-from app.models.schemas import PropertyMeta, OMProformaTable, OMProformaRow, OMTaxAssumptions
+from app.models.schemas import PropertyMeta, OMProformaTable, OMProformaRow, OMTaxAssumptions, RentRollItem, UnitTypeSummary
+
+logger = logging.getLogger(__name__)
 
 class OMScraperService:
     def __init__(self, gemini_client: GeminiClient = None):
@@ -150,12 +152,97 @@ class OMScraperService:
             print(f"Error extracting OM Proforma from file: {e}")
             return []
 
+    async def extract_om_key_data(self, file_bytes: bytes, file_name: str, mime_type: str = "application/pdf") -> Dict[str, Any]:
+        """
+        Extracts key data from OM: Property Meta (Price, Units, Address) and Rent Roll.
+        """
+        file_type_desc = "Offering Memorandum PDF" if mime_type == "application/pdf" else "Offering Memorandum Image"
+
+        prompt = f"""
+        Analyze this {file_type_desc} and extract the following key information:
+        
+        1. Property Details:
+           - Property Name (if explicitly mentioned, e.g. "The Oakwood Apartments", otherwise null)
+           - Purchase Price / Asking Price
+           - Total Units (Unit Count)
+           - Property Address
+           - Year Built
+           - Rentable Sq Ft (NRA)
+           
+        2. Rent Roll / Unit Mix:
+           - Extract the list of units or unit types.
+           - For each unit/type, provide:
+             - Unit Type (e.g., 1BD/1BA)
+             - Count (number of units of this type, or 1 if individual unit listed)
+             - Current Rent (Average or Actual)
+             - Market Rent (Pro Forma or Market)
+             - Unit Size (Sq Ft)
+        
+        Return the data as a JSON object with this structure:
+        {{
+            "property_meta": {{
+                "property_name": "The Oakwood Apartments",
+                "purchase_price": 5000000,
+                "total_units": 20,
+                "address": "123 Main St, City, State",
+                "year_built": 1980,
+                "rentable_sqft": 15000
+            }},
+            "rent_roll_items": [
+                {{
+                    "unit_type": "1BD/1BA",
+                    "count": 10,
+                    "current_rent": 1500,
+                    "market_rent": 1800,
+                    "unit_size": 750
+                }},
+                ...
+            ]
+        }}
+        
+        CRITICAL:
+        - Prioritize explicit "Offering Price", "Asking Price", or "Purchase Price".
+        - If "Rent Roll" is available, use individual unit data. If only "Unit Mix" summary is available, use that.
+        - Ensure numerical values are numbers, not strings (remove currency symbols).
+        """
+        
+        try:
+             if hasattr(self.gemini_client, 'generate_content_async'):
+                # We use generate_content_async directly to get JSON
+                from google.genai import types
+                
+                parts = [
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    types.Part.from_text(text=prompt)
+                ]
+                
+                response = await self.gemini_client.client.aio.models.generate_content(
+                    model=self.gemini_client.model_name,
+                    contents=parts,
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json"
+                    )
+                )
+                
+                if response.text:
+                    return json.loads(response.text)
+                return {}
+             else:
+                 logger.warning("Gemini Client does not support async generation")
+                 return {}
+
+        except Exception as e:
+            logger.error(f"Error extracting OM Key Data: {e}")
+            return {}
+
     def extract_om_details(self, file_path: str) -> PropertyMeta:
         """
         Extracts high-level deal info from the Offering Memorandum (OM).
         """
         # Legacy method stub
         return PropertyMeta(
+            property_name="Example Property",
             address="123 Main St",
             year_built=2022,
             purchase_price=0.0,
