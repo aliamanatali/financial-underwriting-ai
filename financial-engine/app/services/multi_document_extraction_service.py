@@ -312,6 +312,7 @@ class MultiDocumentExtractionService:
                 2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
+                5. Property Identity (e.g., "Property Name", "Property Address")
                 
                 CRITICAL RULES TO AVOID ERRORS:
                 
@@ -346,7 +347,12 @@ class MultiDocumentExtractionService:
                    - These are coverage limits, NOT the premium amount.
                    - Only extract the "Premium" or "Total Premium" amount.
 
-                9. LATEST PERIOD ONLY:
+                9. PROPERTY IDENTITY:
+                   - Extract the explicit "Property Name" if listed (e.g. "The Highland Apartments").
+                   - Extract the "Property Address" if listed.
+                   - type: "property_info"
+
+                10. LATEST PERIOD ONLY:
                    - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
                    - Ignore columns for older years.
                 
@@ -1042,6 +1048,8 @@ class MultiDocumentExtractionService:
             ]
             
             CRITICAL RULES:
+            - If text describes the Property Name, map to Group: "Property Info" and Category: "Property Name"
+            - If text describes the Property Address, map to Group: "Property Info" and Category: "Property Address"
             - If type is "receivable", map to Group: "Other" and Category: "Accounts Receivable" (NOT revenue - these are uncollected amounts)
             - If type is "revenue" and subtype is "rent", map to Group: "Revenue" and Category: "Gross Potential Rent"
             - If type is "revenue" and subtype is "late_fee", map to Group: "Revenue" and Category: "Other Income"
@@ -1809,6 +1817,7 @@ class MultiDocumentExtractionService:
                         
                         meta = {
                             "amount": amount,
+                            "text_value": raw_text,
                             "reasoning": normalization.get("reasoning", ""),
                             "row_count": expense.get("row_count"),
                             "categories_found": expense.get("categories_found"),

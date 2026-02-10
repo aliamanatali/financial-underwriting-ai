@@ -67,6 +67,8 @@ class ExpenseCategory(str, Enum):
     TOTAL_UNITS = "Total Units"
     YEAR_BUILT = "Year Built"
     CURRENT_LOAN_BALANCE = "Current Loan Balance"
+    PROPERTY_NAME = "Property Name"
+    PROPERTY_ADDRESS = "Property Address"
     
     UNCATEGORIZED = "Uncategorized"
 

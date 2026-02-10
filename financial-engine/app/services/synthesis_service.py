@@ -96,6 +96,42 @@ class SynthesisService:
         
         # Default to unknown
         return self.DOCUMENT_WEIGHTS["UNKNOWN"]
+
+    def _is_garbage_property_string(self, text: str) -> bool:
+        """
+        Check if a string is likely garbage/generic property name.
+        """
+        if not text:
+            return True
+        
+        s = str(text).strip().lower()
+        if len(s) < 3:
+            return True
+        
+        # Common generic headers/labels that get extracted as values
+        garbage = [
+            "property name", "property address", "name", "address",
+            "subject property", "current", "year 1", "pro forma",
+            "t12", "rent roll", "profit & loss", "income statement",
+            "operating statement", "date", "total", "page", "1 of 1",
+            "unknown", "statement", "period", "ending", "month",
+            "field", "document", "method", "value", "confidence",
+            "analysis", "summary", "report"
+        ]
+        
+        if s in garbage:
+            return True
+            
+        # Check if it looks like a date or filename
+        if any(x in s for x in ["/20", "/19", "202", "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]):
+             # Simple heuristic to avoid "January 2023" being a property name
+             if len(s) < 20:
+                 return True
+        
+        if s.endswith(".pdf") or s.endswith(".xlsx") or s.endswith(".docx"):
+            return True
+                 
+        return False
     
     def synthesize_property_metadata(
         self,
@@ -138,6 +174,10 @@ class SynthesisService:
             "current_loan_balance": {"value": 0.0, "source": None, "score": -1}
         }
         
+        # Voting Collections
+        name_candidates = []
+        address_candidates = []
+        
         # Scan all items and pick winners based on priority
         for item in normalized_items:
             source_doc = item.source_document
@@ -157,28 +197,31 @@ class SynthesisService:
                     except (ValueError, TypeError):
                         amount = 0.0
             
-            # PROPERTY NAME
+            # PROPERTY NAME (Collect for voting)
             if "property name" in normalized_val:
-                text_val = item.metadata.get("text_value")
-                if text_val and doc_score > best_values["property_name"]["score"]:
-                    best_values["property_name"] = {
-                        "value": text_val,
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Property Name: {text_val} from {source_doc} (score: {doc_score})")
+                text_val = item.metadata.get("text_value") or item.raw_text
+                # Remove prefixes if present in raw text
+                if text_val:
+                    text_val = str(text_val).replace("Property Name:", "").strip()
+                    if not self._is_garbage_property_string(text_val):
+                        name_candidates.append({
+                            "value": text_val,
+                            "source": source_doc,
+                            "score": doc_score
+                        })
 
-            # PROPERTY ADDRESS
-            elif "property address" in normalized_val or "address" in normalized_val:
-                text_val = item.metadata.get("text_value")
+            # PROPERTY ADDRESS (Collect for voting)
+            elif "property address" in normalized_val or ("address" in normalized_val and item.category_group == "Property Info"):
+                text_val = item.metadata.get("text_value") or item.raw_text
                 # Ensure we don't match accidental substrings, check if it is truly an address field
-                if "address" in normalized_val and text_val and doc_score > best_values["address"]["score"]:
-                     best_values["address"] = {
-                        "value": text_val,
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                     logger.info(f"Updated Property Address: {text_val} from {source_doc} (score: {doc_score})")
+                if text_val:
+                     text_val = str(text_val).replace("Property Address:", "").replace("Address:", "").strip()
+                     if not self._is_garbage_property_string(text_val):
+                        address_candidates.append({
+                            "value": text_val,
+                            "source": source_doc,
+                            "score": doc_score
+                        })
 
             # PURCHASE PRICE
             elif ("purchase price" in normalized_val or
@@ -292,6 +335,67 @@ class SynthesisService:
                             "score": rent_roll_score
                         }
                         logger.info(f"Updated Total Units from Rent Roll row count: {row_count} from {source_doc} (score: {rent_roll_score})")
+
+        # --- Resolve Voting for Property Name and Address ---
+        
+        def resolve_voting(candidates: List[Dict], field_name: str):
+            if not candidates:
+                return None
+            
+            # Group by value
+            grouped = {}
+            for c in candidates:
+                val = c["value"]
+                # Use simple normalization for grouping (case insensitive)
+                norm_val = val.lower().strip()
+                
+                if norm_val not in grouped:
+                    grouped[norm_val] = {
+                        "display_value": val,
+                        "score": 0,
+                        "count": 0,
+                        "sources": set(),
+                        "best_source_doc": c["source"]
+                    }
+                
+                # Update max score seen for this value
+                if c["score"] > grouped[norm_val]["score"]:
+                    grouped[norm_val]["score"] = c["score"]
+                    grouped[norm_val]["best_source_doc"] = c["source"]
+                    grouped[norm_val]["display_value"] = val # Keep the casing from high score doc
+                
+                grouped[norm_val]["count"] += 1
+                grouped[norm_val]["sources"].add(c["source"])
+            
+            # Apply Frequency Boost
+            # If a name appears in multiple distinct documents, it gets a significant boost
+            for norm_val, data in grouped.items():
+                unique_docs = len(data["sources"])
+                if unique_docs > 1:
+                    # Boost: +15 points for each additional document
+                    # This allows a consensus (e.g. 3 docs) to beat a single higher-priority doc if appropriate
+                    boost = (unique_docs - 1) * 15
+                    data["score"] += boost
+                    logger.info(f"Boosting '{data['display_value']}' by {boost} points (Found in {unique_docs} docs)")
+
+            # Pick winner
+            best_group = max(grouped.values(), key=lambda x: x["score"])
+            return {
+                "value": best_group["display_value"],
+                "source": best_group["best_source_doc"],
+                "score": best_group["score"]
+            }
+
+        # Apply results
+        best_name = resolve_voting(name_candidates, "Property Name")
+        if best_name:
+             best_values["property_name"] = best_name
+             logger.info(f"Voting Winner - Property Name: '{best_name['value']}' (Score: {best_name['score']}, Source: {best_name['source']})")
+
+        best_addr = resolve_voting(address_candidates, "Property Address")
+        if best_addr:
+             best_values["address"] = best_addr
+             logger.info(f"Voting Winner - Property Address: '{best_addr['value']}' (Score: {best_addr['score']}, Source: {best_addr['source']})")
         
         # Log final synthesis results
         logger.info("=== METADATA SYNTHESIS RESULTS ===")
