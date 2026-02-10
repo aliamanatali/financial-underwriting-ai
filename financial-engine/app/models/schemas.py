@@ -314,8 +314,11 @@ class DealPackage(BaseModel):
     normalization_status: str = "pending"  # pending, in_progress, completed
     verification_progress: float = 0.0  # Percentage of items verified by user
     normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data (Legacy/General)
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
     
     # Segmented Data Storage
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
+    
     rent_roll_data: List[RentRollItem] = []
     financials_data: List[NormalizedDataItem] = [] # Specifically for financials (T12, P&L, Tax Bills)
     om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
@@ -365,6 +368,7 @@ class UnderwritingAnalysis(BaseModel):
     document_id: str
     pass_fail_status: str
     gating_reasons: List[str] = []
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
 
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]

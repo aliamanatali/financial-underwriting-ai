@@ -805,21 +805,32 @@ class FinancialService:
         # FIX: Prioritize Rent Roll count
         unit_count = len(analysis.rent_roll) or analysis.property_meta.total_units or 0
         
+        # Check Flow Type: For OM_DRIVEN (Flow A), do NOT auto-guess missing expenses.
+        is_flow_a = getattr(analysis, "underwriting_flow", "MULTI_SOURCE") == "OM_DRIVEN"
+
         if unit_count > 5:
             if not has_payroll:
-                # Conservative estimate: $1,200 per unit
-                est_payroll = unit_count * 1200.0
-                other_expenses_map[ExpenseCategory.PAYROLL.value] = est_payroll
-                self.audit_log_service.add_log(analysis, "Expense Estimation", f"${est_payroll:,.0f}", "Missing Data", "Estimated Payroll ($1,200/unit)")
-                logger.info(f"Estimated Payroll for {unit_count} units: ${est_payroll}")
+                if is_flow_a:
+                    logger.info("Flow A (OM_DRIVEN): Skipping Payroll estimation (Missing in OM).")
+                    analysis.gating_reasons.append("Warning: Payroll missing in OM")
+                else:
+                    # Conservative estimate: $1,200 per unit
+                    est_payroll = unit_count * 1200.0
+                    other_expenses_map[ExpenseCategory.PAYROLL.value] = est_payroll
+                    self.audit_log_service.add_log(analysis, "Expense Estimation", f"${est_payroll:,.0f}", "Missing Data", "Estimated Payroll ($1,200/unit)")
+                    logger.info(f"Estimated Payroll for {unit_count} units: ${est_payroll}")
             
             if not has_marketing:
-                 # Conservative estimate: $200 per unit
-                est_marketing = unit_count * 200.0
-                # Use value string for map key
-                other_expenses_map[ExpenseCategory.ADVERTISING_MARKETING.value] = est_marketing
-                self.audit_log_service.add_log(analysis, "Expense Estimation", f"${est_marketing:,.0f}", "Missing Data", "Estimated Marketing ($200/unit)")
-                logger.info(f"Estimated Marketing for {unit_count} units: ${est_marketing}")
+                if is_flow_a:
+                    logger.info("Flow A (OM_DRIVEN): Skipping Marketing estimation (Missing in OM).")
+                    analysis.gating_reasons.append("Warning: Marketing missing in OM")
+                else:
+                     # Conservative estimate: $200 per unit
+                    est_marketing = unit_count * 200.0
+                    # Use value string for map key
+                    other_expenses_map[ExpenseCategory.ADVERTISING_MARKETING.value] = est_marketing
+                    self.audit_log_service.add_log(analysis, "Expense Estimation", f"${est_marketing:,.0f}", "Missing Data", "Estimated Marketing ($200/unit)")
+                    logger.info(f"Estimated Marketing for {unit_count} units: ${est_marketing}")
 
         # Add aggregated other expenses to breakdown
         total_other_opex = 0.0

@@ -496,6 +496,21 @@ async def normalize_package_documents(
     om_documents = [d for d in financial_docs if d.get("document_category") == DocumentType.OFFERING_MEMORANDUM]
     remaining_financial_docs = [d for d in financial_docs if d.get("document_category") != DocumentType.OFFERING_MEMORANDUM]
     
+    # NEW: Determine Underwriting Flow (Flow A vs Flow B)
+    if om_documents:
+        # Flow A: OM-Driven (Single Source of Truth)
+        logger.info("OM Detected. Enforcing Flow A: OM-Driven. Ignoring non-OM documents.")
+        package.underwriting_flow = "OM_DRIVEN"
+        
+        # Strictly ignore other files
+        rent_roll_docs = []
+        remaining_financial_docs = []
+        
+    else:
+        # Flow B: Non-OM (Multi-Source Aggregation)
+        logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
+        package.underwriting_flow = "MULTI_SOURCE"
+
     # Shared State for Parallel Progress Tracking
     progress_lock = asyncio.Lock()
     task_progress = {"om": 0.0, "rr": 0.0, "fin": 0.0}
@@ -863,6 +878,104 @@ async def update_manual_overrides(
         "message": "Manual overrides updated successfully",
         "overrides": package.manual_overrides
     }
+
+
+@router.get("/packages/{package_id}/documents/{document_id}/content")
+async def get_package_document_content(
+    package_id: str,
+    document_id: str,
+    request: Request
+):
+    """
+    Get a signed URL for the document content.
+    If using local storage, returns a direct download URL to the backend.
+    """
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
+
+    # Find the document
+    found_doc = None
+    for category, docs in package.documents.items():
+        for doc in docs:
+            if doc.document_id == document_id:
+                found_doc = doc
+                break
+        if found_doc:
+            break
+            
+    if not found_doc:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
+        
+    # Construct storage path
+    extension = Path(found_doc.filename).suffix
+    storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
+    
+    # Try to get signed URL (GCP)
+    signed_url = await storage_service.get_signed_url(storage_path)
+    
+    if not signed_url:
+        # Fallback to local download endpoint
+        # Construct full URL for the download endpoint
+        download_url = request.url_for("download_package_document", package_id=package_id, document_id=document_id)
+        signed_url = str(download_url)
+        
+    return {
+        "signed_url": signed_url,
+        "filename": found_doc.filename,
+        "content_type": storage_service._get_content_type(found_doc.filename)
+    }
+
+
+@router.get("/packages/{package_id}/documents/{document_id}/download")
+async def download_package_document(
+    package_id: str,
+    document_id: str,
+):
+    """
+    Directly download a document file (used for local storage or proxying).
+    """
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
+
+    # Find the document
+    found_doc = None
+    for category, docs in package.documents.items():
+        for doc in docs:
+            if doc.document_id == document_id:
+                found_doc = doc
+                break
+        if found_doc:
+            break
+            
+    if not found_doc:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found in package {package_id}")
+
+    # Construct storage path
+    extension = Path(found_doc.filename).suffix
+    storage_path = f"deal-packages/{package_id}/documents/{document_id}{extension}"
+    
+    # Get file content
+    content = await storage_service.get_document_file(storage_path)
+    if not content:
+        raise HTTPException(status_code=404, detail="File content not found")
+        
+    # Return as stream
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    
+    content_type = storage_service._get_content_type(found_doc.filename)
+    
+    return StreamingResponse(
+        BytesIO(content),
+        media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{found_doc.filename}"'}
+    )
 
 
 @router.delete("/packages/{package_id}/documents/{document_id}")
@@ -1241,10 +1354,15 @@ async def _analyze_deal_package_logic(
     if extracted_address:
         logger.info(f"Using Synthesized Property Address: {extracted_address}")
     
+    # Defaults based on Underwriting Flow
+    is_flow_a = (package.underwriting_flow == "OM_DRIVEN")
+    default_year_built = 0 if is_flow_a else 1980
+    default_address = "Missing in OM" if is_flow_a else _clean_address(package.property_name)
+
     property_meta = PropertyMeta(
         property_name=str(extracted_name) if extracted_name else None,
-        address=str(extracted_address) if extracted_address else _clean_address(package.property_name),
-        year_built=synthesized_metadata['year_built']['value'] if synthesized_metadata['year_built']['value'] > 0 else 1980,
+        address=str(extracted_address) if extracted_address else default_address,
+        year_built=synthesized_metadata['year_built']['value'] if synthesized_metadata['year_built']['value'] > 0 else default_year_built,
         purchase_price=synthesized_metadata['purchase_price']['value'],
         total_units=synthesized_metadata['total_units']['value'],
         is_renovated=False,
@@ -1359,7 +1477,11 @@ async def _analyze_deal_package_logic(
                     amount_str = item.raw_text.split("$")[-1].replace(",", "").strip()
                     amount = sanitize_float(amount_str)
                     if amount == 0.0:
-                        amount = 1000.0  # Default fallback
+                        # For Flow A, do not auto-guess values
+                        if is_flow_a:
+                            amount = 0.0
+                        else:
+                            amount = 1000.0  # Default fallback for Flow B
                 
                 # Get document_id from metadata if available
                 doc_id = item.metadata.get("document_id") if item.metadata else None
@@ -1414,21 +1536,27 @@ async def _analyze_deal_package_logic(
 
     # Create a basic rent roll if none exists
     if not rent_roll:
-        # Generate placeholder rent roll based on property size
-        num_units = property_meta.total_units or 0
-        for i in range(num_units):
-            rent_roll.append(RentRollItem(
-                unit_number=f"Unit {i+1}",
-                unit_type="1BR",
-                unit_size=750,
-                tenant_name="Occupied",
-                current_rent=2000.0,
-                stabilized_rent=2200.0,
-                market_rent=2100.0,
-                move_in_date="",
-                lease_start="2024-01-01",
-                lease_end="2024-12-31"
-            ))
+        if package.underwriting_flow == "OM_DRIVEN":
+            logger.warning("Flow A (OM_DRIVEN): No rent roll found in OM. Flagging as Missing.")
+            # Do NOT generate placeholders for Flow A
+            # We will rely on flagging it in the analysis or summary
+        else:
+            # Flow B: Generate placeholder rent roll based on property size (Auto-guess allowed)
+            logger.info("Flow B: Generating placeholder rent roll.")
+            num_units = property_meta.total_units or 0
+            for i in range(num_units):
+                rent_roll.append(RentRollItem(
+                    unit_number=f"Unit {i+1}",
+                    unit_type="1BR",
+                    unit_size=750,
+                    tenant_name="Occupied",
+                    current_rent=2000.0,
+                    stabilized_rent=2200.0,
+                    market_rent=2100.0,
+                    move_in_date="",
+                    lease_start="2024-01-01",
+                    lease_end="2024-12-31"
+                ))
     
     # Calculate rent roll summary
     total_units = len(rent_roll)
@@ -1543,6 +1671,7 @@ async def _analyze_deal_package_logic(
     # Create analysis object
     analysis = UnderwritingAnalysis(
         document_id=package_id,
+        underwriting_flow=package.underwriting_flow or "MULTI_SOURCE",
         pass_fail_status="PENDING",
         gating_reasons=[],
         property_meta=property_meta,
