@@ -1411,32 +1411,53 @@ class MultiDocumentExtractionService:
                 # Create a rent roll item metadata
                 # OM often gives Unit Types (summary), so we expand them if count > 1
                 count = int(item.get("count", 1))
+                extracted_unit_number = item.get("unit_number")
                 
                 rr_base_meta = {
                     "unit_type": item.get("unit_type", "Unknown"),
                     "current_rent": item.get("current_rent", 0),
                     "market_rent": item.get("market_rent", 0),
                     "unit_size": item.get("unit_size", 0),
+                    "lease_start": item.get("lease_start", ""),
+                    "lease_end": item.get("lease_end", ""),
+                    "move_in_date": item.get("move_in_date", ""),
                     "is_rent_roll_item": True,
                     "document_id": document_id
                 }
                 
-                for i in range(count):
-                    # Generate a unique pseudo-unit number if not provided
-                    unit_num = f"OM-{idx+1}-{i+1}"
+                # If we have an explicit unit number, use it (usually count=1)
+                if extracted_unit_number and str(extracted_unit_number).strip().lower() not in ["null", "none", ""]:
                     rr_meta = rr_base_meta.copy()
-                    rr_meta["unit_number"] = unit_num
+                    rr_meta["unit_number"] = str(extracted_unit_number)
                     
                     items.append(NormalizedDataItem(
-                        id=f"om_rr_{document_id}_{idx}_{i}",
-                        raw_text=f"OM Unit Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
+                        id=f"om_rr_{document_id}_{idx}",
+                        raw_text=f"OM Unit: {extracted_unit_number} - Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
                         normalized_value="Rent Roll Item",
                         field_type="rent_roll_item",
                         category_group=CategoryGroup.REVENUE,
-                        confidence=0.90,
+                        confidence=0.95, # Higher confidence for detailed items
                         source_document=filename,
                         metadata=rr_meta
                     ))
+                else:
+                    # It's a summary row, expand it synthetically
+                    for i in range(count):
+                        # Generate a unique pseudo-unit number if not provided
+                        unit_num = f"OM-{idx+1}-{i+1}"
+                        rr_meta = rr_base_meta.copy()
+                        rr_meta["unit_number"] = unit_num
+                        
+                        items.append(NormalizedDataItem(
+                            id=f"om_rr_{document_id}_{idx}_{i}",
+                            raw_text=f"OM Unit Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
+                            normalized_value="Rent Roll Item",
+                            field_type="rent_roll_item",
+                            category_group=CategoryGroup.REVENUE,
+                            confidence=0.85, # Lower confidence for synthetic expansion
+                            source_document=filename,
+                            metadata=rr_meta
+                        ))
                     
         return items
 

@@ -171,23 +171,36 @@ class OMScraperService:
         Analyze this {file_type_desc} and extract the following key information:
         
         1. Property Details:
+           - LOOK FOR "PROPERTY OVERVIEW", "EXECUTIVE SUMMARY", or "INVESTMENT HIGHLIGHTS" tables/sections first.
            - Property Name: The explicit name of the SUBJECT PROPERTY (e.g., "The Oakwood Apartments").
+             * Check for rows labeled "Property Name", "Name", or title headers in the Property Overview.
              * CRITICAL: Do NOT pick names of Comparable Properties ("Rent Comps", "Sales Comps") or the Brokerage Firm.
              * If the property has no specific name, use the Street Address (e.g., "123 Main Street Apartments").
+           - Property Address: The full legal address (e.g. "2419 Durant Ave, Berkeley, CA 94704").
+             * Check for rows labeled "Legal Address", "Property Address", "Location", or "Address".
            - Purchase Price / Asking Price
            - Total Units (Unit Count)
-           - Property Address
            - Year Built
            - Rentable Sq Ft (NRA)
            
-        2. Rent Roll / Unit Mix:
-           - Extract the list of units or unit types.
-           - For each unit/type, provide:
-             - Unit Type (e.g., 1BD/1BA)
-             - Count (number of units of this type, or 1 if individual unit listed)
-             - Current Rent (Average or Actual)
-             - Market Rent (Pro Forma or Market)
-             - Unit Size (Sq Ft)
+        2. Rent Roll Data:
+           - YOUR PRIMARY GOAL is to find the DETAILED RENT ROLL table where every row corresponds to a SINGLE specific unit.
+           - Look for a table with a column labeled "Unit", "Unit #", "Apt", "#", or "Suite".
+           - IGNORE the "Unit Mix" or "Floor Plan Summary" table which groups units by type (e.g. "Studios", "1 Bedroom"). That is a summary, not the rent roll.
+           - If you see a table listing Unit numbers like "101", "102", "A", "B" - EXTRACT THAT.
+           
+           For each row in the DETAILED Rent Roll:
+             - unit_number: The specific identifier (e.g. "101"). REQUIRED.
+             - unit_type: (e.g., "1BD/1BA")
+             - current_rent: Actual monthly rent.
+             - market_rent: Market/Pro Forma monthly rent.
+             - unit_size: Sq Ft.
+             - lease_start: Lease start date (e.g., "01/01/2023").
+             - lease_end: Lease expiration date (e.g., "12/31/2024").
+             - move_in_date: Date tenant moved in (if available).
+             - count: MUST BE 1 for detailed rows.
+             
+           ONLY if a detailed rent roll is completely missing from the document, fallback to the Unit Mix summary.
         
         Return the data as a JSON object with this structure:
         {{
@@ -201,20 +214,24 @@ class OMScraperService:
             }},
             "rent_roll_items": [
                 {{
+                    "unit_number": "101",
                     "unit_type": "1BD/1BA",
-                    "count": 10,
+                    "count": 1,
                     "current_rent": 1500,
                     "market_rent": 1800,
-                    "unit_size": 750
-                }},
-                ...
+                    "unit_size": 750,
+                    "lease_start": "2023-01-01",
+                    "lease_end": "2024-01-01",
+                    "move_in_date": "2022-05-15"
+                }}
             ]
         }}
         
-        CRITICAL:
-        - Prioritize explicit "Offering Price", "Asking Price", or "Purchase Price".
-        - If "Rent Roll" is available, use individual unit data. If only "Unit Mix" summary is available, use that.
-        - Ensure numerical values are numbers, not strings (remove currency symbols).
+        CRITICAL INSTRUCTIONS:
+        1. DO NOT extract the Unit Mix Summary if a Detailed Rent Roll exists.
+        2. DO NOT hallucinate unit numbers.
+        3. If the document spans multiple pages, extract data from ALL pages of the rent roll.
+        4. "count" should be 1 if "unit_number" is present.
         """
         
         try:

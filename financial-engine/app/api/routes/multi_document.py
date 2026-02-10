@@ -644,6 +644,20 @@ async def normalize_package_documents(
         all_om_proforma = extracted_om_proforma + other_om_proforma
         if all_om_proforma:
             package.om_proforma_data = all_om_proforma
+
+        # Extract Rent Roll items from OM extracted expenses/metadata
+        # We need to make sure OM rent roll items are included in the package rent roll data
+        # so that SynthesisService can prioritize them.
+        synthesis_service_local = SynthesisService()
+        om_rent_roll_items = synthesis_service_local.extract_rent_roll_from_normalized_items(extracted_om_expenses)
+        
+        if om_rent_roll_items:
+            logger.info(f"Extracted {len(om_rent_roll_items)} rent roll items from OM Normalized Data. Adding to package rent roll.")
+            # Tag them as OM source explicitly to ensure priority if filename doesn't contain OM
+            for item in om_rent_roll_items:
+                if item.source_file and "OM" not in item.source_file.upper() and "OFFERING" not in item.source_file.upper():
+                     item.source_file = f"OM - {item.source_file}"
+            extracted_rent_roll.extend(om_rent_roll_items)
             
         # Save Rent Roll
         package.rent_roll_data = extracted_rent_roll
@@ -1222,10 +1236,14 @@ async def _analyze_deal_package_logic(
     
     # Initialize Property Meta with synthesized values
     extracted_name = synthesized_metadata.get('property_name', {}).get('value')
+    extracted_address = synthesized_metadata.get('address', {}).get('value')
+    
+    if extracted_address:
+        logger.info(f"Using Synthesized Property Address: {extracted_address}")
     
     property_meta = PropertyMeta(
         property_name=str(extracted_name) if extracted_name else None,
-        address=_clean_address(package.property_name),
+        address=str(extracted_address) if extracted_address else _clean_address(package.property_name),
         year_built=synthesized_metadata['year_built']['value'] if synthesized_metadata['year_built']['value'] > 0 else 1980,
         purchase_price=synthesized_metadata['purchase_price']['value'],
         total_units=synthesized_metadata['total_units']['value'],

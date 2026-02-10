@@ -302,15 +302,14 @@ class FinancialService:
         # 3. Vintage Check
         year_built = analysis.property_meta.year_built or 0
         if year_built > 0 and year_built < params.max_build_year and not analysis.property_meta.is_renovated:
-            # Downgrade from FAIL to WARNING to allow analysis to proceed
-            # status = "FAIL"
-            reasons.append(f"Property vintage WARNING: Built in {year_built}. Criteria requires 1970-2005 or renovated.")
+            status = "FAIL"
+            reasons.append(f"Property vintage FAIL: Built in {year_built}. Criteria requires 1970-2005 or renovated.")
 
         # FINAL OVERRIDE: Never block analysis completely on data checks.
         # We want to see the report even if it's "bad".
         if status == "FAIL":
-            logger.warning(f"Deal viability check failed with reasons: {reasons}. Forcing PROCEED for report generation.")
-            status = "PASS" # or "WARNING" if the system supports it
+            logger.warning(f"Deal viability check failed with reasons: {reasons}.")
+            # status = "PASS" # Removed override to ensure criteria checks are enforced
         
         return {"status": status, "reasons": reasons}
 

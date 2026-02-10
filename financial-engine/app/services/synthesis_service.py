@@ -128,6 +128,7 @@ class SynthesisService:
         # Initialize best values with score -1 (will be beaten by any real data)
         best_values = {
             "property_name": {"value": None, "source": None, "score": -1},
+            "address": {"value": None, "source": None, "score": -1},
             "purchase_price": {"value": 0.0, "source": None, "score": -1},
             "total_units": {"value": 0, "source": None, "score": -1},
             "year_built": {"value": 0, "source": None, "score": -1},
@@ -166,6 +167,18 @@ class SynthesisService:
                         "score": doc_score
                     }
                     logger.info(f"Updated Property Name: {text_val} from {source_doc} (score: {doc_score})")
+
+            # PROPERTY ADDRESS
+            elif "property address" in normalized_val or "address" in normalized_val:
+                text_val = item.metadata.get("text_value")
+                # Ensure we don't match accidental substrings, check if it is truly an address field
+                if "address" in normalized_val and text_val and doc_score > best_values["address"]["score"]:
+                     best_values["address"] = {
+                        "value": text_val,
+                        "source": source_doc,
+                        "score": doc_score
+                    }
+                     logger.info(f"Updated Property Address: {text_val} from {source_doc} (score: {doc_score})")
 
             # PURCHASE PRICE
             elif ("purchase price" in normalized_val or
