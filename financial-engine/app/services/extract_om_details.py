@@ -191,15 +191,20 @@ class OMScraperService:
            
            For each row in the DETAILED Rent Roll:
              - unit_number: The specific identifier (e.g. "101"). REQUIRED.
-             - unit_type: (e.g., "1BD/1BA")
-             - current_rent: Actual monthly rent.
-             - market_rent: Market/Pro Forma monthly rent.
+             - unit_type: Extract the EXACT text from the document (e.g. "Studio", "1 Bed"). Do not normalize to "1BD/1BA" unless that is what is written. IF VACANT: Append " - Vacant" to the unit type.
+             - current_rent: Actual monthly rent. If VACANT, this might be 0 or empty.
+             - market_rent: Market/Pro Forma monthly rent. Look for "Market", "Pro Forma", "Street Rent", "Potential Rent".
+             - stabilized_rent: Stabilized/Post-Renovation monthly rent. Look for "Stabilized", "Year 2", "Post-Reno".
              - unit_size: Sq Ft.
              - lease_start: Lease start date (e.g., "01/01/2023").
              - lease_end: Lease expiration date (e.g., "12/31/2024").
              - move_in_date: Date tenant moved in (if available).
              - count: MUST BE 1 for detailed rows.
              
+           VACANCY HANDLING:
+           - Check "Status", "Tenant Name", or "Notes" columns for "Vacant", "VAC", "Model", "Empty".
+           - If a unit is VACANT, ensure " - Vacant" is added to the 'unit_type' field (e.g. "1BD/1BA - Vacant").
+
            ONLY if a detailed rent roll is completely missing from the document, fallback to the Unit Mix summary.
         
         Return the data as a JSON object with this structure:
@@ -219,6 +224,7 @@ class OMScraperService:
                     "count": 1,
                     "current_rent": 1500,
                     "market_rent": 1800,
+                    "stabilized_rent": 1950,
                     "unit_size": 750,
                     "lease_start": "2023-01-01",
                     "lease_end": "2024-01-01",

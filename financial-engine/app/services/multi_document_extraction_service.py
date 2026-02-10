@@ -1417,6 +1417,7 @@ class MultiDocumentExtractionService:
                     "unit_type": item.get("unit_type", "Unknown"),
                     "current_rent": item.get("current_rent", 0),
                     "market_rent": item.get("market_rent", 0),
+                    "stabilized_rent": item.get("stabilized_rent", 0),
                     "unit_size": item.get("unit_size", 0),
                     "lease_start": item.get("lease_start", ""),
                     "lease_end": item.get("lease_end", ""),
@@ -1432,7 +1433,7 @@ class MultiDocumentExtractionService:
                     
                     items.append(NormalizedDataItem(
                         id=f"om_rr_{document_id}_{idx}",
-                        raw_text=f"OM Unit: {extracted_unit_number} - Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
+                        raw_text=f"OM Unit: {extracted_unit_number} - Type: {item.get('unit_type')} - Rent: {item.get('current_rent')} - Mkt: {item.get('market_rent')} - Stab: {item.get('stabilized_rent')}",
                         normalized_value="Rent Roll Item",
                         field_type="rent_roll_item",
                         category_group=CategoryGroup.REVENUE,
@@ -1450,7 +1451,7 @@ class MultiDocumentExtractionService:
                         
                         items.append(NormalizedDataItem(
                             id=f"om_rr_{document_id}_{idx}_{i}",
-                            raw_text=f"OM Unit Type: {item.get('unit_type')} - Rent: {item.get('current_rent')}",
+                            raw_text=f"OM Unit Type: {item.get('unit_type')} - Rent: {item.get('current_rent')} - Mkt: {item.get('market_rent')} - Stab: {item.get('stabilized_rent')}",
                             normalized_value="Rent Roll Item",
                             field_type="rent_roll_item",
                             category_group=CategoryGroup.REVENUE,
