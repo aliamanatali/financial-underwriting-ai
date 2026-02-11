@@ -76,6 +76,7 @@ class DocumentResponse(BaseModel):
     """Complete document information response."""
     document_id: str = Field(..., description="Unique document identifier")
     filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
     status: ProcessingStatus = Field(..., description="Current processing status")
     task_id: Optional[str] = Field(default=None, description="Celery task ID for tracking")
     task_status: Optional[str] = Field(default=None, description="Celery task status (PENDING, STARTED, SUCCESS, FAILURE)")
@@ -117,6 +118,7 @@ class Document(BaseModel):
     """Document entity stored in database."""
     document_id: str = Field(..., description="Unique document identifier")
     filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
     status: ProcessingStatus = Field(..., description="Current processing status")
     extracted_text: Optional[str] = Field(default=None, description="Extracted text content")
     metadata: Optional[DocumentMetadata] = Field(default=None, description="Document metadata")

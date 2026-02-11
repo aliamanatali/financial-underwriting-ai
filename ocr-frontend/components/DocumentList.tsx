@@ -190,8 +190,18 @@ export default function DocumentList({
 
   // Deduplicate documents by document_id to prevent React key warnings
   const uniqueDocuments = useMemo(() => {
+    // Filter out system files first
+    const filteredDocs = documents.filter(doc => {
+      const lowerName = doc.filename.toLowerCase();
+      return !lowerName.endsWith('thumbs.db') &&
+             !lowerName.endsWith('desktop.ini') &&
+             !lowerName.endsWith('.ds_store') &&
+             !doc.filename.startsWith('.') &&
+             !doc.filename.includes('__MACOSX');
+    });
+
     // Create a Map to deduplicate by document_id (keeps the last occurrence)
-    const docMap = new Map(documents.map((doc) => [doc.document_id, doc]));
+    const docMap = new Map(filteredDocs.map((doc) => [doc.document_id, doc]));
     // Convert back to array
     return Array.from(docMap.values());
   }, [documents]);

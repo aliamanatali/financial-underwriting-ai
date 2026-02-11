@@ -4,7 +4,7 @@ uvicorn[standard]
 python-multipart
 
 # Google Gemini AI
-google-generativeai
+google-genai
 
 # Pydantic for validation
 pydantic
@@ -37,3 +37,7 @@ redis>=5.0.0
 # Utilities
 python-dateutil
 fpdf2
+# Excel handling
+pandas
+openpyxl
+xlrd

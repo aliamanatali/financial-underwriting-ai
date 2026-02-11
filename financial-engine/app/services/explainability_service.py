@@ -11,10 +11,12 @@ from app.models.schemas import (
 )
 from typing import List, Dict, Any, Optional
 from app.services.gemini_client import GeminiClient
+from app.services.openai_client import OpenAIClient
 
 class ExplainabilityService:
-    def __init__(self, gemini_client: Optional[GeminiClient] = None):
+    def __init__(self, gemini_client: Optional[GeminiClient] = None, openai_service: Optional[OpenAIClient] = None):
         self.gemini_client = gemini_client
+        self.openai_service = openai_service
 
     async def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
         """
@@ -74,6 +76,7 @@ class ExplainabilityService:
                 
             # Prepare context
             context = {
+                "property_name": self.analysis.property_meta.property_name,
                 "address": self.analysis.property_meta.address,
                 "purchase_price": self.analysis.property_meta.purchase_price,
                 "units": self.analysis.property_meta.total_units,
@@ -101,7 +104,11 @@ class ExplainabilityService:
             - "Upside in rent" refers to the Loss to Lease (Current vs Market).
             """
             
-            if self.gemini_client:
+            if self.openai_service and self.openai_service.client:
+                # Use OpenAI for commentary
+                commentary = await self.openai_service.generate_content_async(prompt)
+                self.analysis.analyst_commentary = commentary
+            elif self.gemini_client:
                 # Use fast model for commentary
                 commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
                 self.analysis.analyst_commentary = commentary
@@ -764,7 +771,8 @@ class ExplainabilityService:
         # Dynamic near_campus determination
         # TODO: Integrate with geocoding API to determine proximity to universities
         address = self.analysis.property_meta.address or ""
-        near_campus = await self._determine_campus_proximity(address)
+        prop_name = self.analysis.property_meta.property_name or ""
+        near_campus = await self._determine_campus_proximity(address, prop_name)
         
         # Dynamic primary risks based on deal characteristics
         primary_risks = self._identify_primary_risks()
@@ -815,12 +823,13 @@ class ExplainabilityService:
             investment_checklist=checklist
         )
     
-    async def _determine_campus_proximity(self, address: str) -> str:
+    async def _determine_campus_proximity(self, address: str, property_name: str = "") -> str:
         """
         Determines if the property is near a university campus using LLM logic.
         
         Args:
             address: Property address string
+            property_name: Name of the property (optional, helps with identification)
             
         Returns:
             String indicating campus proximity status
@@ -828,10 +837,12 @@ class ExplainabilityService:
         if not address or address == "Unknown":
             return "Unknown (Address Not Provided)"
         
-        prompt = f"""
-        Act as a location analyst. Determine if the following address is within 6 blocks (approx 0.5 miles) of a major university campus.
+        prop_info = f'Property: "{property_name}"\n' if property_name else ""
         
-        Address: "{address}"
+        prompt = f"""
+        Act as a location analyst. Determine if the following property is within 6 blocks (approx 0.5 miles) of a major university campus.
+        
+        {prop_info}Address: "{address}"
         
         Instructions:
         1. Identify the nearest major university or college.
@@ -845,11 +856,13 @@ class ExplainabilityService:
         """
         
         try:
-            if not self.gemini_client:
+            if self.openai_service and self.openai_service.client:
+                response_text = await self.openai_service.generate_content_async(prompt)
+            elif self.gemini_client:
+                response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+            else:
                 # Fallback to simple keyword check if LLM not available
                 return "Unknown (LLM Unavailable)"
-                
-            response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
             
             # Simple parsing of the JSON response
             import json

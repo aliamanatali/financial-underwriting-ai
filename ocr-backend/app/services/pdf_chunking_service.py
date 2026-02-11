@@ -175,3 +175,70 @@ class PDFChunkingService:
         """
         chunk_size = chunk_size or self.chunk_size_pages
         return (page_count + chunk_size - 1) // chunk_size  # Ceiling division
+
+    def is_high_density(
+        self,
+        page_count: int,
+        file_size_mb: float,
+        density_threshold_mb: float = 0.5
+    ) -> bool:
+        """
+        Check if the PDF is high density (likely scanned/image-heavy).
+        
+        Args:
+            page_count: Number of pages
+            file_size_mb: File size in MB
+            density_threshold_mb: Threshold in MB per page (default: 0.5 MB)
+            
+        Returns:
+            True if high density
+        """
+        if page_count == 0:
+            return False
+            
+        avg_page_size = file_size_mb / page_count
+        return avg_page_size > density_threshold_mb
+
+    def get_optimal_chunk_strategy(
+        self,
+        page_count: int,
+        file_size_mb: float,
+        default_chunk_size: int,
+        page_threshold: int,
+        size_threshold_mb: float
+    ) -> Tuple[bool, int]:
+        """
+        Determine optimal chunking strategy including chunk size.
+        
+        Args:
+            page_count: Number of pages
+            file_size_mb: File size in MB
+            default_chunk_size: Configured default chunk size
+            page_threshold: Threshold for triggering chunking
+            size_threshold_mb: Size threshold for triggering chunking
+            
+        Returns:
+            Tuple of (should_chunk, chunk_size)
+        """
+        is_dense = self.is_high_density(page_count, file_size_mb)
+        
+        # Adjust thresholds for dense documents to trigger chunking earlier
+        effective_page_threshold = 5 if is_dense else page_threshold
+        effective_size_threshold = 10.0 if is_dense else size_threshold_mb
+        
+        should_chunk = (
+            page_count > effective_page_threshold or
+            file_size_mb > effective_size_threshold
+        )
+        
+        # Use smaller chunk size for dense documents to prevent timeouts
+        # Dense documents (scanned) need smaller chunks because OCR is computationally expensive
+        chunk_size = 5 if is_dense else default_chunk_size
+        
+        if is_dense and should_chunk:
+            logger.info(
+                f"High density document detected ({file_size_mb / page_count:.2f} MB/page). "
+                f"Using reduced chunk size of {chunk_size} pages."
+            )
+            
+        return should_chunk, chunk_size

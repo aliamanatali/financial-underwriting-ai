@@ -44,9 +44,13 @@ class StorageService:
         if self.use_gcp:
             self._init_gcp_storage()
         else:
-            logger.warning("GCP Cloud Storage not configured. Files will not be persisted.")
+            logger.warning("GCP Cloud Storage not configured. Using local file storage.")
             self.storage_client = None
             self.bucket = None
+            
+        # Initialize local storage directory
+        self.local_storage_dir = Path("data/storage")
+        self.local_storage_dir.mkdir(parents=True, exist_ok=True)
     
     def _init_gcp_storage(self):
         """Initialize GCP Cloud Storage client."""
@@ -307,7 +311,7 @@ class StorageService:
     
     async def delete_deal_package(self, package_id: str) -> bool:
         """
-        Delete deal package from MongoDB and associated files from GCP.
+        Delete deal package from MongoDB and associated files from GCP or local storage.
         
         Args:
             package_id: Package identifier
@@ -344,6 +348,17 @@ class StorageService:
             except Exception as e:
                 logger.error(f"Failed to delete deal package files from GCP: {str(e)}")
                 success = False
+        else:
+            # Delete files from local storage
+            try:
+                import shutil
+                package_dir = self.local_storage_dir / "deal-packages" / package_id
+                if package_dir.exists():
+                    shutil.rmtree(package_dir)
+                    logger.info(f"Deleted local deal package files: {package_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete local deal package files: {str(e)}")
+                success = False
         
         # 3. Memory cleanup
         if package_id in _memory_storage:
@@ -361,7 +376,7 @@ class StorageService:
         file_content: bytes
     ) -> Optional[str]:
         """
-        Save document file to GCP Cloud Storage.
+        Save document file to GCP Cloud Storage or local storage.
         
         Args:
             package_id: Package identifier
@@ -372,33 +387,45 @@ class StorageService:
         Returns:
             Storage path if saved successfully, None otherwise
         """
-        if not self.use_gcp:
-            logger.warning("GCP not configured. Document file not persisted.")
-            return None
+        blob_path = self._get_document_path(package_id, document_id, filename)
         
-        try:
-            blob_path = self._get_document_path(package_id, document_id, filename)
-            blob = self.bucket.blob(blob_path)
-            
-            # Determine content type
-            content_type = self._get_content_type(filename)
-            
-            # Upload file
-            blob.upload_from_file(
-                BytesIO(file_content),
-                content_type=content_type
-            )
-            
-            logger.info(f"Saved document file: {filename} -> {blob_path}")
-            return blob_path
-            
-        except Exception as e:
-            logger.error(f"Failed to save document file: {str(e)}")
-            return None
+        if self.use_gcp:
+            try:
+                blob = self.bucket.blob(blob_path)
+                
+                # Determine content type
+                content_type = self._get_content_type(filename)
+                
+                # Upload file
+                blob.upload_from_file(
+                    BytesIO(file_content),
+                    content_type=content_type
+                )
+                
+                logger.info(f"Saved document file to GCP: {filename} -> {blob_path}")
+                return blob_path
+                
+            except Exception as e:
+                logger.error(f"Failed to save document file to GCP: {str(e)}")
+                return None
+        else:
+            # Local Storage
+            try:
+                full_path = self.local_storage_dir / blob_path
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(full_path, "wb") as f:
+                    f.write(file_content)
+                    
+                logger.info(f"Saved document file locally: {filename} -> {full_path}")
+                return str(full_path)
+            except Exception as e:
+                logger.error(f"Failed to save document file locally: {str(e)}")
+                return None
     
     async def get_document_file(self, storage_path: str) -> Optional[bytes]:
         """
-        Retrieve document file from GCP Cloud Storage.
+        Retrieve document file from GCP Cloud Storage or local storage.
         
         Args:
             storage_path: Path to the file in storage
@@ -406,25 +433,41 @@ class StorageService:
         Returns:
             File content as bytes or None if not found
         """
-        if not self.use_gcp:
-            return None
-        
-        try:
-            blob = self.bucket.blob(storage_path)
-            
-            if not blob.exists():
-                logger.warning(f"Document file not found: {storage_path}")
+        if self.use_gcp:
+            try:
+                blob = self.bucket.blob(storage_path)
+                
+                if not blob.exists():
+                    logger.warning(f"Document file not found in GCP: {storage_path}")
+                    return None
+                
+                # Download file content
+                data = blob.download_as_bytes()
+                
+                logger.info(f"Retrieved document file from GCP: {storage_path}")
+                return data
+                
+            except Exception as e:
+                logger.error(f"Failed to retrieve document file from GCP: {str(e)}")
                 return None
-            
-            # Download file content
-            data = blob.download_as_bytes()
-            
-            logger.info(f"Retrieved document file: {storage_path}")
-            return data
-            
-        except Exception as e:
-            logger.error(f"Failed to retrieve document file: {str(e)}")
-            return None
+        else:
+            # Local Storage
+            try:
+                # storage_path is like "deal-packages/..."
+                full_path = self.local_storage_dir / storage_path
+                
+                if not full_path.exists():
+                    logger.warning(f"Document file not found locally: {full_path}")
+                    return None
+                    
+                with open(full_path, "rb") as f:
+                    data = f.read()
+                    
+                logger.info(f"Retrieved document file locally: {storage_path}")
+                return data
+            except Exception as e:
+                logger.error(f"Failed to retrieve document file locally: {str(e)}")
+                return None
     
     async def get_signed_url(self, storage_path: str, expiration_minutes: int = 15) -> Optional[str]:
         """
@@ -438,7 +481,9 @@ class StorageService:
             Signed URL string or None if failed
         """
         if not self.use_gcp:
-            logger.warning("Cannot generate signed URL: GCP not configured")
+            # For local storage, we can't generate a real signed URL that works externally.
+            # The API endpoint get_package_document_content serves content directly anyway.
+            # Returning None makes the frontend use the proxy endpoint.
             return None
         
         try:

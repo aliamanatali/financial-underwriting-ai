@@ -376,7 +376,7 @@ class ExcelService:
                 elif "insurance" in cat: t12_granular["Insurance"] += val
                 elif "reserve" in cat or "replacement" in cat: t12_granular["Reserves"] += val
                 elif "maintenance" in cat or "repair" in cat: t12_granular["R+M"] += val
-                elif "marketing" in cat: t12_granular["Marketing"] += val
+                elif "advertising" in cat.lower() or "marketing" in cat.lower(): t12_granular["Marketing"] += val
                 elif "admin" in cat: t12_granular["Admin"] += val
                 elif "business tax" in txt: t12_granular["Business Tax"] += val # Don't double count if we calculate it?
                 else:
@@ -1974,6 +1974,7 @@ class ExcelService:
             "Utilities": 0.0,
             "Contract": 0.0,
             "Admin": 0.0,
+            "Marketing": 0.0,
             "Taxes": 0.0,
             "Insurance": 0.0,
             "Reserves": 0.0
@@ -1989,6 +1990,7 @@ class ExcelService:
                  elif cat == "Utilities": expenses_map["Utilities"] += val
                  elif cat == "Contract Services": expenses_map["Contract"] += val
                  elif cat in ["General & Administrative", "Advertising & Marketing", "Leasing Fees", "Other Operating Expenses"]: expenses_map["Admin"] += val
+                 elif cat == "Advertising & Marketing": expenses_map["Marketing"] = val # Track separately if needed, but map to Admin usually
                  elif cat == "Real Estate Taxes": expenses_map["Taxes"] += val
                  elif cat == "Insurance": expenses_map["Insurance"] += val
                  elif cat == "Capital Reserves": expenses_map["Reserves"] += val

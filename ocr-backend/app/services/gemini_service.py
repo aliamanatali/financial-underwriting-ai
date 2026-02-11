@@ -6,7 +6,8 @@ import asyncio
 import random
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from google.api_core import retry
 from google.api_core.exceptions import DeadlineExceeded, ResourceExhausted, GoogleAPIError
 
@@ -33,12 +34,16 @@ def get_gemini_semaphore():
 
 
 # DocuMind Extraction Prompt - Zero Hallucination Document Digitization
-DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this PDF document with ZERO hallucination.
+DOCUMIND_EXTRACTION_PROMPT = """You are DocuMind, a high-fidelity document digitization system. Your task is to extract ABSOLUTELY EVERY piece of text and data from this document with ZERO hallucination.
 
 CORE PRINCIPLES:
 1. NO HALLUCINATION: Never invent, infer, or add information not present in the document
-2. NO SUMMARIZATION: Extract the full content, not summaries
-3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting
+2. NO SUMMARIZATION: Extract the full content, not summaries. Do not describe the document; transcribe it.
+3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting.
+4. SCANNED DOCUMENT HANDLING: If the document is scanned or an image, pay special attention to OCR accuracy.
+   - Extract text even if it is faint, blurry, or low contrast.
+   - Capture all handwritten notes, margin comments, and stamps.
+   - Transcribe all form fields (checkboxes, fill-in-the-blanks).
 
 OUTPUT FORMAT:
 For each page, use this structure:
@@ -47,14 +52,15 @@ For each page, use this structure:
 [Extract all visible text exactly as it appears]
 
 [Use these annotations for non-text elements:]
-- [Handwritten: text] - for handwritten content
-- [Stamp: "text"] - for stamps or seals
+- [Handwritten: text] - for handwritten content (signatures, margin notes, filled fields)
+- [Stamp: "text"] - for stamps, seals, or official marks
 - [Watermark: "text"] - for watermarks
 - [Image: description] - for images/logos
-- [Table: convert to markdown] - for tables
+- [Table: convert to markdown] - for tables (preserve structure row-by-row)
+- [Checkbox: X] - for marked checkboxes (use [Checkbox: ] for unmarked)
 - [Redaction box present] - for redacted content
-- [Uncertain: possible text] - for unclear content
-- [Illegible: X words] - for unreadable text
+- [Uncertain: possible text] - for unclear content (provide best guess)
+- [Illegible: X words] - for completely unreadable text
 
 [Page Confidence: High/Medium/Low | Justification: reason]
 
@@ -68,11 +74,12 @@ HANDWRITING DETECTED: Yes/No
 EXTRACTION NOTES: [any important notes]
 
 CRITICAL RULES:
-- Extract EVERYTHING visible, even if it seems redundant
-- Preserve exact formatting, line breaks, and spacing where meaningful
-- Never skip headers, footers, page numbers, or watermarks
-- If text is unclear, mark it as [Uncertain: ...] rather than guessing
-- Maintain the original document's structure and flow
+- Extract EVERYTHING visible: headers, footers, page numbers, watermarks, sidebar notes.
+- For TABLES: Ensure every cell is extracted. Do not summarize or skip empty cells.
+- For FORMS: Extract the label AND the filled value/checkbox.
+- If text is unclear, provide your best transcription marked as [Uncertain: ...].
+- Do not skip pages or sections. Process every inch of the document.
+- For scanned forms, ensure checkboxes and filled fields are correctly associated with their labels
 """
 
 
@@ -81,8 +88,8 @@ class GeminiService:
     
     def __init__(self):
         """Initialize Gemini service with API key."""
-        genai.configure(api_key=settings.gemini_api_key)
-        self.model = genai.GenerativeModel(settings.gemini_model)
+        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.model_name = settings.gemini_model
         self.timeout = settings.gemini_timeout_seconds
         self.max_retries = settings.gemini_max_retries
         self.semaphore = get_gemini_semaphore()
@@ -108,22 +115,20 @@ class GeminiService:
         try:
             logger.info("Starting PDF text extraction with Gemini")
             
-            # Convert PDF to base64
-            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
-            
-            # Create PDF part for Gemini
-            pdf_part = {
-                'mime_type': 'application/pdf',
-                'data': pdf_base64
-            }
+            # Create parts for multimodal input
+            parts = [
+                types.Part.from_bytes(data=pdf_data, mime_type="application/pdf"),
+                types.Part.from_text(text=DOCUMIND_EXTRACTION_PROMPT)
+            ]
             
             # Generate content with Gemini
-            response = self.model.generate_content(
-                [pdf_part, DOCUMIND_EXTRACTION_PROMPT],
-                generation_config={
-                    'temperature': settings.gemini_temperature,
-                    'max_output_tokens': settings.gemini_max_output_tokens
-                }
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=settings.gemini_temperature,
+                    max_output_tokens=settings.gemini_max_output_tokens
+                )
             )
             
             # Extract text from response
@@ -152,6 +157,64 @@ class GeminiService:
             )
         except Exception as e:
             logger.error(f"Failed to extract PDF content: {str(e)}")
+            raise
+
+    async def extract_image_content(self, image_data: bytes, mime_type: str) -> DocumentExtractionResult:
+        """
+        Extract text content from an image using Gemini API.
+        
+        Args:
+            image_data: Image file content as bytes
+            mime_type: Mime type of the image
+            
+        Returns:
+            DocumentExtractionResult with extracted text and metadata
+            
+        Raises:
+            Exception: If extraction fails
+        """
+        try:
+            logger.info(f"Starting image text extraction with Gemini ({mime_type})")
+            
+            # Create parts for multimodal input
+            parts = [
+                types.Part.from_bytes(data=image_data, mime_type=mime_type),
+                types.Part.from_text(text=DOCUMIND_EXTRACTION_PROMPT)
+            ]
+            
+            # Generate content with Gemini
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    temperature=settings.gemini_temperature,
+                    max_output_tokens=settings.gemini_max_output_tokens
+                )
+            )
+            
+            # Extract text from response
+            extracted_text = response.text if response.text else ""
+            
+            # Parse metadata from extracted text
+            metadata = self._parse_extraction_metadata(extracted_text, len(image_data))
+            # Force page count to 1 for images if not detected correctly
+            if metadata.page_count == 0:
+                metadata.page_count = 1
+            
+            logger.info(
+                f"Successfully extracted text from image "
+                f"with {metadata.quality} confidence"
+            )
+            
+            return DocumentExtractionResult(
+                text=extracted_text,
+                page_count=metadata.page_count,
+                confidence=metadata.quality,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to extract image content: {str(e)}")
             raise
     
     async def extract_pdf_chunk(
@@ -324,27 +387,34 @@ class GeminiService:
     
     async def _generate_content_async(self, pdf_part: dict, prompt: str):
         """
-        Generate content asynchronously (wrapper for sync Gemini API).
+        Generate content asynchronously.
         
         Args:
-            pdf_part: PDF part dictionary for Gemini
+            pdf_part: PDF part dictionary for Gemini (legacy format)
             prompt: Extraction prompt
             
         Returns:
             Gemini API response
         """
-        # Run the synchronous Gemini API call in a thread pool
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.model.generate_content(
-                [pdf_part, prompt],
-                generation_config={
-                    'temperature': settings.gemini_temperature,
-                    'max_output_tokens': settings.gemini_max_output_tokens
-                }
+        # Convert legacy pdf_part format to new API format
+        parts = [
+            types.Part.from_bytes(
+                data=base64.b64decode(pdf_part['data']),
+                mime_type=pdf_part['mime_type']
+            ),
+            types.Part.from_text(text=prompt)
+        ]
+        
+        # Use async API
+        response = await self.client.aio.models.generate_content(
+            model=self.model_name,
+            contents=parts,
+            config=types.GenerateContentConfig(
+                temperature=settings.gemini_temperature,
+                max_output_tokens=settings.gemini_max_output_tokens
             )
         )
+        return response
     
     def _create_chunk_prompt(
         self,
@@ -363,14 +433,18 @@ class GeminiService:
         Returns:
             Customized extraction prompt
         """
-        return f"""You are DocuMind, a high-fidelity document digitization system. Your task is to extract ALL text from this PDF chunk with ZERO hallucination.
+        return f"""You are DocuMind, a high-fidelity document digitization system. Your task is to extract ABSOLUTELY EVERY piece of text and data from this PDF chunk with ZERO hallucination.
 
 THIS IS {chunk_info.upper()} (Pages {start_page}-{end_page})
 
 CORE PRINCIPLES:
 1. NO HALLUCINATION: Never invent, infer, or add information not present in the document
-2. NO SUMMARIZATION: Extract the full content, not summaries
-3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting
+2. NO SUMMARIZATION: Extract the full content, not summaries. Do not describe the document; transcribe it.
+3. PRESERVE FIDELITY: Maintain original spelling, punctuation, casing, and formatting.
+4. SCANNED DOCUMENT HANDLING: If the document is scanned or an image, pay special attention to OCR accuracy.
+   - Extract text even if it is faint, blurry, or low contrast.
+   - Capture all handwritten notes, margin comments, and stamps.
+   - Transcribe all form fields (checkboxes, fill-in-the-blanks).
 
 OUTPUT FORMAT:
 For each page, use this structure:
@@ -379,14 +453,15 @@ For each page, use this structure:
 [Extract all visible text exactly as it appears]
 
 [Use these annotations for non-text elements:]
-- [Handwritten: text] - for handwritten content
-- [Stamp: "text"] - for stamps or seals
+- [Handwritten: text] - for handwritten content (signatures, margin notes, filled fields)
+- [Stamp: "text"] - for stamps, seals, or official marks
 - [Watermark: "text"] - for watermarks
 - [Image: description] - for images/logos
-- [Table: convert to markdown] - for tables
+- [Table: convert to markdown] - for tables (preserve structure row-by-row)
+- [Checkbox: X] - for marked checkboxes (use [Checkbox: ] for unmarked)
 - [Redaction box present] - for redacted content
-- [Uncertain: possible text] - for unclear content
-- [Illegible: X words] - for unreadable text
+- [Uncertain: possible text] - for unclear content (provide best guess)
+- [Illegible: X words] - for completely unreadable text
 
 [Page Confidence: High/Medium/Low | Justification: reason]
 
@@ -402,11 +477,12 @@ HANDWRITING DETECTED: Yes/No
 EXTRACTION NOTES: [any important notes]
 
 CRITICAL RULES:
-- Extract EVERYTHING visible, even if it seems redundant
-- Preserve exact formatting, line breaks, and spacing where meaningful
-- Never skip headers, footers, page numbers, or watermarks
-- If text is unclear, mark it as [Uncertain: ...] rather than guessing
-- Maintain the original document's structure and flow
+- Extract EVERYTHING visible: headers, footers, page numbers, watermarks, sidebar notes.
+- For TABLES: Ensure every cell is extracted. Do not summarize or skip empty cells.
+- For FORMS: Extract the label AND the filled value/checkbox.
+- If text is unclear, provide your best transcription marked as [Uncertain: ...].
+- Do not skip pages or sections. Process every inch of the document.
+- For scanned forms, ensure checkboxes and filled fields are correctly associated with their labels
 """
     
     def _parse_extraction_metadata(
@@ -507,13 +583,12 @@ CRITICAL RULES:
             List of embedding values
         """
         try:
-            result = genai.embed_content(
+            result = await self.client.aio.models.embed_content(
                 model=settings.gemini_embedding_model,
-                content=text,
-                task_type="retrieval_document"
+                content=text
             )
             
-            embedding = result['embedding']
+            embedding = result.values
             
             # Matryoshka truncation if needed
             if dimensions < len(embedding):

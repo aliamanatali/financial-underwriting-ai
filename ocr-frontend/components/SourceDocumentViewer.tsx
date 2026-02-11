@@ -7,7 +7,9 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 // Set worker source
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+if (typeof window !== 'undefined') {
+  pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+}
 
 // Global cache for document blobs to prevent re-fetching
 const blobCache = new Map<string, Blob>();
@@ -78,6 +80,9 @@ export default function SourceDocumentViewer({
         let url = "";
         if (packageId) {
           const { signed_url } = await apiClient.getDocumentContentUrl(packageId, documentId);
+          if (!signed_url) {
+            throw new Error("Could not retrieve document URL");
+          }
           // Use local proxy to bypass CORS issues with GCS
           url = `/api/proxy-pdf?url=${encodeURIComponent(signed_url)}`;
         } else {

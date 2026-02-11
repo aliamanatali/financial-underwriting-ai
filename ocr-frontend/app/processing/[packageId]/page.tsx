@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import LoginPage from "@/components/LoginPage";
+import FileOrganization, { DocumentFile } from "@/components/FileOrganization";
 import { apiClient } from "@/lib/api";
 import { FinancialAnalysisProgress, DealPackage } from "@/lib/types";
 
@@ -29,6 +30,8 @@ function ProcessingContent() {
   const [missingDocs, setMissingDocs] = useState<string[]>([]);
   const [isUploadingMissing, setIsUploadingMissing] = useState(false);
   const [activeFiles, setActiveFiles] = useState<string[]>([]);
+  const [isReviewing, setIsReviewing] = useState(true);
+  const [startProcessing, setStartProcessing] = useState(false);
   const missingFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSidebar = () => {
@@ -51,70 +54,116 @@ function ProcessingContent() {
     }
   };
 
-  useEffect(() => {
-    // Fetch package details
-    const fetchPackage = async () => {
-      try {
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}`
-        );
-        if (response.ok) {
-          const data = await response.json();
-          setDealPackage(data);
+  // Fetch package details
+  const fetchPackage = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}?t=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        console.log("Fetched package data for processing:", data);
+        setDealPackage(data);
+        
+        // Build categories from documents
+        const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => {
+          let docArray = Array.isArray(docs) ? docs : [];
           
-          // Build categories from documents
-          const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => {
-            const docArray = Array.isArray(docs) ? docs : [];
-            return {
-              name: type,
-              count: docArray.length,
-              completedCount: 0,
-              status: 'queued' as const,
-              fileNames: docArray.map((d: any) => d.filename)
-            };
+          // Filter out system files and unsupported types that won't be processed
+          // This prevents "0/1 processed" for ignored files like Thumbs.db
+          docArray = docArray.filter((d: any) => {
+             const lowerName = d.filename.toLowerCase();
+             return !lowerName.endsWith('thumbs.db') &&
+                    !lowerName.endsWith('desktop.ini') &&
+                    !lowerName.endsWith('.ds_store') &&
+                    !d.filename.startsWith('.') &&
+                    !d.filename.includes('__MACOSX');
+          });
+
+          return {
+            name: type,
+            count: docArray.length,
+            completedCount: 0,
+            status: 'queued' as const,
+            fileNames: docArray.map((d: any) => d.filename)
+          };
+        });
+        setCategories(cats);
+        
+        // Check for missing critical documents
+        const requiredDocs = ["Offering Memorandum", "Rent Roll", "Financials"];
+        const missing = requiredDocs.filter(req => {
+            const hasDocs = Object.entries(data.documents).some(([key, docs]) =>
+                key.includes(req) && Array.isArray(docs) && docs.length > 0
+            );
+            return !hasDocs;
+        });
+        
+        if (missing.length > 0) {
+            setMissingDocs(missing);
+        }
+
+        // Check if package is already normalized
+        if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
+          // Note: If in_progress, we might want to attach to stream instead of redirecting
+          // But if it's "completed", we redirect.
+          if (data.normalization_status === "completed") {
+              console.log("Package already normalized, redirecting to analysis page...");
+              router.push(`/analysis/${packageId}`);
+              return true; 
+          }
+          // If in progress, skip review and go straight to processing
+          setIsReviewing(false);
+          setStartProcessing(true);
+        } else if (!startProcessing) {
+          // Pending status - show review screen
+          setIsReviewing(true);
+        }
+        
+        return false; // Signal to continue
+      }
+    } catch (err) {
+      console.error("Failed to fetch package:", err);
+    }
+    return false;
+  }, [packageId, router, startProcessing]);
+
+  useEffect(() => {
+    if (!dealPackage) {
+        fetchPackage();
+    }
+  }, [dealPackage, fetchPackage]);
+
+  const handleReviewComplete = async (updatedFiles?: Record<string, DocumentFile[]>) => {
+      // Force refresh of package data before starting
+      await fetchPackage();
+
+      // If we have updated files from the review component, update categories to reflect user's changes
+      // This ensures the summary matches exactly what the user just approved, overriding any potential API lag
+      if (updatedFiles) {
+          console.log("Using locally updated files for categories summary");
+          const cats: DocumentCategory[] = Object.entries(updatedFiles).map(([type, docs]) => {
+              return {
+                  name: type,
+                  count: docs.length,
+                  completedCount: 0,
+                  status: 'queued' as const,
+                  fileNames: docs.map(d => d.name)
+              };
           });
           setCategories(cats);
-          
-          // Check for missing critical documents
-          const requiredDocs = ["Offering Memorandum", "Rent Roll", "Financials"];
-          const missing = requiredDocs.filter(req => {
-              const hasDocs = Object.entries(data.documents).some(([key, docs]) =>
-                  key.includes(req) && Array.isArray(docs) && docs.length > 0
-              );
-              return !hasDocs;
-          });
-          
-          if (missing.length > 0) {
-              setMissingDocs(missing);
-              return true; // Return true to signal "stop/handled"
-          }
-
-          // Check if package is already normalized
-          if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
-            // Note: If in_progress, we might want to attach to stream instead of redirecting
-            // But if it's "completed", we redirect.
-            if (data.normalization_status === "completed") {
-                console.log("Package already normalized, redirecting to analysis page...");
-                router.push(`/analysis/${packageId}`);
-                return true; 
-            }
-          }
-          
-          return false; // Signal to continue
-        }
-      } catch (err) {
-        console.error("Failed to fetch package:", err);
       }
-      return false;
-    };
 
+      setIsReviewing(false);
+      setStartProcessing(true);
+  };
+
+  useEffect(() => {
     // Start normalization and progress tracking
     const startNormalization = async () => {
-      // First check if already normalized
-      const shouldSkip = await fetchPackage();
-      if (shouldSkip) {
-        return; 
-      }
+      if (!startProcessing) return;
+
       let hasRedirected = false;
       let eventSource: EventSource | null = null;
       
@@ -220,18 +269,21 @@ function ProcessingContent() {
       };
     };
 
-    // startNormalization is async, so we can't return its result directly to useEffect
-    // But we can keep track of the cleanup function it generates
-    let cleanupFunc: (() => void) | undefined;
-    
-    startNormalization().then(cleanup => {
-        cleanupFunc = cleanup;
-    });
-    
-    return () => {
-        if (cleanupFunc) cleanupFunc();
-    };
-  }, [packageId, router]);
+    // Only start if explicitly requested
+    if (startProcessing) {
+        // startNormalization is async, so we can't return its result directly to useEffect
+        // But we can keep track of the cleanup function it generates
+        let cleanupFunc: (() => void) | undefined;
+        
+        startNormalization().then(cleanup => {
+            cleanupFunc = cleanup;
+        });
+        
+        return () => {
+            if (cleanupFunc) cleanupFunc();
+        };
+    }
+  }, [packageId, router, startProcessing]);
 
   return (
     <div
@@ -314,76 +366,84 @@ function ProcessingContent() {
         <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar">
           <div className="max-w-5xl mx-auto flex flex-col gap-8">
             
-            {/* Context Header with ID */}
-            <div className="flex border-neutral-200 border-b pb-6 items-end justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
-                  Data Extraction & Categorization
-                </h2>
-                <p className="text-sm text-neutral-500">Extracting and categorizing information from your deal package in parallel.</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wide">Package ID</span>
-                <span className="text-xs font-mono text-neutral-600 bg-white border border-neutral-200 px-2 py-1 rounded select-all cursor-text">{packageId}</span>
-              </div>
-            </div>
-
-            {/* Missing Documents Alert */}
-            {missingDocs.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {isReviewing && dealPackage ? (
+                <FileOrganization
+                    packageId={packageId}
+                    initialPackage={dealPackage}
+                    onComplete={handleReviewComplete}
+                />
+            ) : (
+                <>
+                {/* Context Header with ID */}
+                <div className="flex border-neutral-200 border-b pb-6 items-end justify-between">
                 <div>
-                  <h3 className="text-amber-800 font-semibold flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                      <line x1="12" y1="9" x2="12" y2="13"></line>
-                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                    </svg>
-                    Missing Required Information
-                  </h3>
-                  <p className="text-amber-700 text-sm mt-1">
-                    To ensure accurate analysis, please upload the following documents:
-                    <span className="font-semibold ml-1">{missingDocs.join(", ")}</span>
-                  </p>
+                    <h2 className="text-xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
+                    Data Extraction & Categorization
+                    </h2>
+                    <p className="text-sm text-neutral-500">Extracting and categorizing information from your deal package in parallel.</p>
                 </div>
-                <div>
-                  <input
-                    type="file"
-                    multiple
-                    ref={missingFileInputRef}
-                    className="hidden"
-                    onChange={handleMissingFileSelect}
-                    disabled={isUploadingMissing}
-                  />
-                  <button
-                    onClick={() => missingFileInputRef.current?.click()}
-                    disabled={isUploadingMissing}
-                    className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center gap-2"
-                  >
-                    {isUploadingMissing ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Uploading...
-                      </>
-                    ) : (
-                      <>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                          <polyline points="17 8 12 3 7 8"></polyline>
-                          <line x1="12" x2="12" y1="3" y2="15"></line>
-                        </svg>
-                        Upload Files
-                      </>
-                    )}
-                  </button>
+                <div className="flex flex-col items-end gap-1">
+                    <span className="text-[10px] uppercase font-semibold text-neutral-400 tracking-wide">Package ID</span>
+                    <span className="text-xs font-mono text-neutral-600 bg-white border border-neutral-200 px-2 py-1 rounded select-all cursor-text">{packageId}</span>
                 </div>
-              </div>
-            )}
+                </div>
 
-            {/* Content Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Missing Documents Alert */}
+                {missingDocs.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div>
+                    <h3 className="text-amber-800 font-semibold flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        Missing Required Information
+                    </h3>
+                    <p className="text-amber-700 text-sm mt-1">
+                        To ensure accurate analysis, please upload the following documents:
+                        <span className="font-semibold ml-1">{missingDocs.join(", ")}</span>
+                    </p>
+                    </div>
+                    <div>
+                    <input
+                        type="file"
+                        multiple
+                        ref={missingFileInputRef}
+                        className="hidden"
+                        onChange={handleMissingFileSelect}
+                        disabled={isUploadingMissing}
+                    />
+                    <button
+                        onClick={() => missingFileInputRef.current?.click()}
+                        disabled={isUploadingMissing}
+                        className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center gap-2"
+                    >
+                        {isUploadingMissing ? (
+                        <>
+                            <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Uploading...
+                        </>
+                        ) : (
+                        <>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" x2="12" y1="3" y2="15"></line>
+                            </svg>
+                            Upload Files
+                        </>
+                        )}
+                    </button>
+                    </div>
+                </div>
+                )}
+
+                {/* Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
               {/* Left: Progress Card */}
               <div className="lg:col-span-5 flex flex-col gap-6">
@@ -405,14 +465,18 @@ function ProcessingContent() {
 
                   <div className="space-y-4">
                     {/* Status Message */}
-                    {(progress.percentage >= 80 || progress.message?.toLowerCase().includes('generat') || progress.message?.toLowerCase().includes('analyz')) && progress.percentage < 100 && (
+                    {progress.percentage >= 60 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-semibold text-neutral-900 uppercase tracking-wide">Status</span>
                         <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-100 rounded-lg">
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600 animate-spin">
                             <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
                           </svg>
-                          <span className="text-xs font-medium text-blue-700">Generating Financial Report...</span>
+                          <span className="text-xs font-medium text-blue-700">
+                            {progress.percentage >= 100 ? "Finalizing Report..." :
+                             progress.percentage >= 80 ? "Generating Financial Report..." :
+                             "Normalizing Extracted Data..."}
+                          </span>
                         </div>
                       </div>
                     )}
@@ -477,7 +541,8 @@ function ProcessingContent() {
                     {categories.map((category) => (
                       <div
                         key={category.name}
-                        className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors ${
+                        title={category.fileNames.join('\n')}
+                        className={`px-6 py-3.5 flex items-center justify-between group hover:bg-neutral-50 transition-colors cursor-help ${
                           category.status === 'processing' ? 'bg-neutral-50/80 border-l-2 border-l-neutral-900' : ''
                         } ${category.status === 'queued' ? 'opacity-60' : ''}`}
                       >
@@ -539,6 +604,8 @@ function ProcessingContent() {
               </div>
 
             </div>
+            </>
+            )}
             
             <div className="h-8"></div>
           </div>

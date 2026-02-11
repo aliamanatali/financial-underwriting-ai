@@ -271,5 +271,3 @@ async def update_analysis(
     
     logger.info(f"Analysis updated successfully for {document_id}")
     return {"status": "success", "message": "Analysis updated"}
-    # Return a dictionary created from the model, ensuring correct field names
-    return analysis

@@ -3,6 +3,7 @@ import zipfile
 import io
 import os
 import uuid
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
@@ -10,6 +11,7 @@ from typing import Optional, Dict, Any, Tuple, List
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
 from app.services.classification_service import ClassificationService
+from app.services.batch_logging_service import BatchLoggingService
 # Avoid circular import if ProgressService is needed only for typing
 # But we need it for execution. We'll import inside the method if needed or use Any
 from app.services.progress_service import ProgressService
@@ -86,6 +88,14 @@ FOLDER_MAPPING = {
     "gas": DocumentType.UTILITIES,
     "sewer": DocumentType.UTILITIES,
     "trash": DocumentType.UTILITIES,
+
+    # Images
+    "images": DocumentType.IMAGES,
+    "image": DocumentType.IMAGES,
+    "photos": DocumentType.IMAGES,
+    "photo": DocumentType.IMAGES,
+    "pictures": DocumentType.IMAGES,
+    "picture": DocumentType.IMAGES,
 }
 
 
@@ -128,18 +138,22 @@ class ZipProcessingService:
         zip_path: str,
         property_name: str,
         progress_service: Optional[ProgressService] = None,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        classification_service: Optional[ClassificationService] = None,
+        batch_logging_service: Optional[BatchLoggingService] = None
     ) -> Tuple[DealPackage, Dict[str, Any]]:
         """
         Process a ZIP file from disk, extract documents, creating a DealPackage,
         and saving files to storage.
         """
-        # This legacy method can now delegate to a more generic file processor if needed,
-        # but for now we keep it as is for strict backward compatibility with existing structured ZIPs,
-        # or we could enhance it to use the classifier fallback.
-        # For this update, we will simply leave it as is to ensure stability,
-        # and implement the new smart upload logic in process_smart_upload.
-        return await self._process_zip_internal(zip_path, property_name, progress_service, task_id)
+        return await self._process_zip_internal(
+            zip_path,
+            property_name,
+            progress_service,
+            task_id,
+            classification_service,
+            batch_logging_service
+        )
 
     def _should_skip_file(self, file_path: str) -> bool:
         """Check if file should be skipped (hidden files, MACOSX artifacts, etc)."""
@@ -153,6 +167,10 @@ class ZipProcessingService:
         # Skip macOS resource forks
         if "__MACOSX" in file_path:
             return True
+
+        # Skip Windows system files and common junk
+        if basename.lower() in ['thumbs.db', 'desktop.ini', 'icon\r', '.ds_store']:
+            return True
             
         return False
 
@@ -162,7 +180,8 @@ class ZipProcessingService:
         property_name: str,
         progress_service: Optional[ProgressService] = None,
         task_id: Optional[str] = None,
-        classification_service: Optional[ClassificationService] = None
+        classification_service: Optional[ClassificationService] = None,
+        batch_logging_service: Optional[BatchLoggingService] = None
     ) -> Tuple[DealPackage, Dict[str, Any]]:
         if progress_service and task_id:
             await progress_service.update_progress(task_id, 0, "Initializing ZIP processing...")
@@ -185,6 +204,7 @@ class ZipProcessingService:
         files_skipped = 0
         empty_folders = []
         file_cache_data = {}
+        seen_hashes = set()
         
         # List to hold files that need classification
         files_to_classify: List[Dict[str, Any]] = []
@@ -201,6 +221,34 @@ class ZipProcessingService:
                         continue
                     
                     filename = os.path.basename(file_path)
+
+                    # --- Check for "Dublicate" or "Duplicate" in filename ---
+                    if "duplicate" in filename.lower() or "dublicate" in filename.lower():
+                        logger.warning(f"Skipping duplicate file: {filename}")
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(filename, "Skipped", 0.0, "duplicate_skipped")
+                        files_skipped += 1
+                        continue
+
+                    # Read content to check for content duplication
+                    try:
+                        file_content = zip_ref.read(file_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to read file {filename}: {e}")
+                        continue
+
+                    if len(file_content) == 0:
+                        continue
+                        
+                    # Calculate hash
+                    file_hash = hashlib.md5(file_content).hexdigest()
+                    if file_hash in seen_hashes:
+                        logger.warning(f"Skipping content duplicate file: {filename}")
+                        if batch_logging_service:
+                            batch_logging_service.log_classification(filename, "Skipped", 0.0, "content_duplicate_skipped")
+                        files_skipped += 1
+                        continue
+                    seen_hashes.add(file_hash)
                     
                     # Try to determine type from folder structure first
                     path_parts = Path(file_path).parts
@@ -219,10 +267,6 @@ class ZipProcessingService:
                     # If not found in folder, and we have a classification service,
                     # we will queue it for classification
                     if not doc_type and classification_service:
-                         # Read content for classification
-                        file_content = zip_ref.read(file_path)
-                        if len(file_content) == 0: continue
-                        
                         files_to_classify.append({
                             "filename": filename,
                             "content": file_content,
@@ -237,13 +281,12 @@ class ZipProcessingService:
                         
                         if not doc_type:
                             logger.warning(f"Could not determine document type for file: {file_path}")
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(filename, "Skipped", 0.0, "unclassified_skipped")
                             files_skipped += 1
                             continue
 
                     # If we got here, we have a doc_type from folder structure
-                    file_content = zip_ref.read(file_path)
-                    if len(file_content) == 0: continue
-
                     await self._add_file_to_package(
                         package, package_id, filename, doc_type, file_content, now, file_cache_data
                     )
@@ -256,11 +299,17 @@ class ZipProcessingService:
                 # Batch classify remaining files if any
                 if files_to_classify and classification_service:
                     if progress_service and task_id:
-                        await progress_service.update_progress(task_id, 70, f"Classifying files...")
+                        await progress_service.update_progress(task_id, 70, f"Classifying {len(files_to_classify)} files based on content...")
                     
-                    # Extract filenames for batch classification
-                    filenames = [f["filename"] for f in files_to_classify]
-                    classification_results = await classification_service.classify_files_batch(filenames)
+                    # Prepare files with content for content-based classification
+                    files_with_content = [(f["filename"], f["content"]) for f in files_to_classify]
+                    classification_results = await classification_service.classify_files_batch(
+                        files=files_with_content,
+                        progress_service=progress_service,
+                        task_id=task_id,
+                        progress_start=70,
+                        progress_end=95
+                    )
                     
                     for f_item in files_to_classify:
                         fname = f_item["filename"]
@@ -271,8 +320,12 @@ class ZipProcessingService:
                                 package, package_id, fname, doc_type, f_item["content"], now, file_cache_data
                             )
                             files_processed += 1
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(fname, doc_type.value, 1.0, "classified_success")
                         else:
-                            logger.warning(f"Could not classify file: {fname}")
+                            logger.warning(f"Could not classify file based on content: {fname}")
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(fname, "Unknown", 0.0, "classification_failed")
                             files_skipped += 1
 
                 # Check for empty folders
@@ -358,11 +411,19 @@ class ZipProcessingService:
         # 1. separate files into known (by folder/path) and unknown (need classification)
         files_to_classify = []
         known_files = [] # list of (filename, content, doc_type)
+        seen_hashes = set()
         
         for filename, content in files:
             # Check for skip first (in case not filtered upstream)
             if self._should_skip_file(filename):
                 continue
+            
+            # Content deduplication
+            file_hash = hashlib.md5(content).hexdigest()
+            if file_hash in seen_hashes:
+                 logger.warning(f"Skipping duplicate file in smart upload: {filename}")
+                 continue
+            seen_hashes.add(file_hash)
 
             # Try to determine type from folder structure first
             path_parts = Path(filename).parts
@@ -381,13 +442,19 @@ class ZipProcessingService:
             else:
                 files_to_classify.append((filename, content))
 
-        # 2. Classify unknown files
+        # 2. Classify unknown files using content-based classification
         if files_to_classify:
             if progress_service and task_id:
-                await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} loose files...")
+                await progress_service.update_progress(task_id, 20, f"Classifying {len(files_to_classify)} files based on content...")
                 
-            filenames_to_classify = [f[0] for f in files_to_classify]
-            classifications = await classification_service.classify_files_batch(filenames_to_classify)
+            # Pass files with content for content-based classification
+            classifications = await classification_service.classify_files_batch(
+                files=files_to_classify,
+                progress_service=progress_service,
+                task_id=task_id,
+                progress_start=20,
+                progress_end=90
+            )
         else:
             classifications = {}
 
@@ -451,11 +518,19 @@ class ZipProcessingService:
         # 1. separate files into known (by folder/path) and unknown (need classification)
         files_to_classify = []
         known_files = [] # list of (filename, content, doc_type)
+        seen_hashes = set()
         
         for filename, content in files:
             # Check for skip first
             if self._should_skip_file(filename):
                 continue
+
+            # Content deduplication
+            file_hash = hashlib.md5(content).hexdigest()
+            if file_hash in seen_hashes:
+                 logger.warning(f"Skipping duplicate file in add_files: {filename}")
+                 continue
+            seen_hashes.add(file_hash)
 
             # Try to determine type from folder structure first
             path_parts = Path(filename).parts
@@ -474,10 +549,10 @@ class ZipProcessingService:
             else:
                 files_to_classify.append((filename, content))
 
-        # 2. Classify unknown files
+        # 2. Classify unknown files using content-based classification
         if files_to_classify and classification_service:
-            filenames_to_classify = [f[0] for f in files_to_classify]
-            classifications = await classification_service.classify_files_batch(filenames_to_classify)
+            # Pass files with content for content-based classification
+            classifications = await classification_service.classify_files_batch(files=files_to_classify)
         else:
             classifications = {}
 

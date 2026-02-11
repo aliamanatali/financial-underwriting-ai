@@ -44,10 +44,19 @@ async def upload_document(
         DocumentUploadResponse with document_id, task_id, and status
     """
     # Validate file type
-    if file.content_type != "application/pdf":
+    allowed_types = [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/tiff",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel"
+    ]
+    if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported"
+            detail=f"Unsupported file type. Allowed types: {', '.join(allowed_types)}"
         )
     
     try:
@@ -63,7 +72,8 @@ async def upload_document(
         # Upload document and queue Celery task
         response = await document_service.upload_document(
             file_data=file_data,
-            filename=file.filename or "document.pdf"
+            filename=file.filename or "document.pdf",
+            mime_type=file.content_type
         )
         
         logger.info(f"Document uploaded and queued: {response.document_id}, task_id: {response.task_id}")
@@ -288,6 +298,7 @@ async def get_document_status(document_id: str) -> Dict[str, Any]:
         
         return {
             "document_id": document.document_id,
+            "mime_type": document.mime_type if hasattr(document, "mime_type") else "application/pdf",
             "status": document.status.value,
             "progress_percentage": document.progress_percentage,
             "task": task_info,

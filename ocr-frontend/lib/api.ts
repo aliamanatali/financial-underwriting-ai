@@ -154,9 +154,15 @@ class ApiClient {
     // No content expected on successful deletion
   }
 
-  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{ signed_url: string }> {
+  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{
+    signed_url?: string,
+    content?: string,
+    encoding?: string,
+    content_type?: string,
+    filename?: string
+  }> {
     const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/content`);
-    return this.handleResponse<{ signed_url: string }>(response);
+    return this.handleResponse(response);
   }
 
   // --- Financial Engine Methods ---
@@ -228,6 +234,26 @@ class ApiClient {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
       throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
+  async updateDocumentCategory(packageId: string, documentId: string, newCategory: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/category?new_category=${encodeURIComponent(newCategory)}`, {
+      method: 'PUT',
+    });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
+  async deleteDocumentFromPackage(packageId: string, documentId: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
   }
 
