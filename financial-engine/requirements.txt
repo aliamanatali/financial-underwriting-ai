@@ -18,3 +18,4 @@ redis
 PyPDF2
 xlrd
 tenacity
+openai
