@@ -41,50 +41,80 @@ class ApiClient {
     file: File,
     onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
   ): Promise<UploadResponse> {
-    const xhr = new XMLHttpRequest();
+    try {
+      // Use fallback mime type if empty
+      const mimeType = file.type || 'application/pdf';
 
-    if (onProgress) {
-      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          onProgress({
-            loaded: e.loaded,
-            total: e.total,
-            percentage: percentComplete,
+      // 1. Get Signed URL
+      const urlResponse = await fetch(`${OCR_API_URL}/api/documents/upload-url?filename=${encodeURIComponent(file.name)}&mime_type=${encodeURIComponent(mimeType)}`, {
+        method: 'POST',
+      });
+      
+      if (!urlResponse.ok) {
+        throw new Error('Failed to get upload URL');
+      }
+      
+      const { upload_url, document_id, storage_path } = await urlResponse.json();
+      
+      // 2. Upload directly to GCP using XMLHttpRequest for progress tracking
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        
+        if (onProgress) {
+          xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+            if (e.lengthComputable) {
+              const percentComplete = (e.loaded / e.total) * 100;
+              onProgress({
+                loaded: e.loaded,
+                total: e.total,
+                percentage: percentComplete,
+              });
+            }
           });
         }
-      });
-    }
-
-    return new Promise((resolve, reject) => {
-      xhr.addEventListener('load', () => {
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            resolve(response as UploadResponse);
-          } catch (e) {
-            reject(new Error('Failed to parse upload response'));
-          }
-        } else {
-          try {
-            const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.detail || `Upload failed with status ${xhr.status}`));
-          } catch (e) {
+        
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
-        }
+        });
+        
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error during upload'));
+        });
+        
+        xhr.open('PUT', upload_url);
+        xhr.setRequestHeader('Content-Type', mimeType);
+        xhr.send(file);
       });
-
-      xhr.addEventListener('error', () => {
-        reject(new Error('Upload request failed'));
+      
+      // 3. Confirm upload and trigger processing
+      const confirmResponse = await fetch(`${OCR_API_URL}/api/documents/upload-confirm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          document_id,
+          storage_path,
+          filename: file.name,
+          mime_type: mimeType
+        }),
       });
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      xhr.open('POST', `${OCR_API_URL}/api/documents/upload`);
-      xhr.send(formData);
-    });
+      
+      if (!confirmResponse.ok) {
+        const error = await confirmResponse.json().catch(() => ({ detail: "Confirmation failed" }));
+        throw new Error(error.detail || 'Failed to confirm upload');
+      }
+      
+      return await confirmResponse.json();
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      throw error;
+    }
   }
 
   streamDocumentProgress(documentId: string, onProgress: (progress: ProcessingProgress) => void): EventSource {

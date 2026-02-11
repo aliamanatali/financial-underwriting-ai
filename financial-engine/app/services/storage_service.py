@@ -15,6 +15,7 @@ from google.auth.exceptions import DefaultCredentialsError  # type: ignore
 from app.config import settings
 import logging
 from app.db.mongodb import get_database
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -337,12 +338,16 @@ class StorageService:
             try:
                 # Delete all files in the package directory
                 prefix = f"deal-packages/{package_id}/"
-                blobs = self.bucket.list_blobs(prefix=prefix)
                 
-                deleted_count = 0
-                for blob in blobs:
-                    blob.delete()
-                    deleted_count += 1
+                def _delete_blobs():
+                    blobs = self.bucket.list_blobs(prefix=prefix)
+                    count = 0
+                    for blob in blobs:
+                        blob.delete()
+                        count += 1
+                    return count
+
+                deleted_count = await run_in_threadpool(_delete_blobs)
                 
                 logger.info(f"Deleted deal package files from GCP: {package_id} ({deleted_count} files)")
             except Exception as e:
@@ -397,7 +402,8 @@ class StorageService:
                 content_type = self._get_content_type(filename)
                 
                 # Upload file
-                blob.upload_from_file(
+                await run_in_threadpool(
+                    blob.upload_from_file,
                     BytesIO(file_content),
                     content_type=content_type
                 )
@@ -442,7 +448,7 @@ class StorageService:
                     return None
                 
                 # Download file content
-                data = blob.download_as_bytes()
+                data = await run_in_threadpool(blob.download_as_bytes)
                 
                 logger.info(f"Retrieved document file from GCP: {storage_path}")
                 return data

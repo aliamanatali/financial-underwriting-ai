@@ -4,6 +4,7 @@ import io
 import asyncio
 from typing import Optional, List, Dict, Tuple, Any
 from PyPDF2 import PdfReader
+from starlette.concurrency import run_in_threadpool
 from app.models.schemas import DocumentType
 from app.services.gemini_client import GeminiClient
 from app.services.batch_logging_service import BatchLoggingService
@@ -121,7 +122,7 @@ class ClassificationService:
                 # Check if it's a PDF
                 if filename.lower().endswith('.pdf'):
                     extraction_method = "PyPDF2"
-                    extracted_content, total_pages = self._extract_pdf_pages(content)
+                    extracted_content, total_pages = await run_in_threadpool(self._extract_pdf_pages, content)
                     logger.info(f"Extracted content from {total_pages} pages of {filename}")
                 else:
                     # For non-PDF files, use content_preview or try to decode

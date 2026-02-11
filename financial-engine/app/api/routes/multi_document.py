@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import asyncio
 import math
+from starlette.concurrency import run_in_threadpool
 
 from app.models.schemas import (
     DocumentType,
@@ -160,7 +161,8 @@ async def complete_chunk_upload(
     property_name: Optional[str] = Form(None),
     is_smart_upload: bool = Form(False),
     progress_service: ProgressService = Depends(get_progress_service),
-    classification_service: ClassificationService = Depends(get_classification_service)
+    classification_service: ClassificationService = Depends(get_classification_service),
+    batch_logging_service: BatchLoggingService = Depends(get_batch_logging_service)
 ):
     """Complete the chunked upload and process the file(s)."""
     upload_dir = os.path.join(TEMP_UPLOAD_DIR, upload_id)
@@ -182,11 +184,14 @@ async def complete_chunk_upload(
         # Combine chunks into a single file
         combined_path = os.path.join(upload_dir, "combined_upload.tmp")
         
-        with open(combined_path, "wb") as outfile:
-            for chunk_file in chunk_files:
-                chunk_path = os.path.join(upload_dir, chunk_file)
-                with open(chunk_path, "rb") as infile:
-                    shutil.copyfileobj(infile, outfile)
+        def combine_chunks():
+            with open(combined_path, "wb") as outfile:
+                for chunk_file in chunk_files:
+                    chunk_path = os.path.join(upload_dir, chunk_file)
+                    with open(chunk_path, "rb") as infile:
+                        shutil.copyfileobj(infile, outfile)
+        
+        await run_in_threadpool(combine_chunks)
         
         # Determine property name
         if not property_name:
@@ -209,21 +214,14 @@ async def complete_chunk_upload(
                     task_id=upload_id
                  )
             else:
-                # It is a zip, so we use the internal zip processor BUT we need to tell it to use classification
-                # We need to use process_smart_upload by unzipping first
-                files = []
-                with zipfile.ZipFile(combined_path, 'r') as zip_ref:
-                    for name in zip_ref.namelist():
-                        if not name.endswith('/') and not os.path.basename(name).startswith('.'):
-                            # Use full path for better classification context
-                            files.append((name, zip_ref.read(name)))
-                
-                package, file_data_map = await zip_service.process_smart_upload(
-                    files=files,
+                # Use memory-efficient streaming/batch processing for ZIPs
+                package, file_data_map = await zip_service.process_smart_zip(
+                    zip_path=combined_path,
                     property_name=property_name,
                     classification_service=classification_service,
                     progress_service=progress_service,
-                    task_id=upload_id
+                    task_id=upload_id,
+                    batch_logging_service=batch_logging_service
                 )
         else:
             # Standard "Structured Zip" processing
@@ -231,7 +229,8 @@ async def complete_chunk_upload(
                 combined_path,
                 property_name,
                 progress_service=progress_service,
-                task_id=upload_id
+                task_id=upload_id,
+                batch_logging_service=batch_logging_service
             )
         
         # Update file cache

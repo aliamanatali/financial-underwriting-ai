@@ -12,7 +12,9 @@ from app.models.document import (
     DocumentUploadResponse,
     DocumentResponse,
     DocumentTextResponse,
-    DocumentListResponse
+    DocumentListResponse,
+    UploadUrlResponse,
+    UploadConfirmationRequest
 )
 from app.services.document_service import DocumentService
 from app.celery_app import celery_app
@@ -86,6 +88,50 @@ async def upload_document(
             status_code=500,
             detail=f"Failed to upload document: {str(e)}"
         )
+
+
+@router.post("/upload-url", response_model=UploadUrlResponse)
+async def get_upload_url(
+    filename: str,
+    mime_type: str = "application/pdf"
+):
+    """
+    Generate a signed URL for direct file upload to Google Cloud Storage.
+    
+    This allows uploading large files directly to storage without passing
+    through the backend server, preventing memory issues.
+    
+    1. Call this endpoint to get upload_url
+    2. PUT the file content to upload_url
+    3. Call /upload-confirm to trigger processing
+    """
+    try:
+        result = await document_service.create_upload_url(filename, mime_type)
+        return UploadUrlResponse(**result)
+    except Exception as e:
+        logger.error(f"Failed to generate upload URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload-confirm", response_model=DocumentUploadResponse)
+async def confirm_upload(
+    request: UploadConfirmationRequest
+):
+    """
+    Confirm that a file has been uploaded and start processing.
+    """
+    try:
+        return await document_service.confirm_upload(
+            document_id=request.document_id,
+            storage_path=request.storage_path,
+            filename=request.filename,
+            mime_type=request.mime_type
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to confirm upload: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("", response_model=DocumentListResponse)

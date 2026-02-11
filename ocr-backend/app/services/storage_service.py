@@ -289,6 +289,41 @@ class StorageService:
         except Exception as e:
             logger.error(f"Failed to generate signed URL: {str(e)}")
             raise
+
+    def generate_upload_signed_url(
+        self,
+        storage_path: str,
+        content_type: str,
+        expiration_minutes: int = 60
+    ) -> str:
+        """
+        Generate a signed URL for uploading a file (PUT).
+        
+        Args:
+            storage_path: Path where file will be stored
+            content_type: MIME type of the file
+            expiration_minutes: URL expiration time in minutes
+            
+        Returns:
+            Signed URL string
+        """
+        try:
+            blob = self.bucket.blob(storage_path)
+            
+            # Generate signed URL
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(minutes=expiration_minutes),
+                method="PUT",
+                content_type=content_type
+            )
+            
+            logger.info(f"Generated upload signed URL for: {storage_path}")
+            return url
+            
+        except Exception as e:
+            logger.error(f"Failed to generate upload signed URL: {str(e)}")
+            raise
     
     def list_files(self, prefix: Optional[str] = None) -> list[str]:
         """

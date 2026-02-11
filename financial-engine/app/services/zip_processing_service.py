@@ -7,6 +7,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
+from starlette.concurrency import run_in_threadpool
 
 from app.models.schemas import DealPackage, DocumentMetadata, DocumentType
 from app.services.storage_service import storage_service
@@ -155,6 +156,159 @@ class ZipProcessingService:
             batch_logging_service
         )
 
+    async def process_smart_zip(
+        self,
+        zip_path: str,
+        property_name: str,
+        classification_service: ClassificationService,
+        progress_service: Optional[ProgressService] = None,
+        task_id: Optional[str] = None,
+        batch_logging_service: Optional[BatchLoggingService] = None
+    ) -> Tuple[DealPackage, Dict[str, Any]]:
+        """
+        Process a ZIP file using 'Smart Upload' logic (AI Classification)
+        processing files in batches to manage memory usage.
+        """
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 0, "Initializing Smart ZIP processing...")
+
+        # Create deal package
+        package_id = str(uuid.uuid4())
+        now = datetime.utcnow().isoformat()
+        
+        package = DealPackage(
+            package_id=package_id,
+            property_name=property_name,
+            created_at=now,
+            updated_at=now,
+            documents={doc_type: [] for doc_type in DocumentType},
+            normalization_status="pending",
+            verification_progress=0.0
+        )
+        
+        files_processed = 0
+        files_skipped = 0
+        file_cache_data = {}
+        seen_hashes = set()
+        
+        # Batching configuration
+        BATCH_SIZE = 5  # Number of files to classify at once
+        batch_to_classify = [] # List of (filename, content)
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                file_list = await run_in_threadpool(zip_ref.namelist)
+                total_files = len(file_list)
+                logger.info(f"Smart ZIP processing {total_files} files from {zip_path}")
+                
+                async def process_classification_batch(batch):
+                    if not batch:
+                        return
+                    
+                    if progress_service and task_id:
+                        # Progress between 10% and 90%
+                        current_pct = max(10, int((files_processed / total_files) * 80) + 10)
+                        await progress_service.update_progress(
+                            task_id,
+                            current_pct,
+                            f"Classifying batch of {len(batch)} files..."
+                        )
+                    
+                    # Classify batch
+                    results = await classification_service.classify_files_batch(
+                        files=batch,
+                        progress_service=None # We handle progress here locally
+                    )
+                    
+                    # Add to package
+                    for fname, content in batch:
+                        doc_type = results.get(fname)
+                        if doc_type:
+                            safe_filename = os.path.basename(fname)
+                            await self._add_file_to_package(
+                                package, package_id, safe_filename, doc_type, content, now, file_cache_data
+                            )
+                            # Log success
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(safe_filename, doc_type.value, 1.0, "smart_zip_classified")
+                        else:
+                            logger.warning(f"Could not classify {fname}")
+                            if batch_logging_service:
+                                batch_logging_service.log_classification(fname, "Unknown", 0.0, "smart_zip_failed")
+                
+                for idx, file_path in enumerate(file_list):
+                    if self._should_skip_file(file_path):
+                        continue
+                        
+                    filename = os.path.basename(file_path)
+                    
+                    # Read content
+                    try:
+                        content = await run_in_threadpool(zip_ref.read, file_path)
+                        if len(content) == 0:
+                            continue
+                    except Exception as e:
+                        logger.warning(f"Failed to read {file_path}: {e}")
+                        continue
+                        
+                    # Deduplication
+                    file_hash = hashlib.md5(content).hexdigest()
+                    if file_hash in seen_hashes:
+                        files_skipped += 1
+                        continue
+                    seen_hashes.add(file_hash)
+                    
+                    # 1. Try Folder Structure First
+                    path_parts = Path(file_path).parts
+                    doc_type = None
+                    if len(path_parts) > 1:
+                        for part in path_parts[:-1]:
+                            dt = get_document_type_from_folder(part)
+                            if dt:
+                                doc_type = dt
+                                break
+                    
+                    if doc_type:
+                        # Add immediately
+                        await self._add_file_to_package(
+                            package, package_id, filename, doc_type, content, now, file_cache_data
+                        )
+                        files_processed += 1
+                        if batch_logging_service:
+                             batch_logging_service.log_classification(filename, doc_type.value, 1.0, "folder_structure")
+                    else:
+                        # Add to batch for classification
+                        batch_to_classify.append((file_path, content))
+                        
+                        # Process batch if full
+                        if len(batch_to_classify) >= BATCH_SIZE:
+                            await process_classification_batch(batch_to_classify)
+                            files_processed += len(batch_to_classify)
+                            batch_to_classify = []
+                    
+                    # Update progress periodically
+                    if progress_service and task_id and idx % 5 == 0:
+                         percent = 10 + int((idx / total_files) * 80)
+                         await progress_service.update_progress(task_id, percent, f"Processing {filename}...")
+
+                # Process remaining batch
+                if batch_to_classify:
+                    await process_classification_batch(batch_to_classify)
+                    files_processed += len(batch_to_classify)
+
+        except Exception as e:
+            logger.error(f"Error in Smart ZIP processing: {e}")
+            raise e
+            
+        # Save Package
+        package_dict = package.model_dump()
+        await storage_service.save_deal_package(package_dict)
+        
+        if progress_service and task_id:
+            await progress_service.update_progress(task_id, 100, "Processing complete!")
+            
+        return package, file_cache_data
+
     def _should_skip_file(self, file_path: str) -> bool:
         """Check if file should be skipped (hidden files, MACOSX artifacts, etc)."""
         if file_path.endswith('/'):
@@ -211,7 +365,7 @@ class ZipProcessingService:
 
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                file_list = zip_ref.namelist()
+                file_list = await run_in_threadpool(zip_ref.namelist)
                 logger.info(f"ZIP contains {len(file_list)} entries")
                 
                 total_files = len(file_list)
@@ -232,7 +386,7 @@ class ZipProcessingService:
 
                     # Read content to check for content duplication
                     try:
-                        file_content = zip_ref.read(file_path)
+                        file_content = await run_in_threadpool(zip_ref.read, file_path)
                     except Exception as e:
                         logger.warning(f"Failed to read file {filename}: {e}")
                         continue

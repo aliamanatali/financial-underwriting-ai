@@ -72,6 +72,21 @@ class DocumentUploadResponse(BaseModel):
     message: str = Field(default="Document uploaded successfully", description="Status message")
 
 
+class UploadUrlResponse(BaseModel):
+    """Response with signed URL for direct upload."""
+    upload_url: str = Field(..., description="Signed URL for PUT request")
+    document_id: str = Field(..., description="Pre-generated document ID")
+    storage_path: str = Field(..., description="Storage path for confirmation")
+
+
+class UploadConfirmationRequest(BaseModel):
+    """Request to confirm upload completion."""
+    document_id: str = Field(..., description="Document ID from upload URL")
+    storage_path: str = Field(..., description="Storage path from upload URL")
+    filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
+
+
 class DocumentResponse(BaseModel):
     """Complete document information response."""
     document_id: str = Field(..., description="Unique document identifier")

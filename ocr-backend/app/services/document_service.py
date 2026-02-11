@@ -128,6 +128,111 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Failed to upload document: {str(e)}")
             raise
+
+    async def create_upload_url(
+        self,
+        filename: str,
+        mime_type: str
+    ) -> Dict[str, str]:
+        """
+        Generate a signed URL for direct upload to GCP.
+        
+        Args:
+            filename: Original filename
+            mime_type: MIME type of the file
+            
+        Returns:
+            Dictionary with upload_url, document_id, and storage_path
+        """
+        try:
+            # Generate ID and path
+            file_id, storage_path = self.storage_service.generate_file_id(filename)
+            
+            # Generate signed URL
+            upload_url = self.storage_service.generate_upload_signed_url(
+                storage_path=storage_path,
+                content_type=mime_type
+            )
+            
+            return {
+                "upload_url": upload_url,
+                "document_id": file_id,
+                "storage_path": storage_path
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to generate upload URL: {str(e)}")
+            raise
+
+    async def confirm_upload(
+        self,
+        document_id: str,
+        storage_path: str,
+        filename: str,
+        mime_type: str
+    ) -> DocumentUploadResponse:
+        """
+        Confirm that a file has been uploaded to storage and queue processing.
+        
+        Args:
+            document_id: Document ID generated during URL creation
+            storage_path: Storage path generated during URL creation
+            filename: Original filename
+            mime_type: MIME type of the file
+            
+        Returns:
+            DocumentUploadResponse with document ID, task ID, and status
+        """
+        try:
+            # Verify file exists in storage
+            if not self.storage_service.file_exists(storage_path):
+                raise FileNotFoundError(f"File not found in storage: {storage_path}")
+            
+            # Queue Celery task for processing
+            from app.tasks.document_tasks import process_document_task
+            task = process_document_task.delay(document_id, storage_path)
+            
+            # Create document record
+            document_data = {
+                "document_id": document_id,
+                "filename": filename,
+                "storage_path": storage_path,
+                "mime_type": mime_type,
+                "status": ProcessingStatus.QUEUED,
+                "task_id": task.id,
+                "task_status": "PENDING",
+                "progress_percentage": 0.0,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "extracted_text": None,
+                "metadata": None,
+                "error_message": None
+            }
+            
+            # Save to database or Redis storage
+            if self.db is not None:
+                await self.db.documents.insert_one(document_data)
+            else:
+                # Save to Redis
+                key = f"document:{document_id}"
+                doc_copy = document_data.copy()
+                doc_copy['created_at'] = doc_copy['created_at'].isoformat()
+                doc_copy['updated_at'] = doc_copy['updated_at'].isoformat()
+                self.redis_client.set(key, json.dumps(doc_copy))
+            
+            logger.info(f"Document upload confirmed and queued: {document_id} ({filename}), task_id: {task.id}")
+            
+            return DocumentUploadResponse(
+                document_id=document_id,
+                filename=filename,
+                status=ProcessingStatus.QUEUED,
+                task_id=task.id,
+                message="Document processing queued."
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to confirm upload: {str(e)}")
+            raise
     
     async def process_document(self, document_id: str) -> DocumentResponse:
         """
