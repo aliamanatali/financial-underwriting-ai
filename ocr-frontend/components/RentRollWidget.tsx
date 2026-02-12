@@ -898,6 +898,9 @@ export default function RentRollWidget({
                   <td className="px-4 py-3 text-right">Current Rent</td>
                   <td className="px-4 py-3 text-right">Stabilized Rent</td>
                   <td className="px-4 py-3 text-right">Market Rent</td>
+                  {(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0) > 0 && (
+                      <td colSpan={(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0)}></td>
+                  )}
                   <td colSpan={isEditing.details ? 4 : 3}></td>
                 </tr>
                 {/* Data Row */}

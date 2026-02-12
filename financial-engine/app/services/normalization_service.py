@@ -129,6 +129,33 @@ class NormalizationService:
             except Exception as e:
                 logger.error(f"Failed to save cached mappings to Mongo: {e}")
 
+    def _parse_int_robust(self, value: Any) -> int:
+        """Helper to safely parse integer strings, handling text suffixes like 'sq ft'."""
+        if value is None:
+            return 0
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        
+        # String handling
+        s = str(value).strip().lower()
+        if not s or s == "-" or s == "n/a":
+            return 0
+            
+        # Remove commas
+        s = s.replace(",", "")
+        
+        # Extract first sequence of digits
+        import re
+        match = re.search(r'\d+', s)
+        if match:
+            try:
+                return int(match.group(0))
+            except ValueError:
+                return 0
+        return 0
+
     def _parse_amount(self, value: Any) -> float:
         """Helper to safely parse amount strings/floats."""
         if value is None:
@@ -730,8 +757,10 @@ class NormalizationService:
             if stabilized_rent_val <= 0 and current_rent_val > 0:
                 stabilized_rent_val = current_rent_val
 
-            if item.get("unit_size") is None:
-                item["unit_size"] = 0
+            # Parse unit size robustly
+            unit_size_val = self._parse_int_robust(item.get("unit_size"))
+            item["unit_size"] = unit_size_val
+
             if item.get("move_in_date") is None:
                 item["move_in_date"] = ""
 
@@ -747,7 +776,7 @@ class NormalizationService:
             rent_roll_item_data = {
                 "unit_number": item.get("unit_number") or "N/A",
                 "unit_type": item.get("unit_type") or "Unknown",
-                "unit_size": int(item.get("unit_size") or 0),
+                "unit_size": unit_size_val,
                 "tenant_name": item.get("tenant_name") or "Unknown",
                 "current_rent": current_rent_val, # Use robust parser
                 "stabilized_rent": stabilized_rent_val,

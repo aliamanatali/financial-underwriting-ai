@@ -164,90 +164,6 @@ class MultiDocumentExtractionService:
         
         return all_rent_roll_items, list(completed_files)
 
-    def _get_financial_extraction_prompt(self) -> str:
-        """
-        Returns the standard prompt for financial extraction.
-        Shared between Visual and Text extraction methods.
-        """
-        return """
-                Analyze this financial document (T12, P&L, Income Statement, Tax Bill, Utility Bill, Lease Agreement, Offering Memorandum, or Disclosure) and extract ALL financial items.
-                
-                You must distinguish between:
-                1. Revenue / Income (e.g., Rent, Reimbursements, Other Income)
-                2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
-                3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
-                4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
-                
-                CRITICAL RULES TO AVOID ERRORS:
-                
-                1. PAST DUE / RECEIVABLES HANDLING:
-                   - "Past Due", "Delinquent Rent", "Arrears", "Outstanding Balance" should be type: "receivable" NOT "revenue"
-                   - These represent uncollected amounts, not actual income
-                   - Only extract actual rent payments as revenue
-                
-                2. REVENUE STREAM SEPARATION:
-                   - "Rent", "Monthly Rent", "Rental Income" → type: "revenue", subtype: "rent"
-                   - "Late Fee", "Late Charge", "Penalty" → type: "revenue", subtype: "late_fee"
-                   - "Laundry Income", "Parking Income", "Pet Fee" → type: "revenue", subtype: "other_income"
-                   - "Check Return Fee", "NSF Fee" → type: "revenue", subtype: "other_income"
-                   - "Utility Reimbursement", "CAM Reimbursement" → type: "revenue", subtype: "reimbursement"
-                
-                3. CAPITAL VS OPERATING EXPENSES:
-                   - Capital items (>$5,000, extends useful life): "New Roof", "HVAC Replacement", "Electrical Upgrade", "Major Renovation" → type: "capex"
-                   - Operating items: "Roof Repair", "HVAC Maintenance", "Minor Repairs" → type: "expense"
-                   - Permit fees for capital work → type: "capex"
-                   - Permit fees for repairs → type: "expense"
-                
-                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
-                
-                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
-                
-                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
-                
-                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
-
-                8. IGNORE INSURANCE LIMITS:
-                   - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
-                   - These are coverage limits, NOT the premium amount.
-                   - Only extract the "Premium" or "Total Premium" amount.
-
-                9. LATEST PERIOD ONLY:
-                   - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
-                   - Ignore columns for older years.
-                
-                For each item, provide:
-                1. The exact text/description as it appears in the document
-                2. The amount (annual or monthly) if applicable
-                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
-                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
-                5. The expense year (if identifiable, e.g. 2022, 2023)
-                6. The page number where this item is found
-                7. The bounding box of the area containing this item
-                
-                Return the data as a JSON array with this structure:
-                [
-                    {
-                        "raw_text": "Exact description",
-                        "amount": 12345.67, // or null
-                        "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
-                        "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
-                        "expense_year": 2023, // Integer year if found, null otherwise
-                        "page_number": 1, // Integer, 1-based page number
-                        "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
-                    }
-                ]
-                
-                IMPORTANT:
-                - Do NOT categorize Revenue items (like "Rental Income", "Lease Payments") as Expenses
-                - Do NOT categorize Property Characteristics (like "Year Built") as Expenses
-                - Do NOT categorize Past Due amounts as Revenue - they are Receivables
-                - Separate late fees from rent
-                - If the document is a Rent Roll or Lease, capture the Rental Income as type: "revenue", subtype: "rent"
-                
-                Return ONLY the JSON array, no additional text or explanation.
-        """
-
     async def _extract_from_text_with_llm(self, text_content: str, filename: str) -> List[Dict[str, Any]]:
         """
         Helper to extract financials from text content using LLM.
@@ -312,7 +228,7 @@ class MultiDocumentExtractionService:
                 2. Operating Expenses (e.g., Taxes, Insurance, R&M, Management, Utilities)
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
-                5. Property Identity (e.g., "Property Name", "Property Address")
+                5. Property Identity & Deal Terms (e.g., "Property Name", "Property Address", "Purchase Price", "Year Built")
                 
                 CRITICAL RULES TO AVOID ERRORS:
                 
@@ -347,9 +263,11 @@ class MultiDocumentExtractionService:
                    - These are coverage limits, NOT the premium amount.
                    - Only extract the "Premium" or "Total Premium" amount.
 
-                9. PROPERTY IDENTITY:
+                9. PROPERTY IDENTITY & DEAL TERMS:
                    - Extract the explicit "Property Name" if listed (e.g. "The Highland Apartments").
                    - Extract the "Property Address" if listed.
+                   - Extract "Purchase Price" (or Sale Price, Contract Price) if listed. This is CRITICAL for Purchase Agreements (PSA).
+                   - Extract "Year Built" if listed.
                    - type: "property_info"
 
                 10. LATEST PERIOD ONLY:
@@ -1059,7 +977,7 @@ class MultiDocumentExtractionService:
             - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price"
             - Map "Price per Unit", "Cost per Unit" to Group: "Property Info" and Category: "Price per Unit"
             - Map "Units", "Total Units", "Unit Count" to Group: "Property Info" and Category: "Total Units"
-            - Map "Year Built", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built"
+            - Map "Year Built", "Build Year", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built"
             - Map "Loan Balance", "Mortgage", "Existing Debt" to Group: "Debt" and Category: "Current Loan Balance"
             - Map general property stats (Roof Age, Sq Ft) to Group: "Property Info" and Category: "Property Characteristic"
             - Map Tax/Insurance to Group: "Tax & Insurance"
@@ -1201,7 +1119,7 @@ class MultiDocumentExtractionService:
             "Purchase Price": (["purchase price","price", "asking price", "sale price"], "Property Info"),
             "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),
             "Total Units": (["units", "total units", "unit count", "number of units"], "Property Info"),
-            "Year Built": (["year built", "construction year", "built in"], "Property Info"),
+            "Year Built": (["year built", "build year", "construction year", "built in"], "Property Info"),
             "Current Loan Balance": (["loan balance", "existing loan", "mortgage balance", "principal balance"], "Debt"),
             "Utilities": (["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"], "Operating Expense"),
             "Real Estate Taxes": (["tax", "property tax", "real estate tax"], "Tax & Insurance"),
