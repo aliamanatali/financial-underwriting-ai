@@ -102,7 +102,7 @@ class PropertyMeta(BaseModel):
 class RentRollItem(BaseModel):
     unit_number: Optional[str] = "N/A"
     unit_size: Optional[int] = 0
-    unit_type: Optional[str] = "Unknown"
+    unit_type: Optional[str] = ""
     tenant_name: Optional[str] = "Unknown"
     current_rent: Optional[float] = 0.0
     stabilized_rent: Optional[float] = 0.0
@@ -117,11 +117,18 @@ class RentRollItem(BaseModel):
     floor: Optional[str] = None
     property_address: Optional[str] = None
     
-    @validator('unit_number', 'unit_type', 'tenant_name', pre=True)
-    def validate_string_fields(cls, v):
-        """Handle None/Empty strings"""
+    @validator('unit_number', 'tenant_name', pre=True)
+    def validate_required_string_fields(cls, v):
+        """Handle None/Empty strings for required display fields"""
         if v is None:
             return "Unknown"
+        return str(v)
+
+    @validator('unit_type', pre=True)
+    def validate_optional_string_fields(cls, v):
+        """Handle None/Empty strings for optional fields"""
+        if v is None or str(v).strip().lower() == "unknown":
+            return ""
         return str(v)
 
     @validator('current_rent', 'stabilized_rent', 'market_rent', 'deposit', pre=True)

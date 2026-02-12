@@ -21,9 +21,11 @@ class SynthesisService:
     
     # Document Priority Weights (Higher = More Reliable)
     DOCUMENT_WEIGHTS = {
+        "PSA": 120, # PSA beats OM for Purchase Price & Terms
+        "PURCHASE AND SALE": 120,
+        "SALE PURCHASE AGREEMENT": 120,
         "OFFERING MEMORANDUM": 110, # User requested First Priority
         "OM": 110,
-        "PSA": 100,
         "PURCHASE": 100,
         "AGREEMENT": 100,
         "MGMT AGMT": 95,
@@ -31,6 +33,7 @@ class SynthesisService:
         "GRANT OF EASEMENT": 90,
         "PRELIM": 90,
         "RENT ROLL": 80, # Priority 2
+        "RENTROLL": 80,  # Handle missing space
         "T12": 75,      # Priority 3 (Financials)
         "P&L": 75,
         "PROFIT & LOSS": 75,
@@ -62,6 +65,10 @@ class SynthesisService:
             return ""
         
         s = str(unit_id).lower().strip()
+        
+        # Handle garbage values
+        if s in ["unknown", "n/a", "vacant", "-", ".", "none", "null"]:
+            return ""
         
         # Remove common prefixes
         for prefix in ["unit", "apt", "#", "suite", "no."]:
@@ -255,7 +262,7 @@ class SynthesisService:
                     logger.info(f"Updated Total Units: {int(amount)} from {source_doc} (score: {doc_score})")
             
             # YEAR BUILT
-            elif ("year built" in normalized_val or "year built" in raw_text or "year constructed" in raw_text):
+            elif ("year built" in normalized_val or "year built" in raw_text or "year constructed" in raw_text or "build year" in raw_text):
                 # Ensure year is valid
                 if amount > 1800 and amount < 2030 and doc_score > best_values["year_built"]["score"]:
                     best_values["year_built"] = {
@@ -470,8 +477,16 @@ class SynthesisService:
         # FIX: Use document priority to select best source (OM > Rent Roll)
         def get_source_priority(source_name: str, items: List[RentRollItem]) -> int:
             base_score = self._get_document_score(source_name)
+            
+            # Bonus for structured data formats (Excel/CSV) as they are more reliable than PDF OCR
+            format_bonus = 0
+            src_lower = source_name.lower()
+            # Check for extension anywhere (handles "filename.xlsx | Sheet1" format)
+            if ".xlsx" in src_lower or ".xls" in src_lower or ".csv" in src_lower:
+                format_bonus = 5000 # Significant bonus to beat PDF of same type/score
+            
             # Weight priority heavily, use count as tie-breaker
-            return (base_score * 10000) + len(items)
+            return (base_score * 10000) + format_bonus + len(items)
 
         best_source = max(items_by_source, key=lambda s: get_source_priority(s, items_by_source[s]))
         primary_items = items_by_source[best_source]
@@ -507,9 +522,27 @@ class SynthesisService:
                     added_unique_count += 1
                     logger.debug(f"Added unique unit {item.unit_number} (norm: {unit_id}) from secondary source {source}")
                 else:
-                    # Optional: Enrich master item with missing data from duplicate?
-                    # For now, we trust Best Source completely.
-                    pass
+                    # Data Enrichment: Fill in missing gaps in the Master item from this Secondary item
+                    master_item = master_roll[unit_id]
+                    
+                    # Fill Unit Size (Critical for this task)
+                    if (master_item.unit_size == 0 or master_item.unit_size is None) and (item.unit_size and item.unit_size > 0):
+                        master_item.unit_size = item.unit_size
+                        logger.info(f"Enriched Unit {unit_id} Size ({item.unit_size}) from secondary source {source}")
+                    
+                    # Fill Market Rent
+                    if (master_item.market_rent == 0 or master_item.market_rent is None) and (item.market_rent and item.market_rent > 0):
+                        master_item.market_rent = item.market_rent
+                    
+                    # Fill Stabilized Rent
+                    if (master_item.stabilized_rent == 0 or master_item.stabilized_rent is None) and (item.stabilized_rent and item.stabilized_rent > 0):
+                        master_item.stabilized_rent = item.stabilized_rent
+                        
+                    # Fill Move-in / Lease Dates if missing
+                    if not master_item.lease_start and item.lease_start:
+                        master_item.lease_start = item.lease_start
+                    if not master_item.lease_end and item.lease_end:
+                        master_item.lease_end = item.lease_end
         
         if added_unique_count > 0:
             logger.info(f"Added {added_unique_count} unique items from secondary sources")
@@ -557,10 +590,43 @@ class SynthesisService:
                 try:
                     # Extract rent roll data from metadata
                     if item.metadata:
+                        unit_number = item.metadata.get("unit_number", "Unknown")
+                        
+                        # Skip if unit number is garbage
+                        clean_unit_number = str(unit_number).strip()
+                        if clean_unit_number in ["-", "Unknown", "", "null", "None"]:
+                            continue
+                        
+                        # Skip if it looks like a year (19xx or 20xx)
+                        if clean_unit_number.isdigit() and len(clean_unit_number) == 4 and (clean_unit_number.startswith("19") or clean_unit_number.startswith("20")):
+                             # Unless it has a clear unit type
+                             if item.metadata.get("unit_type") in ["Unknown", None]:
+                                 continue
+
+                        unit_type = item.metadata.get("unit_type", "")
+                        # Handle literal "Unknown" strings
+                        if unit_type and str(unit_type).lower() == "unknown":
+                            unit_type = ""
+
+                        unit_size = item.metadata.get("unit_size", 0)
+
+                        # Filter out rows with Unknown/Empty type and 0 size (likely noise)
+                        if (not unit_type) and (unit_size == 0 or unit_size is None):
+                             # Exception: If it has a tenant name and rent, it might be valid
+                             current_rent = item.metadata.get("current_rent", 0.0)
+                             tenant_name = item.metadata.get("tenant_name", "Unknown")
+                             
+                             if (current_rent is None or current_rent == 0) and (not tenant_name or tenant_name == "Unknown"):
+                                 continue
+                             
+                             # If it has rent but no size/type, it's still suspicious if unit number is just 4 digits (could be sqft or year)
+                             if str(clean_unit_number).isdigit() and len(str(clean_unit_number)) >= 4:
+                                  continue
+
                         rent_roll_item = RentRollItem(
-                            unit_number=item.metadata.get("unit_number", "Unknown"),
-                            unit_type=item.metadata.get("unit_type", "Unknown"),
-                            unit_size=item.metadata.get("unit_size", 0),
+                            unit_number=unit_number,
+                            unit_type=unit_type,
+                            unit_size=unit_size,
                             tenant_name=item.metadata.get("tenant_name", "Unknown"),
                             current_rent=item.metadata.get("current_rent", 0.0),
                             stabilized_rent=item.metadata.get("stabilized_rent", 0.0),

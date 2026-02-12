@@ -17,16 +17,48 @@ class IngestionService:
 
     def _get_val(self, row, keys, default=None):
         """Helper to get value from row using multiple possible keys (case-insensitive)."""
-        # Convert row keys to lower for lookup
-        row_keys_lower = {str(k).lower().strip(): k for k in row.keys()}
+        # 1. Standard Normalization (Whitespace)
+        row_keys_normalized = {}
+        # 2. Aggressive Normalization (Alphanumeric only)
+        row_keys_alnum = {}
+        
+        for k in row.keys():
+            k_str = str(k).lower().strip()
+            # Standard
+            k_clean = " ".join(k_str.split())
+            row_keys_normalized[k_clean] = k
+            # Alnum
+            k_alnum = "".join(c for c in k_str if c.isalnum())
+            row_keys_alnum[k_alnum] = k
         
         for key in keys:
-            key_lower = key.lower().strip()
-            if key_lower in row_keys_lower:
-                actual_key = row_keys_lower[key_lower]
+            key_str = str(key).lower().strip()
+            key_clean = " ".join(key_str.split())
+            key_alnum = "".join(c for c in key_str if c.isalnum())
+            
+            # Strategy A: Exact Match on Standard Normalized Key
+            if key_clean in row_keys_normalized:
+                actual_key = row_keys_normalized[key_clean]
                 val = row.get(actual_key)
                 if val is not None and str(val).strip() != "":
                     return val
+            
+            # Strategy B: Exact Match on Alphanumeric Key (Handles "Sq. Ft." vs "Sq Ft")
+            if key_alnum and key_alnum in row_keys_alnum:
+                actual_key = row_keys_alnum[key_alnum]
+                val = row.get(actual_key)
+                if val is not None and str(val).strip() != "":
+                    return val
+            
+            # Strategy C: Starts-with Match (Robustness for "Size (SF)" vs "Size")
+            # Only apply if key is not super short to avoid false positives
+            if len(key_clean) > 2:
+                for rk, original_k in row_keys_normalized.items():
+                    if rk.startswith(key_clean + " ") or rk.startswith(key_clean + "("):
+                        val = row.get(original_k)
+                        if val is not None and str(val).strip() != "":
+                            return val
+
         return default
 
     def _parse_float(self, val):
@@ -101,6 +133,58 @@ class IngestionService:
         else:
             return len(overlap) == 1
 
+    def _detect_header_row(self, df: pd.DataFrame, max_scan_rows: int = 30) -> Optional[int]:
+        """
+        Scans the first few rows to find the best header row candidates based on keyword matching.
+        Uses a scoring system to prefer rows with multiple relevant column headers (Unit, Rent, Size, etc.)
+        over partial matches (like title rows).
+        Returns the index of the best matching row, or None if no good match found.
+        """
+        best_row_idx = None
+        max_score = 0
+        
+        # Keywords to score against
+        keywords = {
+            "unit": ["unit", "apt", "apartment", "suite", "#"],
+            "rent": ["rent", "month", "amount", "rate", "price", "charge"],
+            "tenant": ["tenant", "resident", "name", "lessee"],
+            "size": ["size", "sq ft", "square", "sf", "area"],
+            "date": ["lease", "start", "end", "move", "date"],
+            "bed": ["bed", "bdrm", "bedroom"],
+            "deposit": ["deposit", "sec dep"]
+        }
+        
+        for i, row in df.head(max_scan_rows).iterrows():
+            row_str = []
+            for x in row.tolist():
+                s = str(x).lower().strip()
+                if s in ['nan', 'none', '', 'nat']:
+                    s = ""
+                row_str.append(s)
+            
+            score = 0
+            found_categories = set()
+            
+            for cell_text in row_str:
+                if not cell_text or len(cell_text) > 40: # Skip long text or empty
+                    continue
+                    
+                for cat, keys in keywords.items():
+                    if any(k in cell_text for k in keys):
+                        if cat not in found_categories: # Count each category only once per row
+                            score += 1
+                            found_categories.add(cat)
+                        # Bonus: If we find "Size" specifically, give it a tiny boost to break ties if needed,
+                        # but category count is the main driver.
+            
+            # Heuristic: We need at least 2 distinct categories to consider it a header.
+            # Title rows might have 1 or 2 (e.g. "Rent Roll"), but real headers usually have 3-4+ (Unit, Rent, Size, Lease).
+            if score >= 2 and score > max_score:
+                max_score = score
+                best_row_idx = i
+                
+        return best_row_idx
+
     def ingest_rent_roll_from_excel(self, file_path: str, property_meta: PropertyMeta, target_property_address: Optional[str] = None) -> List[RentRollItem]:
         import os
         filename = os.path.basename(file_path)
@@ -146,41 +230,7 @@ class IngestionService:
                     pass
                     
                 # logic to find the row that contains "Unit" AND ("Rent" OR "Month" OR "Amount")
-                header_row_idx = None
-                for i, row in df.iterrows():
-                    # Limit to first 30 rows for header search to improve performance
-                    if i > 30:
-                        break
-                        
-                    # Clean string conversion handling NaNs
-                    row_str = []
-                    for x in row.tolist():
-                        s = str(x).lower().strip()
-                        if s in ['nan', 'none', '', 'nat']:
-                            s = ""
-                        row_str.append(s)
-
-                    # Check for Unit identifier (Unit, Apt, Suite, #)
-                    unit_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["unit", "apt", "apartment", "suite", "#"]) and len(x) < 30]
-                    
-                    # Check for Rent identifier (Rent, $/Month, Amount, Rate)
-                    rent_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["rent", "month", "amount", "rate", "price", "charge"]) and len(x) < 30]
-                    
-                    # Check for Tenant identifier (Tenant, Resident, Name)
-                    tenant_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["tenant", "resident", "name", "lessee"]) and len(x) < 30]
-
-                    has_unit = len(unit_indices) > 0
-                    has_rent = len(rent_indices) > 0
-                    has_tenant = len(tenant_indices) > 0
-                    
-                    if has_unit and (has_rent or has_tenant):
-                        # Robustness Check: Ensure we have matches in DISTINCT columns to avoid Title rows
-                        all_match_indices = set(unit_indices + rent_indices + tenant_indices)
-                        
-                        # If we have matches in at least 2 distinct columns, it's likely a real header.
-                        if len(all_match_indices) >= 2:
-                            header_row_idx = i
-                            break
+                header_row_idx = self._detect_header_row(df)
 
                 if header_row_idx is None:
                     continue
@@ -188,9 +238,14 @@ class IngestionService:
                 # Reload with correct header
                 df_data = pd.read_excel(xls, sheet_name=sheet_name, header=header_row_idx)
                 df_data = df_data.fillna("")
+                
+                # DEBUG LOGGING (PRINT TO CONSOLE)
+                print(f"--- DEBUG EXCEL EXTRACTION: Sheet '{sheet_name}' ---")
+                print(f"Detected Header Row Index: {header_row_idx}")
+                print(f"Columns: {df_data.columns.tolist()}")
 
                 current_sheet_roll = []
-                for _, row in df_data.iterrows():
+                for idx, row in df_data.iterrows():
                     # Use case-insensitive lookup
                     unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit", "Apt No"], ""))
                     tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident", "Tenant(s)", "Name"], ""))
@@ -205,10 +260,16 @@ class IngestionService:
                     if len(unit_number) > 20:
                         continue
 
+                    # DEBUG LOGGING FOR SIZE
+                    raw_size_val = self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area", "Approx SF", "Approx Size", "Rentable SF", "NRA", "Size (SF)", "Unit Sq Ft", "Square Ft", "Est SF"], 0)
+                    parsed_size_val = self._parse_int(raw_size_val)
+                    if idx < 5:
+                        print(f"DEBUG: Row {idx} - Unit: '{unit_number}', Raw Size: '{raw_size_val}', Parsed: {parsed_size_val}")
+
                     current_sheet_roll.append(RentRollItem(
                         unit_number=unit_number,
                         unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
-                        unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                        unit_size=parsed_size_val,
                         tenant_name=tenant_name,
                         current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
                         stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
@@ -278,27 +339,8 @@ class IngestionService:
                         # But detecting "Wrong St" is hard without LLM.
                         pass
 
-                    # Find Header Row
-                    header_row_idx = None
-                    for i, row in df.iterrows():
-                        if i > 30: break
-                        
-                        row_str = []
-                        for x in row.tolist():
-                            s = str(x).lower().strip()
-                            if s in ['nan', 'none', '', 'nat']:
-                                s = ""
-                            row_str.append(s)
-
-                        # Check identifiers
-                        unit_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["unit", "apt", "apartment", "suite", "#"]) and len(x) < 30]
-                        rent_indices = [idx for idx, x in enumerate(row_str) if any(k in x for k in ["rent", "month", "amount", "rate", "price"]) and len(x) < 30]
-                        
-                        if len(unit_indices) > 0 and len(rent_indices) > 0:
-                            all_indices = set(unit_indices + rent_indices)
-                            if len(all_indices) >= 2:
-                                header_row_idx = i
-                                break
+                    # Find Header Row using scoring strategy
+                    header_row_idx = self._detect_header_row(df)
                     
                     if header_row_idx is None:
                         continue
@@ -306,9 +348,13 @@ class IngestionService:
                     # Reload with correct header
                     df_data = pd.read_excel(xls, sheet_name=sheet_name, header=header_row_idx)
                     df_data = df_data.fillna("")
-                    
+    
+                    # DEBUG LOGGING
+                    logger.info(f"DEBUG: Sheet '{sheet_name}' - Detected Header Row: {header_row_idx}")
+                    logger.info(f"DEBUG: Columns: {df_data.columns.tolist()}")
+    
                     current_sheet_roll = []
-                    for _, row in df_data.iterrows():
+                    for idx, row in df_data.iterrows():
                         # Use case-insensitive lookup
                         unit_number = str(self._get_val(row, ["Unit Number", "Unit #", "Unit", "Apt No"], ""))
                         tenant_name = str(self._get_val(row, ["Tenant Name", "Tenant", "Resident", "Tenant(s)", "Name"], ""))
@@ -324,10 +370,16 @@ class IngestionService:
                             continue
                         
                         try:
+                            # DEBUG LOGGING FOR SIZE
+                            raw_size_val = self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area", "Approx SF", "Approx Size", "Rentable SF", "NRA", "Size (SF)", "Unit Sq Ft", "Square Ft", "Est SF"], 0)
+                            parsed_size_val = self._parse_int(raw_size_val)
+                            if idx < 5:
+                                print(f"Row {idx} - Unit: '{unit_number}' | Raw Size: '{raw_size_val}' | Parsed: {parsed_size_val}")
+        
                             current_sheet_roll.append(RentRollItem(
                                 unit_number=unit_number,
                                 unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
-                                unit_size=self._parse_int(self._get_val(row, ["Unit Size", "Sq Ft", "Square Feet", "SF", "Size", "Area"], 0)),
+                                unit_size=parsed_size_val,
                                 tenant_name=tenant_name,
                                 current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
                                 stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
@@ -482,15 +534,19 @@ class IngestionService:
         - If not explicitly listed, return 0.0.
 
         CRITICAL FOR UNIT SIZE:
-        - Look for "Unit Size", "Sq Ft", "Square Feet", or "SF".
+        - You MUST extract the Unit Size if available.
+        - Look for headers like "Size", "Sq Ft", "Square Feet", "SF", "Approx Size", "Rentable SF", "Area".
+        - It is usually a number between 200 and 3000.
+        - If the column is just labeled "Size", it IS the Unit Size.
         - If Unit Size is missing, return 0.
 
         OPTIONAL FIELDS:
         - "deposit": Security deposit amount.
         - "parking": Parking space number or fee.
         - "comments": Any notes or comments.
+        - "floor": Floor number/level (e.g. "1st", "2nd").
 
-        Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments".
+        Return a JSON array of objects, where each object has the following keys: "unit_number", "unit_type", "unit_size" (integer), "tenant_name", "current_rent", "stabilized_rent", "market_rent", "move_in_date", "lease_start", "lease_end", "deposit", "parking", "comments", "floor".
         """
         
         try:
@@ -785,7 +841,10 @@ class IngestionService:
             - If not explicitly listed, return 0.0.
 
             CRITICAL FOR UNIT SIZE:
-            - Look for "Unit Size", "Sq Ft", "Square Feet", "SF", or just "Size".
+            - You MUST extract the Unit Size if available.
+            - Look for headers like "Size", "Sq Ft", "Square Feet", "SF", "Approx Size", "Rentable SF", "Area".
+            - It is usually a number between 200 and 3000.
+            - If the column is just labeled "Size", it IS the Unit Size.
             - If Unit Size is missing, return 0.
 
             CRITICAL FOR GENERIC RENT:
