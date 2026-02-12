@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     gemini_model: str
     gemini_embedding_model: str
     gemini_temperature: float = 0.0
-    gemini_max_output_tokens: int = 8192
+    gemini_max_output_tokens: int = 16384  # Increased to ensure full extraction for dense pages
     gemini_timeout_seconds: int = 1800
     gemini_max_retries: int = 5
 

@@ -15,13 +15,15 @@
     "ag-grid-community": "^35.0.1",
     "ag-grid-react": "^35.0.1",
     "jszip": "^3.10.1",
+    "mammoth": "^1.11.0",
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.3.0",
     "rehype-raw": "^7.0.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

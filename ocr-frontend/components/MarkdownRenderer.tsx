@@ -13,6 +13,8 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
     const elements: React.ReactNode[] = [];
     let inList = false;
     let listItems: string[] = [];
+    let inTable = false;
+    let tableRows: string[] = [];
     let elementKey = 0;
 
     const processInlineMarkdown = (line: string): React.ReactNode => {
@@ -58,8 +60,104 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       return parts.length > 0 ? parts : line;
     };
 
+    const renderTable = (rows: string[], key: number): React.ReactNode => {
+      const data = rows.map((row) => {
+        const content = row.trim();
+        // Remove leading/trailing pipes
+        const inner = content.replace(/^\||\|$/g, "");
+        return inner.split("|").map((cell) => cell.trim());
+      });
+
+      if (data.length === 0) return null;
+
+      const header = data[0];
+      // Check for separator row (contains only -, :, |)
+      let separatorIndex = -1;
+      if (data.length > 1) {
+        const secondRow = data[1];
+        // Heuristic: if all cells contain only -, :, or whitespace
+        const isSeparator =
+          secondRow.every((cell) => /^[-:\s]+$/.test(cell)) &&
+          secondRow.some((cell) => cell.includes("-"));
+        if (isSeparator) {
+          separatorIndex = 1;
+        }
+      }
+
+      const bodyStart = separatorIndex !== -1 ? separatorIndex + 1 : 1;
+      const body = data.slice(bodyStart);
+
+      return (
+        <div
+          key={key}
+          className="overflow-x-auto mb-4 border border-neutral-200 rounded-lg"
+        >
+          <table className="min-w-full divide-y divide-neutral-200 text-xs">
+            <thead className="bg-neutral-50">
+              <tr>
+                {header.map((cell, i) => (
+                  <th
+                    key={i}
+                    className="px-4 py-3 text-left font-medium text-neutral-900 tracking-wider"
+                  >
+                    {processTextContent(cell)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-neutral-200">
+              {body.map((row, rowIndex) => (
+                <tr
+                  key={rowIndex}
+                  className={rowIndex % 2 === 0 ? "bg-white" : "bg-neutral-50/50"}
+                >
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className="px-4 py-3 text-neutral-600 whitespace-pre-wrap"
+                    >
+                      {processTextContent(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    };
+
     lines.forEach((line, index) => {
       const trimmedLine = line.trim();
+
+      // Handle Table
+      if (trimmedLine.startsWith("|")) {
+        if (inList && listItems.length > 0) {
+          elements.push(
+            <ul
+              key={`list-${elementKey++}`}
+              className="list-disc pl-4 mb-2 space-y-1"
+            >
+              {listItems.map((item, i) => (
+                <li key={i}>{processTextContent(item)}</li>
+              ))}
+            </ul>
+          );
+          listItems = [];
+          inList = false;
+        }
+
+        inTable = true;
+        tableRows.push(trimmedLine);
+        return; // Continue to next line
+      }
+
+      // If we were in a table but this line is not a table line, flush the table
+      if (inTable) {
+        elements.push(renderTable(tableRows, elementKey++));
+        tableRows = [];
+        inTable = false;
+      }
 
       // Handle headers
       if (trimmedLine.startsWith("### ")) {
@@ -67,7 +165,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -80,7 +178,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h3
             key={elementKey++}
-            className="text-lg font-semibold text-neutral-900 mb-3 mt-6"
+            className="text-sm font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(4))}
           </h3>
@@ -90,7 +188,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -103,7 +201,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h2
             key={elementKey++}
-            className="text-xl font-semibold text-neutral-900 mb-3 mt-6"
+            className="text-base font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(3))}
           </h2>
@@ -113,7 +211,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -126,7 +224,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
         elements.push(
           <h1
             key={elementKey++}
-            className="text-2xl font-bold text-neutral-900 mb-4 mt-6"
+            className="text-lg font-bold text-neutral-900 mb-2 mt-4"
           >
             {processTextContent(trimmedLine.substring(2))}
           </h1>
@@ -143,7 +241,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -161,7 +259,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -178,7 +276,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           elements.push(
             <ul
               key={`list-${elementKey++}`}
-              className="list-disc pl-5 mb-4 space-y-1.5"
+              className="list-disc pl-4 mb-2 space-y-1"
             >
               {listItems.map((item, i) => (
                 <li key={i}>{processTextContent(item)}</li>
@@ -189,7 +287,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
           inList = false;
         }
         elements.push(
-          <p key={elementKey++} className="mb-4 leading-7">
+          <p key={elementKey++} className="mb-2 leading-relaxed">
             {processInlineMarkdown(trimmedLine)}
           </p>
         );
@@ -201,7 +299,7 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       elements.push(
         <ul
           key={`final-list-${elementKey++}`}
-          className="list-disc pl-5 mb-4 space-y-1.5"
+          className="list-disc pl-4 mb-2 space-y-1"
         >
           {listItems.map((item, i) => (
             <li key={i}>{processTextContent(item)}</li>
@@ -210,11 +308,16 @@ export default function MarkdownRenderer({ content }: MarkdownRendererProps) {
       );
     }
 
+    // Handle remaining table
+    if (inTable && tableRows.length > 0) {
+      elements.push(renderTable(tableRows, elementKey++));
+    }
+
     return elements;
   };
 
   return (
-    <div className="prose prose-neutral max-w-none">
+    <div className="text-xs leading-relaxed text-neutral-800 break-words space-y-1">
       {parseMarkdown(content)}
     </div>
   );

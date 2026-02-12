@@ -14,9 +14,15 @@ class Settings(BaseSettings):
     # Gemini API settings
     gemini_api_key: str
     gemini_model: str = "gemini-2.5-pro"
+    gemini_fast_model: str = "gemini-3-flash-preview"
     gemini_temperature: float = 0.0
     gemini_max_output_tokens: int = 8192
+    gemini_timeout: float = 600.0
+    gemini_max_retries: int = 5
     
+    # OpenAI API settings
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-5.2-2025-12-11"
     # Server settings
     port: int = 8001
     host: str = "0.0.0.0"
@@ -41,6 +47,16 @@ class Settings(BaseSettings):
     gcp_token_uri: Optional[str] = None
     gcp_auth_provider_x509_cert_url: Optional[str] = None
     gcp_client_x509_cert_url: Optional[str] = None
+    # Database settings
+    mongodb_uri: Optional[str] = None
+    mongodb_database: Optional[str] = None
+    
+    # Redis settings
+    redis_url: str = "redis://localhost:6379/0"
+
+    @property
+    def use_mongodb(self) -> bool:
+        return self.mongodb_uri is not None
     gcp_universe_domain: Optional[str] = None
     
     @property

@@ -27,12 +27,13 @@ import { CSS } from "@dnd-kit/utilities";
 import WidgetTooltip from "./WidgetTooltip";
 import RentRollPreviewModal from "./RentRollPreviewModal";
 
-type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent"> & {
+type EditableRentRollItem = Omit<RentRollItem, "unit_size" | "current_rent" | "stabilized_rent" | "market_rent" | "deposit"> & {
   id: string;
   unit_size: string | number;
   current_rent: string | number;
   stabilized_rent: string | number;
   market_rent: string | number;
+  deposit: string | number;
   beds_single?: number;
   beds_double?: number;
   market_rent_single?: number;
@@ -113,12 +114,12 @@ function getBedCountFromUnitType(unit_type: string): number {
   }
 
   // Heuristic 2: "2bd", "2 br"
-  const match_bd = unit_type.toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
+  const match_bd = (unit_type || "").toLowerCase().match(/(\d+)\s*(?:bd|br|bed)/);
   if (match_bd) {
     return parseInt(match_bd[1], 10);
   }
 
-  if (unit_type.toLowerCase().includes("studio")) {
+  if ((unit_type || "").toLowerCase().includes("studio")) {
     return 1;
   }
 
@@ -182,7 +183,7 @@ export default function RentRollWidget({
     return items.map(item => {
       // Robust matching: trim and lowercase
       const typeConfig = config?.unit_type_configs.find(c =>
-        c.unit_type?.trim().toLowerCase() === item.unit_type?.trim().toLowerCase()
+        (c.unit_type || "").trim().toLowerCase() === (item.unit_type || "").trim().toLowerCase()
       );
       
       if (config && !typeConfig) {
@@ -192,6 +193,7 @@ export default function RentRollWidget({
       return {
         ...item,
         id: item.unit_number || `unit-${Math.random()}`,
+        deposit: item.deposit || 0,
         // Merge config values if they exist
         beds_single: typeConfig?.beds_single,
         beds_double: typeConfig?.beds_double,
@@ -207,6 +209,11 @@ export default function RentRollWidget({
   const [items, setItems] = useState<EditableRentRollItem[]>(
     initializeItems(rentRoll, studentHousingConfig)
   );
+
+  // Check for dynamic columns
+  const hasDeposits = React.useMemo(() => items.some(i => Number(i.deposit) > 0), [items]);
+  const hasParking = React.useMemo(() => items.some(i => i.parking && i.parking.trim() !== ""), [items]);
+  const hasComments = React.useMemo(() => items.some(i => i.comments && i.comments.trim() !== ""), [items]);
 
   useEffect(() => {
     setItems(initializeItems(rentRoll, studentHousingConfig));
@@ -248,11 +255,13 @@ export default function RentRollWidget({
   const validateItem = (item: EditableRentRollItem) => {
     const errors: Record<string, string> = {};
     if (!item.unit_number) errors.unit_number = "Required";
-    if (!item.unit_type) errors.unit_type = "Required";
-    if (parseFloat(String(item.unit_size)) <= 0) errors.unit_size = "Required";
+    
+    // Loosen validation for "dynamic" nature - if it's missing, we just don't show it or flag it less aggressively
+    // if (!item.unit_type) errors.unit_type = "Required";
+    // if (parseFloat(String(item.unit_size)) <= 0) errors.unit_size = "Required";
 
-    if (parseFloat(String(item.stabilized_rent)) <= 0) errors.stabilized_rent = "Required";
-    if (parseFloat(String(item.market_rent)) <= 0) errors.market_rent = "Required";
+    // if (parseFloat(String(item.stabilized_rent)) <= 0) errors.stabilized_rent = "Required";
+    // if (parseFloat(String(item.market_rent)) <= 0) errors.market_rent = "Required";
 
     if (parseFloat(String(item.current_rent)) > 0 && !item.lease_start) {
       errors.lease_start = "Required";
@@ -268,11 +277,13 @@ export default function RentRollWidget({
       // Handle MM/DD/YYYY
       else if (date.includes('/')) {
         const parts = date.split('/');
-        let yearStr = parts[2];
-        if (yearStr.length === 2) {
-          yearStr = "20" + yearStr; // handle 2-digit years
+        if (parts.length >= 3) {
+          let yearStr = parts[2];
+          if (yearStr && yearStr.length === 2) {
+            yearStr = "20" + yearStr; // handle 2-digit years
+          }
+          year = parseInt(yearStr, 10);
         }
-        year = parseInt(yearStr, 10);
       }
       
       if (year && (year < 1900 || year > 2100)) {
@@ -345,6 +356,7 @@ export default function RentRollWidget({
   };
 
   const handleSave = async () => {
+    console.log("RentRollWidget: handleSave started");
     setIsSaving(true);
 
     const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
@@ -353,6 +365,7 @@ export default function RentRollWidget({
       current_rent: parseFloat(String(rest.current_rent)) || 0,
       stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
       market_rent: parseFloat(String(rest.market_rent)) || 0,
+      deposit: parseFloat(String(rest.deposit)) || 0,
     }));
 
     if (activeTab === 'details') {
@@ -370,6 +383,7 @@ export default function RentRollWidget({
       setRowErrors(newRowErrors); // Update state with all current errors
 
       if (errorCount > 0) {
+          console.log("RentRollWidget: Validation failed with", errorCount, "errors");
           setWarningMessage(
               `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)\n• Occupied units (Current Rent > 0) have a Lease Start Date`
           );
@@ -391,7 +405,7 @@ export default function RentRollWidget({
       const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
           const item = items.find(i => i.unit_type === unitType);
           const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
-            c.unit_type?.trim().toLowerCase() === unitType?.trim().toLowerCase()
+            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
           );
           
           if (item) {
@@ -422,7 +436,9 @@ export default function RentRollWidget({
       
       payload.student_housing_config = updatedConfig;
 
+      console.log("RentRollWidget: Sending update payload", payload);
       await apiClient.updateManualOverrides(packageId, payload);
+      console.log("RentRollWidget: Update successful");
       setIsEditing({
         details: false,
         omExport: false,
@@ -461,7 +477,7 @@ export default function RentRollWidget({
           // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
           // So we must validate 'studentHousingConfig'.
           
-          const config = studentHousingConfig.unit_type_configs.find(c => c.unit_type?.trim() === unitType?.trim());
+          const config = studentHousingConfig.unit_type_configs.find(c => (c.unit_type || "").trim() === (unitType || "").trim());
           
           if (!config) {
               console.log(`Validation Failed: No config for ${unitType}`);
@@ -553,7 +569,7 @@ export default function RentRollWidget({
   };
 
   const handleCancel = () => {
-    setItems(rentRoll.map(item => ({ ...item, id: item.unit_number || `unit-${Math.random()}` })));
+    setItems(initializeItems(rentRoll, studentHousingConfig));
     setRowErrors({});
     setIsEditing(prev => ({ ...prev, [activeTab]: false }));
   };
@@ -593,6 +609,9 @@ export default function RentRollWidget({
         current_rent: 0,
         stabilized_rent: 0,
         market_rent: 0,
+        deposit: 0,
+        parking: "",
+        comments: "",
         move_in_date: "",
         lease_start: "",
         lease_end: "",
@@ -832,6 +851,9 @@ export default function RentRollWidget({
                    <th className="px-4 py-3 text-right">Current Rent</th>
                    <th className="px-4 py-3 text-right">Stabilized Rent</th>
                    <th className="px-4 py-3 text-right">Market Rent</th>
+                   {hasDeposits && <th className="px-4 py-3 text-right">Deposit</th>}
+                   {hasParking && <th className="px-4 py-3">Parking</th>}
+                   {hasComments && <th className="px-4 py-3">Comments</th>}
                    <th className="px-4 py-3 text-center">Move-In Date</th>
                    <th className="px-4 py-3 text-center">Lease Start</th>
                    <th className="px-4 py-3 text-center">Lease End</th>
@@ -853,6 +875,9 @@ export default function RentRollWidget({
                        handleItemChange={handleItemChange}
                        formatCurrency={formatCurrency}
                        removeItem={removeItem}
+                       hasDeposits={hasDeposits}
+                       hasParking={hasParking}
+                       hasComments={hasComments}
                      />
                    ))}
                  </SortableContext>
@@ -908,6 +933,10 @@ export default function RentRollWidget({
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_market_per_sf || 0).toFixed(2)}</span></div>
                      </div>
                   </td>
+                  {/* Dynamic footer spacers */}
+                  {(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0) > 0 && (
+                      <td colSpan={(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0)}></td>
+                  )}
                   <td colSpan={isEditing.details ? 4 : 3}></td>
                 </tr>
              </tfoot>
@@ -1036,7 +1065,7 @@ export default function RentRollWidget({
                       <td className="px-4 py-2.5">{item.unit_type}</td>
                       <td className="px-4 py-2.5">{config?.unit_config_label || item.unit_type}</td>
                       <td className="px-4 py-2.5 text-center">{bedCount}</td>
-                      <td className="px-4 py-2.5 text-center">{item.unit_type?.toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
+                      <td className="px-4 py-2.5 text-center">{(item.unit_type || "").toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
                       <td className="px-4 py-2.5">
                         {isEditing.omExport ? (
                           <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
@@ -1141,6 +1170,9 @@ function SortableRow({
   handleItemChange,
   formatCurrency,
   removeItem,
+  hasDeposits,
+  hasParking,
+  hasComments,
 }: {
   item: EditableRentRollItem;
   idx: number;
@@ -1149,6 +1181,9 @@ function SortableRow({
   handleItemChange: (index: number, field: keyof EditableRentRollItem, value: any) => void;
   formatCurrency: (val: number) => string;
   removeItem: (index: number) => void;
+  hasDeposits: boolean;
+  hasParking: boolean;
+  hasComments: boolean;
 }) {
   const handleNumericChange = (index: number, field: keyof EditableRentRollItem, value: string) => {
     const numericValue = value.replace(/[^0-9.]/g, '');
@@ -1298,6 +1333,53 @@ function SortableRow({
           formatCurrency(typeof item.market_rent === 'number' ? item.market_rent : parseFloat(item.market_rent) || 0)
         )}
       </td>
+
+      {hasDeposits && (
+        <td className="px-4 py-2.5 text-right text-neutral-600">
+          {isEditing ? (
+            <div className="w-20 ml-auto">
+              <input
+                type="text"
+                value={item.deposit}
+                onChange={(e) => handleNumericChange(idx, "deposit", e.target.value)}
+                className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+              />
+            </div>
+          ) : (
+            formatCurrency(typeof item.deposit === 'number' ? item.deposit : parseFloat(item.deposit) || 0)
+          )}
+        </td>
+      )}
+
+      {hasParking && (
+        <td className="px-4 py-2.5 text-neutral-600">
+          {isEditing ? (
+            <input
+              type="text"
+              value={item.parking || ""}
+              onChange={(e) => handleItemChange(idx, "parking", e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            />
+          ) : (
+            item.parking || "-"
+          )}
+        </td>
+      )}
+
+      {hasComments && (
+        <td className="px-4 py-2.5 text-neutral-600">
+           {isEditing ? (
+            <input
+              type="text"
+              value={item.comments || ""}
+              onChange={(e) => handleItemChange(idx, "comments", e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+            />
+          ) : (
+            <span className="truncate max-w-[150px] block" title={item.comments}>{item.comments || "-"}</span>
+          )}
+        </td>
+      )}
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
           <input

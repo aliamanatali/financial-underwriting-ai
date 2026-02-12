@@ -41,50 +41,80 @@ class ApiClient {
     file: File,
     onProgress?: (progress: { loaded: number; total: number; percentage: number }) => void
   ): Promise<UploadResponse> {
-    const xhr = new XMLHttpRequest();
+    try {
+      // Use fallback mime type if empty
+      const mimeType = file.type || 'application/pdf';
 
-    if (onProgress) {
-      xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          onProgress({
-            loaded: e.loaded,
-            total: e.total,
-            percentage: percentComplete,
+      // 1. Get Signed URL
+      const urlResponse = await fetch(`${OCR_API_URL}/api/documents/upload-url?filename=${encodeURIComponent(file.name)}&mime_type=${encodeURIComponent(mimeType)}`, {
+        method: 'POST',
+      });
+      
+      if (!urlResponse.ok) {
+        throw new Error('Failed to get upload URL');
+      }
+      
+      const { upload_url, document_id, storage_path } = await urlResponse.json();
+      
+      // 2. Upload directly to GCP using XMLHttpRequest for progress tracking
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        
+        if (onProgress) {
+          xhr.upload.addEventListener('progress', (e: ProgressEvent) => {
+            if (e.lengthComputable) {
+              const percentComplete = (e.loaded / e.total) * 100;
+              onProgress({
+                loaded: e.loaded,
+                total: e.total,
+                percentage: percentComplete,
+              });
+            }
           });
         }
-      });
-    }
-
-    return new Promise((resolve, reject) => {
-      xhr.addEventListener('load', () => {
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
-            resolve(response as UploadResponse);
-          } catch (e) {
-            reject(new Error('Failed to parse upload response'));
-          }
-        } else {
-          try {
-            const error = JSON.parse(xhr.responseText);
-            reject(new Error(error.detail || `Upload failed with status ${xhr.status}`));
-          } catch (e) {
+        
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
             reject(new Error(`Upload failed with status ${xhr.status}`));
           }
-        }
+        });
+        
+        xhr.addEventListener('error', () => {
+          reject(new Error('Network error during upload'));
+        });
+        
+        xhr.open('PUT', upload_url);
+        xhr.setRequestHeader('Content-Type', mimeType);
+        xhr.send(file);
       });
-
-      xhr.addEventListener('error', () => {
-        reject(new Error('Upload request failed'));
+      
+      // 3. Confirm upload and trigger processing
+      const confirmResponse = await fetch(`${OCR_API_URL}/api/documents/upload-confirm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          document_id,
+          storage_path,
+          filename: file.name,
+          mime_type: mimeType
+        }),
       });
-
-      const formData = new FormData();
-      formData.append('file', file);
-
-      xhr.open('POST', `${OCR_API_URL}/api/documents/upload`);
-      xhr.send(formData);
-    });
+      
+      if (!confirmResponse.ok) {
+        const error = await confirmResponse.json().catch(() => ({ detail: "Confirmation failed" }));
+        throw new Error(error.detail || 'Failed to confirm upload');
+      }
+      
+      return await confirmResponse.json();
+      
+    } catch (error) {
+      console.error("Upload error:", error);
+      throw error;
+    }
   }
 
   streamDocumentProgress(documentId: string, onProgress: (progress: ProcessingProgress) => void): EventSource {
@@ -154,9 +184,15 @@ class ApiClient {
     // No content expected on successful deletion
   }
 
-  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{ signed_url: string }> {
+  async getDocumentContentUrl(packageId: string, documentId: string): Promise<{
+    signed_url?: string,
+    content?: string,
+    encoding?: string,
+    content_type?: string,
+    filename?: string
+  }> {
     const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/content`);
-    return this.handleResponse<{ signed_url: string }>(response);
+    return this.handleResponse(response);
   }
 
   // --- Financial Engine Methods ---
@@ -228,6 +264,26 @@ class ApiClient {
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
       throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
+  async updateDocumentCategory(packageId: string, documentId: string, newCategory: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/category?new_category=${encodeURIComponent(newCategory)}`, {
+      method: 'PUT',
+    });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+  }
+
+  async deleteDocumentFromPackage(packageId: string, documentId: string): Promise<void> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/multi-document/packages/${packageId}/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+        throw new Error(error.detail || `HTTP error! status: ${response.status}`);
     }
   }
 
@@ -460,6 +516,60 @@ class ApiClient {
     }
 
     return response.json();
+  }
+  async chatWithReport(documentId: string, messages: { role: string; content: string }[]): Promise<{ response: string }> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async *chatWithReportStream(documentId: string, messages: { role: string; content: string }[]): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/analysis/${documentId}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: "An unknown error occurred." }));
+      throw new Error(error.detail || `HTTP error! status: ${response.status}`);
+    }
+
+    if (!response.body) throw new Error("No response body");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.token) yield data.token;
+            if (data.error) throw new Error(data.error);
+          } catch (e) {
+            console.error('Error parsing stream data:', e);
+          }
+        }
+      }
+    }
   }
 }
 

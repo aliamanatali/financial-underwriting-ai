@@ -14,11 +14,13 @@ from google.auth.exceptions import DefaultCredentialsError  # type: ignore
 
 from app.config import settings
 import logging
+from app.db.mongodb import get_database
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
 
-# In-memory storage for when GCP is not configured
+# In-memory storage for when GCP/Mongo is not configured
 _memory_storage: Dict[str, dict] = {}
 
 # Cache for package list to avoid repeated GCP calls
@@ -29,18 +31,27 @@ logger = logging.getLogger(__name__)
 
 
 class StorageService:
-    """Service for managing file storage and deal package persistence with GCP Cloud Storage."""
+    """
+    Service for managing file storage (GCP) and deal package persistence (MongoDB).
+    Metadata is stored in MongoDB if configured, otherwise falls back to GCP -> Memory.
+    Files are always stored in GCP or skipped if not configured.
+    """
     
     def __init__(self):
         """Initialize GCP Cloud Storage service."""
         self.use_gcp = settings.use_gcp
+        self.use_mongodb = settings.use_mongodb
         
         if self.use_gcp:
             self._init_gcp_storage()
         else:
-            logger.warning("GCP Cloud Storage not configured. Using in-memory storage only.")
+            logger.warning("GCP Cloud Storage not configured. Using local file storage.")
             self.storage_client = None
             self.bucket = None
+            
+        # Initialize local storage directory
+        self.local_storage_dir = Path("data/storage")
+        self.local_storage_dir.mkdir(parents=True, exist_ok=True)
     
     def _init_gcp_storage(self):
         """Initialize GCP Cloud Storage client."""
@@ -111,14 +122,6 @@ class StorageService:
             logger.error(f"Failed to initialize GCP Cloud Storage: {str(e)}")
             raise
     
-    def _get_package_metadata_path(self, package_id: str) -> str:
-        """Get storage path for package metadata."""
-        return f"deal-packages/{package_id}/metadata.json"
-
-    def _get_analysis_result_path(self, package_id: str) -> str:
-        """Get storage path for analysis result."""
-        return f"deal-packages/{package_id}/analysis_result.json"
-    
     def _get_document_path(self, package_id: str, document_id: str, filename: str) -> str:
         """Get storage path for document file."""
         extension = Path(filename).suffix
@@ -126,7 +129,7 @@ class StorageService:
     
     async def save_deal_package(self, package_data: dict) -> bool:
         """
-        Save deal package metadata to GCP Cloud Storage.
+        Save deal package metadata to MongoDB (or fallback).
         
         Args:
             package_data: Dictionary containing package metadata
@@ -134,40 +137,35 @@ class StorageService:
         Returns:
             True if saved successfully
         """
-        global _package_list_cache
-        
         package_id = package_data.get("package_id")
         if not package_id:
             logger.error("package_id is required")
             return False
 
-        if not self.use_gcp:
-            logger.warning("GCP not configured. Using in-memory storage.")
-            _memory_storage[package_id] = package_data
-            return True
-        
-        try:
-            # Convert to JSON
-            json_data = json.dumps(package_data, indent=2, default=str)
-            
-            # Save to GCP
-            blob_path = self._get_package_metadata_path(package_id)
-            blob = self.bucket.blob(blob_path)
-            blob.upload_from_string(json_data, content_type="application/json")
-            
-            # Invalidate cache since we modified the package list
-            _package_list_cache = None
-            
-            logger.info(f"Saved deal package metadata: {package_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to save deal package: {str(e)}")
-            return False
+        # 1. MongoDB Strategy (Preferred)
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                # Upsert based on package_id
+                await db.deal_packages.update_one(
+                    {"package_id": package_id},
+                    {"$set": package_data},
+                    upsert=True
+                )
+                logger.info(f"Saved deal package metadata to MongoDB: {package_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to save deal package to MongoDB: {str(e)}")
+                return False
+
+        # 2. Fallback Strategy (In-Memory)
+        logger.warning("MongoDB not configured. Using in-memory storage for metadata.")
+        _memory_storage[package_id] = package_data
+        return True
 
     async def save_analysis_result(self, package_id: str, analysis_data: dict) -> bool:
         """
-        Save underwriting analysis result to GCP Cloud Storage.
+        Save underwriting analysis result to MongoDB (or fallback).
         
         Args:
             package_id: Package identifier
@@ -176,30 +174,33 @@ class StorageService:
         Returns:
             True if saved successfully
         """
-        if not self.use_gcp:
-            logger.warning("GCP not configured. Using in-memory storage for analysis result.")
-            _memory_storage[f"{package_id}_analysis"] = analysis_data
-            return True
-        
-        try:
-            # Convert to JSON
-            json_data = json.dumps(analysis_data, indent=2, default=str)
-            
-            # Save to GCP
-            blob_path = self._get_analysis_result_path(package_id)
-            blob = self.bucket.blob(blob_path)
-            blob.upload_from_string(json_data, content_type="application/json")
-            
-            logger.info(f"Saved analysis result: {package_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to save analysis result: {str(e)}")
-            return False
+        # 1. MongoDB Strategy (Preferred)
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                # Upsert based on document_id (which acts as package_id for single-doc analysis)
+                # Note: analysis_data usually contains 'document_id' which maps to package_id here
+                doc_id = analysis_data.get("document_id", package_id)
+                
+                await db.analysis_results.update_one(
+                    {"document_id": doc_id},
+                    {"$set": analysis_data},
+                    upsert=True
+                )
+                logger.info(f"Saved analysis result to MongoDB: {package_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to save analysis result to MongoDB: {str(e)}")
+                return False
+
+        # 2. Fallback Strategy
+        logger.warning("MongoDB not configured. Using in-memory storage for analysis result.")
+        _memory_storage[f"{package_id}_analysis"] = analysis_data
+        return True
 
     async def get_analysis_result(self, package_id: str) -> Optional[dict]:
         """
-        Retrieve underwriting analysis result from GCP Cloud Storage.
+        Retrieve underwriting analysis result from MongoDB (or fallback).
         
         Args:
             package_id: Package identifier
@@ -207,31 +208,31 @@ class StorageService:
         Returns:
             Analysis result dictionary or None if not found
         """
-        if not self.use_gcp:
-            return _memory_storage.get(f"{package_id}_analysis")
-        
-        try:
-            blob_path = self._get_analysis_result_path(package_id)
-            blob = self.bucket.blob(blob_path)
-            
-            if not blob.exists():
-                logger.warning(f"Analysis result not found in GCP: {package_id}")
+        # 1. MongoDB Strategy
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                # In single-doc mode, package_id == document_id
+                result = await db.analysis_results.find_one({"document_id": package_id})
+                if result:
+                    # Remove Mongo _id
+                    if "_id" in result:
+                        del result["_id"]
+                    logger.info(f"Retrieved analysis result from MongoDB: {package_id}")
+                    return result
+                else:
+                    logger.warning(f"Analysis result not found in MongoDB: {package_id}")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to retrieve analysis result from MongoDB: {str(e)}")
                 return None
-            
-            # Download and parse JSON
-            json_data = blob.download_as_text()
-            analysis_data = json.loads(json_data)
-            
-            logger.info(f"Retrieved analysis result: {package_id}")
-            return analysis_data
-            
-        except Exception as e:
-            logger.error(f"Failed to retrieve analysis result: {str(e)}")
-            return None
+
+        # 2. Fallback Strategy
+        return _memory_storage.get(f"{package_id}_analysis")
     
     async def get_deal_package(self, package_id: str) -> Optional[dict]:
         """
-        Retrieve deal package metadata from GCP Cloud Storage.
+        Retrieve deal package metadata from MongoDB (or fallback).
         
         Args:
             package_id: Package identifier
@@ -239,125 +240,79 @@ class StorageService:
         Returns:
             Package metadata dictionary or None if not found
         """
-        if not self.use_gcp:
-            return _memory_storage.get(package_id)
-        
-        try:
-            blob_path = self._get_package_metadata_path(package_id)
-            blob = self.bucket.blob(blob_path)
-            
-            if not blob.exists():
-                logger.warning(f"Package not found in GCP: {package_id}")
+        # 1. MongoDB Strategy
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                result = await db.deal_packages.find_one({"package_id": package_id})
+                if result:
+                    if "_id" in result:
+                        del result["_id"]
+                    logger.info(f"Retrieved deal package from MongoDB: {package_id}")
+                    return result
+                else:
+                    logger.warning(f"Package not found in MongoDB: {package_id}")
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to retrieve deal package from MongoDB: {str(e)}")
                 return None
-            
-            # Download and parse JSON
-            json_data = blob.download_as_text()
-            package_data = json.loads(json_data)
-            
-            logger.info(f"Retrieved deal package: {package_id}")
-            return package_data
-            
-        except Exception as e:
-            logger.error(f"Failed to retrieve deal package: {str(e)}")
-            return None
+
+        # 2. Fallback Strategy
+        return _memory_storage.get(package_id)
     
     async def list_deal_packages(self, limit: Optional[int] = None, offset: int = 0, force_refresh: bool = False) -> tuple[List[dict], int]:
         """
-        List deal packages from GCP Cloud Storage with pagination support and caching.
+        List deal packages from MongoDB with pagination support.
         
         Args:
             limit: Maximum number of packages to return (None = all)
             offset: Number of packages to skip
-            force_refresh: Force refresh of cache
+            force_refresh: Ignored for MongoDB
             
         Returns:
             Tuple of (packages list, total count)
         """
-        global _package_list_cache
+        # 1. MongoDB Strategy
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                total = await db.deal_packages.count_documents({})
+                
+                cursor = db.deal_packages.find({}).sort("created_at", -1).skip(offset)
+                if limit is not None:
+                    cursor = cursor.limit(limit)
+                
+                packages = []
+                async for pkg in cursor:
+                    if "_id" in pkg:
+                        del pkg["_id"]
+                    packages.append(pkg)
+                
+                logger.info(f"Listed {len(packages)} deal packages from MongoDB (total={total})")
+                return packages, total
+            except Exception as e:
+                logger.error(f"Failed to list deal packages from MongoDB: {str(e)}")
+                return [], 0
+
+        # 2. Fallback Strategy
+        # Filter out analysis results (keys ending with _analysis)
+        packages = [
+            pkg for key, pkg in _memory_storage.items()
+            if not key.endswith('_analysis') and isinstance(pkg, dict) and 'package_id' in pkg
+        ]
+        # Sort by created_at (newest first)
+        packages.sort(key=lambda p: p.get('created_at', ''), reverse=True)
+        total = len(packages)
         
-        if not self.use_gcp:
-            # Filter out analysis results (keys ending with _analysis)
-            packages = [
-                pkg for key, pkg in _memory_storage.items()
-                if not key.endswith('_analysis') and isinstance(pkg, dict) and 'package_id' in pkg
-            ]
-            # Sort by created_at (newest first)
-            packages.sort(key=lambda p: p.get('created_at', ''), reverse=True)
-            total = len(packages)
-            
-            # Apply pagination
-            if limit is not None:
-                packages = packages[offset:offset + limit]
-            
-            return packages, total
+        # Apply pagination
+        if limit is not None:
+            packages = packages[offset:offset + limit]
         
-        try:
-            # Check if cache is valid
-            cache_valid = False
-            if _package_list_cache is not None and not force_refresh:
-                cached_list, cache_time = _package_list_cache
-                age = (datetime.utcnow() - cache_time).total_seconds()
-                if age < _CACHE_TTL_SECONDS:
-                    cache_valid = True
-                    package_list = cached_list
-                    logger.debug(f"Using cached package list (age: {age:.1f}s)")
-            
-            if not cache_valid:
-                # List all metadata files - only collect blob references (lightweight)
-                logger.debug("Refreshing package list cache from GCP...")
-                blobs = self.bucket.list_blobs(prefix="deal-packages/")
-                
-                # Collect package metadata with timestamps (lightweight - no downloads yet)
-                package_list = []
-                
-                for blob in blobs:
-                    if blob.name.endswith("/metadata.json"):
-                        try:
-                            # Only store blob reference and timestamp (no download)
-                            package_list.append({
-                                'blob': blob,
-                                'updated': blob.updated  # GCP blob metadata timestamp
-                            })
-                        except Exception as e:
-                            logger.error(f"Error processing blob {blob.name}: {str(e)}")
-                            continue
-                
-                # Sort by update time (newest first) using GCP metadata
-                package_list.sort(key=lambda x: x['updated'], reverse=True)
-                
-                # Update cache
-                _package_list_cache = (package_list, datetime.utcnow())
-                logger.debug(f"Cached {len(package_list)} package references")
-            
-            total = len(package_list)
-            
-            # Apply pagination at the blob level BEFORE downloading
-            if limit is not None:
-                paginated_list = package_list[offset:offset + limit]
-            else:
-                paginated_list = package_list[offset:]
-            
-            # Now download ONLY the packages we need for this page
-            packages = []
-            for item in paginated_list:
-                try:
-                    json_data = item['blob'].download_as_text()
-                    package_data = json.loads(json_data)
-                    packages.append(package_data)
-                except Exception as e:
-                    logger.error(f"Error loading package from {item['blob'].name}: {str(e)}")
-                    continue
-            
-            logger.info(f"Returned {len(packages)} of {total} deal packages (limit={limit}, offset={offset})")
-            return packages, total
-            
-        except Exception as e:
-            logger.error(f"Failed to list deal packages: {str(e)}", exc_info=True)
-            return [], 0
+        return packages, total
     
     async def delete_deal_package(self, package_id: str) -> bool:
         """
-        Delete deal package and all its documents from GCP Cloud Storage.
+        Delete deal package from MongoDB and associated files from GCP or local storage.
         
         Args:
             package_id: Package identifier
@@ -365,25 +320,58 @@ class StorageService:
         Returns:
             True if deleted successfully
         """
-        if not self.use_gcp:
-            return False
+        success = True
+
+        # 1. Delete Metadata from MongoDB
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                await db.deal_packages.delete_one({"package_id": package_id})
+                await db.analysis_results.delete_one({"document_id": package_id})
+                logger.info(f"Deleted deal package metadata from MongoDB: {package_id}")
+            except Exception as e:
+                logger.error(f"Failed to delete deal package from MongoDB: {str(e)}")
+                success = False
+
+        # 2. Delete Files from GCP (if configured)
+        if self.use_gcp:
+            try:
+                # Delete all files in the package directory
+                prefix = f"deal-packages/{package_id}/"
+                
+                def _delete_blobs():
+                    blobs = self.bucket.list_blobs(prefix=prefix)
+                    count = 0
+                    for blob in blobs:
+                        blob.delete()
+                        count += 1
+                    return count
+
+                deleted_count = await run_in_threadpool(_delete_blobs)
+                
+                logger.info(f"Deleted deal package files from GCP: {package_id} ({deleted_count} files)")
+            except Exception as e:
+                logger.error(f"Failed to delete deal package files from GCP: {str(e)}")
+                success = False
+        else:
+            # Delete files from local storage
+            try:
+                import shutil
+                package_dir = self.local_storage_dir / "deal-packages" / package_id
+                if package_dir.exists():
+                    shutil.rmtree(package_dir)
+                    logger.info(f"Deleted local deal package files: {package_dir}")
+            except Exception as e:
+                logger.error(f"Failed to delete local deal package files: {str(e)}")
+                success = False
         
-        try:
-            # Delete all files in the package directory
-            prefix = f"deal-packages/{package_id}/"
-            blobs = self.bucket.list_blobs(prefix=prefix)
+        # 3. Memory cleanup
+        if package_id in _memory_storage:
+            del _memory_storage[package_id]
+        if f"{package_id}_analysis" in _memory_storage:
+            del _memory_storage[f"{package_id}_analysis"]
             
-            deleted_count = 0
-            for blob in blobs:
-                blob.delete()
-                deleted_count += 1
-            
-            logger.info(f"Deleted deal package {package_id} ({deleted_count} files)")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to delete deal package: {str(e)}")
-            return False
+        return success
     
     async def save_document_file(
         self,
@@ -393,7 +381,7 @@ class StorageService:
         file_content: bytes
     ) -> Optional[str]:
         """
-        Save document file to GCP Cloud Storage.
+        Save document file to GCP Cloud Storage or local storage.
         
         Args:
             package_id: Package identifier
@@ -404,33 +392,46 @@ class StorageService:
         Returns:
             Storage path if saved successfully, None otherwise
         """
-        if not self.use_gcp:
-            logger.warning("GCP not configured. Document file not persisted.")
-            return None
+        blob_path = self._get_document_path(package_id, document_id, filename)
         
-        try:
-            blob_path = self._get_document_path(package_id, document_id, filename)
-            blob = self.bucket.blob(blob_path)
-            
-            # Determine content type
-            content_type = self._get_content_type(filename)
-            
-            # Upload file
-            blob.upload_from_file(
-                BytesIO(file_content),
-                content_type=content_type
-            )
-            
-            logger.info(f"Saved document file: {filename} -> {blob_path}")
-            return blob_path
-            
-        except Exception as e:
-            logger.error(f"Failed to save document file: {str(e)}")
-            return None
+        if self.use_gcp:
+            try:
+                blob = self.bucket.blob(blob_path)
+                
+                # Determine content type
+                content_type = self._get_content_type(filename)
+                
+                # Upload file
+                await run_in_threadpool(
+                    blob.upload_from_file,
+                    BytesIO(file_content),
+                    content_type=content_type
+                )
+                
+                logger.info(f"Saved document file to GCP: {filename} -> {blob_path}")
+                return blob_path
+                
+            except Exception as e:
+                logger.error(f"Failed to save document file to GCP: {str(e)}")
+                return None
+        else:
+            # Local Storage
+            try:
+                full_path = self.local_storage_dir / blob_path
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(full_path, "wb") as f:
+                    f.write(file_content)
+                    
+                logger.info(f"Saved document file locally: {filename} -> {full_path}")
+                return str(full_path)
+            except Exception as e:
+                logger.error(f"Failed to save document file locally: {str(e)}")
+                return None
     
     async def get_document_file(self, storage_path: str) -> Optional[bytes]:
         """
-        Retrieve document file from GCP Cloud Storage.
+        Retrieve document file from GCP Cloud Storage or local storage.
         
         Args:
             storage_path: Path to the file in storage
@@ -438,25 +439,41 @@ class StorageService:
         Returns:
             File content as bytes or None if not found
         """
-        if not self.use_gcp:
-            return None
-        
-        try:
-            blob = self.bucket.blob(storage_path)
-            
-            if not blob.exists():
-                logger.warning(f"Document file not found: {storage_path}")
+        if self.use_gcp:
+            try:
+                blob = self.bucket.blob(storage_path)
+                
+                if not blob.exists():
+                    logger.warning(f"Document file not found in GCP: {storage_path}")
+                    return None
+                
+                # Download file content
+                data = await run_in_threadpool(blob.download_as_bytes)
+                
+                logger.info(f"Retrieved document file from GCP: {storage_path}")
+                return data
+                
+            except Exception as e:
+                logger.error(f"Failed to retrieve document file from GCP: {str(e)}")
                 return None
-            
-            # Download file content
-            data = blob.download_as_bytes()
-            
-            logger.info(f"Retrieved document file: {storage_path}")
-            return data
-            
-        except Exception as e:
-            logger.error(f"Failed to retrieve document file: {str(e)}")
-            return None
+        else:
+            # Local Storage
+            try:
+                # storage_path is like "deal-packages/..."
+                full_path = self.local_storage_dir / storage_path
+                
+                if not full_path.exists():
+                    logger.warning(f"Document file not found locally: {full_path}")
+                    return None
+                    
+                with open(full_path, "rb") as f:
+                    data = f.read()
+                    
+                logger.info(f"Retrieved document file locally: {storage_path}")
+                return data
+            except Exception as e:
+                logger.error(f"Failed to retrieve document file locally: {str(e)}")
+                return None
     
     async def get_signed_url(self, storage_path: str, expiration_minutes: int = 15) -> Optional[str]:
         """
@@ -470,7 +487,9 @@ class StorageService:
             Signed URL string or None if failed
         """
         if not self.use_gcp:
-            logger.warning("Cannot generate signed URL: GCP not configured")
+            # For local storage, we can't generate a real signed URL that works externally.
+            # The API endpoint get_package_document_content serves content directly anyway.
+            # Returning None makes the frontend use the proxy endpoint.
             return None
         
         try:

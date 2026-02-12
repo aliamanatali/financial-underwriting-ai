@@ -26,32 +26,38 @@ class PDF(FPDF):
         self.set_text_color(0, 0, 0)
 
 class MemoService:
-    def __init__(self, gemini_service: "GeminiService" = None):
+    def __init__(self, gemini_service: "GeminiService" = None, openai_service: "OpenAIClient" = None):
         self.gemini_service = gemini_service
+        self.openai_service = openai_service
 
-    def generate_investment_memo(self, analysis_data: UnderwritingAnalysis) -> str:
+    async def generate_investment_memo(self, analysis_data: UnderwritingAnalysis) -> str:
         """
         Generates a markdown-formatted investment memo using an LLM.
-        Falls back to template if LLM is unavailable.
+        Prioritizes OpenAI if available, then Gemini, then Template.
         """
         try:
-            if self.gemini_service:
-                memo_content = self._generate_memo_with_llm(analysis_data)
+            if self.openai_service and self.openai_service.client:
+                logger.info("Generating Investment Memo using OpenAI...")
+                memo_content = await self._generate_memo_with_llm(analysis_data, use_openai=True)
+            elif self.gemini_service:
+                logger.info("Generating Investment Memo using Gemini...")
+                memo_content = await self._generate_memo_with_llm(analysis_data, use_openai=False)
             else:
+                logger.warning("No LLM service available. Using Template.")
                 memo_content = self._generate_memo_template(analysis_data)
             return memo_content
         except Exception as e:
             logger.error(f"Error generating memo: {e}. Falling back to template.")
             return self._generate_memo_template(analysis_data)
 
-    def _generate_memo_with_llm(self, analysis_data: UnderwritingAnalysis) -> str:
+    async def _generate_memo_with_llm(self, analysis_data: UnderwritingAnalysis, use_openai: bool = False) -> str:
         """
         Uses LLM to generate a sophisticated investment memo.
         """
         # Calculate metrics
         cap_rate = analysis_data.cap_rate * 100 if analysis_data.cap_rate else 0
         historical_cap_rate = analysis_data.historical_cap_rate * 100 if analysis_data.historical_cap_rate else 0
-        occupancy_rate = analysis_data.rent_roll_summary.occupancy_rate * 100
+        occupancy_rate = analysis_data.rent_roll_summary.occupancy_rate * 100 if analysis_data.rent_roll_summary else 0
         upside = cap_rate - historical_cap_rate
 
         # Ensure distinct status
@@ -102,7 +108,15 @@ class MemoService:
         """
         
         try:
-            memo = self.gemini_service.generate_content(prompt)
+            if use_openai:
+                memo = await self.openai_service.generate_content_async(prompt)
+            else:
+                # Check if service supports async
+                if hasattr(self.gemini_service, 'generate_content_async'):
+                    # Use fast model for memo generation to speed up the process
+                    memo = await self.gemini_service.generate_content_async(prompt, use_fast_model=True)
+                else:
+                    memo = self.gemini_service.generate_content(prompt)
             return memo
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
@@ -228,14 +242,14 @@ class MemoService:
             # Move to next line
             pdf.set_y(y_start + max_height)
 
-    def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
+    async def generate_investment_memo_pdf(self, analysis_data: UnderwritingAnalysis) -> bytes:
         """
         Generates a PDF investment memo.
         """
         if analysis_data.investment_memo:
             content = analysis_data.investment_memo
         else:
-            content = self.generate_investment_memo(analysis_data)
+            content = await self.generate_investment_memo(analysis_data)
         
         pdf = PDF()
         pdf.add_page()

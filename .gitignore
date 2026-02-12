@@ -54,6 +54,8 @@ ENV/
 # Uploads
 ocr-backend/uploads/
 *.pdf
+# Local Storage
+financial-engine/data/
 
 # Logs
 *.log
@@ -107,3 +109,4 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+financial-engine/batch_logs/

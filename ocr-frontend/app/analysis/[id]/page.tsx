@@ -9,6 +9,7 @@ import AuditTrailWidget from "@/components/AuditTrailWidget";
 import ExportButtons from "@/components/ExportButtons";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
+import ReportChatWidget from "@/components/ReportChatWidget";
 
 const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, sourceContext: string) => {
   console.log(`🔍 INTERNAL AUDIT REPORT: Analysis Data Load (${sourceContext})`);
@@ -176,6 +177,11 @@ export default function AnalysisResultPage() {
     if (id) {
       const fetchAnalysis = async () => {
         try {
+          // Prevent unnecessary re-fetches if data is already loaded and valid for this ID
+          if (analysis && analysis.document_id === id && !isLoading) {
+             return;
+          }
+
           setIsLoading(true);
           setError(null);
           setProgress({ percentage: 0, message: "Starting analysis..." });
@@ -272,7 +278,7 @@ export default function AnalysisResultPage() {
     return () => {
         closeEventSource();
     };
-  }, [id, API_BASE_URL]);
+  }, [id]); // Removed API_BASE_URL from dependencies to prevent re-runs on env var ref changes
 
   if (isLoading) {
     return (
@@ -528,6 +534,9 @@ export default function AnalysisResultPage() {
           </div>
         </main>
       </div>
+
+      {/* Chat Widget */}
+      <ReportChatWidget documentId={id} />
 
       <style jsx global>{`
         .no-scrollbar::-webkit-scrollbar {

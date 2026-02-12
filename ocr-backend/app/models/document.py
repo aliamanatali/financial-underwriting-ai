@@ -72,10 +72,26 @@ class DocumentUploadResponse(BaseModel):
     message: str = Field(default="Document uploaded successfully", description="Status message")
 
 
+class UploadUrlResponse(BaseModel):
+    """Response with signed URL for direct upload."""
+    upload_url: str = Field(..., description="Signed URL for PUT request")
+    document_id: str = Field(..., description="Pre-generated document ID")
+    storage_path: str = Field(..., description="Storage path for confirmation")
+
+
+class UploadConfirmationRequest(BaseModel):
+    """Request to confirm upload completion."""
+    document_id: str = Field(..., description="Document ID from upload URL")
+    storage_path: str = Field(..., description="Storage path from upload URL")
+    filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
+
+
 class DocumentResponse(BaseModel):
     """Complete document information response."""
     document_id: str = Field(..., description="Unique document identifier")
     filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
     status: ProcessingStatus = Field(..., description="Current processing status")
     task_id: Optional[str] = Field(default=None, description="Celery task ID for tracking")
     task_status: Optional[str] = Field(default=None, description="Celery task status (PENDING, STARTED, SUCCESS, FAILURE)")
@@ -117,6 +133,7 @@ class Document(BaseModel):
     """Document entity stored in database."""
     document_id: str = Field(..., description="Unique document identifier")
     filename: str = Field(..., description="Original filename")
+    mime_type: str = Field(default="application/pdf", description="MIME type of the file")
     status: ProcessingStatus = Field(..., description="Current processing status")
     extracted_text: Optional[str] = Field(default=None, description="Extracted text content")
     metadata: Optional[DocumentMetadata] = Field(default=None, description="Document metadata")

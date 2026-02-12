@@ -39,6 +39,8 @@ export default function ZipUpload({
   const router = useRouter();
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [phase, setPhase] = useState<'uploading' | 'processing'>('uploading');
+  const [processingMessage, setProcessingMessage] = useState<string>("Initializing...");
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ loaded: 0, total: 0, percentage: 0 });
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -117,21 +119,38 @@ export default function ZipUpload({
     }
 
     setIsUploading(true);
+    setPhase('uploading');
     setUploadProgress({ loaded: 0, total: file.size, percentage: 0 });
     startTimeRef.current = Date.now();
 
     try {
       // Use chunked upload for better large file support
-      const data = await apiClient.uploadZipChunked(file, (progress) => {
-        setUploadProgress(progress);
-        
-        // Calculate speed
-        const elapsedTime = (Date.now() - startTimeRef.current) / 1000; // seconds
-        if (elapsedTime > 0) {
-          const speed = progress.loaded / elapsedTime; // bytes per second
-          setUploadSpeed(formatSpeed(speed));
+      const data = await apiClient.uploadZipChunked(
+        file,
+        (progress) => {
+          setUploadProgress(progress);
+          
+          // Calculate speed
+          const elapsedTime = (Date.now() - startTimeRef.current) / 1000; // seconds
+          if (elapsedTime > 0) {
+            const speed = progress.loaded / elapsedTime; // bytes per second
+            setUploadSpeed(formatSpeed(speed));
+          }
+
+          if (progress.percentage === 100) {
+             setPhase('processing');
+             setProcessingMessage("Finalizing upload & starting analysis...");
+          }
+        },
+        (processing) => {
+           setPhase('processing');
+           setProcessingMessage(processing.message);
+           setUploadProgress(prev => ({
+               ...prev,
+               percentage: processing.percentage
+           }));
         }
-      });
+      );
 
       setDealPackage(data);
       
@@ -250,7 +269,7 @@ export default function ZipUpload({
               <div className="flex mb-2 items-center justify-between">
                 <div>
                   <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-[#FF5E00] bg-[#FFF5F0]">
-                    Uploading
+                    {phase === 'uploading' ? 'Uploading' : 'Processing'}
                   </span>
                 </div>
                 <div className="text-right">
@@ -276,12 +295,12 @@ export default function ZipUpload({
 
             <div className="space-y-2">
               <p className="text-gray-700 font-medium text-lg">
-                {uploadProgress.percentage < 100 ? "Uploading ZIP file..." : "Processing ZIP file..."}
+                {phase === 'uploading' ? "Uploading ZIP file..." : processingMessage}
               </p>
               <p className="text-sm text-gray-600">
-                {uploadProgress.percentage < 100
+                {phase === 'uploading'
                   ? "Please wait while we upload your documents."
-                  : "Extracting and categorizing documents. This may take a moment."}
+                  : "We are analyzing your documents. This may take a minute."}
               </p>
             </div>
             

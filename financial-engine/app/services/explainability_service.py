@@ -11,10 +11,12 @@ from app.models.schemas import (
 )
 from typing import List, Dict, Any, Optional
 from app.services.gemini_client import GeminiClient
+from app.services.openai_client import OpenAIClient
 
 class ExplainabilityService:
-    def __init__(self, gemini_client: Optional[GeminiClient] = None):
+    def __init__(self, gemini_client: Optional[GeminiClient] = None, openai_service: Optional[OpenAIClient] = None):
         self.gemini_client = gemini_client
+        self.openai_service = openai_service
 
     async def generate_explanations(self, analysis: UnderwritingAnalysis) -> UnderwritingAnalysis:
         """
@@ -55,54 +57,67 @@ class ExplainabilityService:
         self._explain_moic()
 
         # --- Conclusion ---
-        self._generate_conclusion()
+        await self._generate_conclusion()
         
-        # --- Analyst Commentary (GenAI) ---
-        if self.gemini_client:
-            await self._generate_analyst_commentary()
+        # Note: Analyst Commentary (GenAI) is now called separately via generate_analyst_commentary
+        # to allow for parallel execution with other LLM tasks.
 
         analysis.explainability = self.explanations
         return analysis
 
-    async def _generate_analyst_commentary(self):
+    async def generate_analyst_commentary(self, analysis: UnderwritingAnalysis = None):
         """
         Generates a 3-paragraph analyst commentary using GenAI.
         """
-        # Prepare context
-        context = {
-            "address": self.analysis.property_meta.address,
-            "purchase_price": self.analysis.property_meta.purchase_price,
-            "units": self.analysis.property_meta.total_units,
-            "noi": self.analysis.pro_forma_noi,
-            "cap_rate": self.analysis.cap_rate,
-            "dscr": self.analysis.dscr,
-            "status": self.analysis.pass_fail_status,
-            "gating_reasons": self.analysis.gating_reasons,
-            "loss_to_lease": self.analysis.loss_to_lease,
-            "growth_rate": self.params.growth_rate,
-            "irr": self.analysis.irr,
-            "moic": self.analysis.moic
-        }
-        
-        prompt = f"""
-        Context Data:
-        {context}
-
-        Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Discuss potential physical/structural considerations based on property age and highlight the upside in rent."
-        
-        Guidance for AI:
-        - If the status is PASS, you generally approve. If FAIL, you reject.
-        - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
-        - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
-        - "Upside in rent" refers to the Loss to Lease (Current vs Market).
-        """
-        
         try:
-            commentary = await self.gemini_client.generate_content_async(prompt)
-            self.analysis.analyst_commentary = commentary
+            if analysis:
+                self.analysis = analysis
+                self.params = analysis.deal_parameters or DealParameters()
+                
+            # Prepare context
+            context = {
+                "property_name": self.analysis.property_meta.property_name,
+                "address": self.analysis.property_meta.address,
+                "purchase_price": self.analysis.property_meta.purchase_price,
+                "units": self.analysis.property_meta.total_units,
+                "noi": self.analysis.pro_forma_noi,
+                "cap_rate": self.analysis.cap_rate,
+                "dscr": self.analysis.dscr,
+                "status": self.analysis.pass_fail_status,
+                "gating_reasons": self.analysis.gating_reasons,
+                "loss_to_lease": self.analysis.loss_to_lease,
+                "growth_rate": self.params.growth_rate,
+                "irr": self.analysis.irr,
+                "moic": self.analysis.moic
+            }
+            
+            prompt = f"""
+            Context Data:
+            {context}
+
+            Prompt: "Act as a Senior Investment Analyst. Write a 3-paragraph summary explaining why you approved or rejected this deal. Discuss potential physical/structural considerations based on property age and highlight the upside in rent."
+            
+            Guidance for AI:
+            - If the status is PASS, you generally approve. If FAIL, you reject.
+            - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
+            - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
+            - "Upside in rent" refers to the Loss to Lease (Current vs Market).
+            """
+            
+            if self.openai_service and self.openai_service.client:
+                # Use OpenAI for commentary
+                commentary = await self.openai_service.generate_content_async(prompt)
+                self.analysis.analyst_commentary = commentary
+            elif self.gemini_client:
+                # Use fast model for commentary
+                commentary = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+                self.analysis.analyst_commentary = commentary
+            else:
+                self.analysis.analyst_commentary = "Analyst commentary unavailable (AI Service not initialized)."
+                
         except Exception as e:
             print(f"Failed to generate commentary: {e}")
-            self.analysis.analyst_commentary = "Analyst commentary unavailable due to service error."
+            self.analysis.analyst_commentary = f"Analyst commentary unavailable due to error: {str(e)}"
 
     def _add_explanation(self, key: str, meta: ExplainabilityMetadata):
         self.explanations[key] = meta
@@ -660,7 +675,7 @@ class ExplainabilityService:
             classification="Derived"
         ))
 
-    def _generate_conclusion(self):
+    async def _generate_conclusion(self):
         """
         Generates a high-level conclusion and decision impact analysis.
         """
@@ -756,7 +771,8 @@ class ExplainabilityService:
         # Dynamic near_campus determination
         # TODO: Integrate with geocoding API to determine proximity to universities
         address = self.analysis.property_meta.address or ""
-        near_campus = self._determine_campus_proximity(address)
+        prop_name = self.analysis.property_meta.property_name or ""
+        near_campus = await self._determine_campus_proximity(address, prop_name)
         
         # Dynamic primary risks based on deal characteristics
         primary_risks = self._identify_primary_risks()
@@ -766,7 +782,7 @@ class ExplainabilityService:
         
         # Check if address came from a specific doc
         address_source = self._get_source("Property Address", "Offering Memorandum")
-        campus_source = f"Google Maps Analysis ({address_source})"
+        campus_source = f"AI Location Analysis ({address_source})"
         
         # Rent Roll Analysis Sources
         rent_roll_source = "Rent Roll"
@@ -807,38 +823,66 @@ class ExplainabilityService:
             investment_checklist=checklist
         )
     
-    def _determine_campus_proximity(self, address: str) -> str:
+    async def _determine_campus_proximity(self, address: str, property_name: str = "") -> str:
         """
-        Determines if the property is near a university campus.
-        Currently uses keyword matching; can be enhanced with geocoding API.
+        Determines if the property is near a university campus using LLM logic.
         
         Args:
             address: Property address string
+            property_name: Name of the property (optional, helps with identification)
             
         Returns:
             String indicating campus proximity status
         """
-        if not address:
+        if not address or address == "Unknown":
             return "Unknown (Address Not Provided)"
         
-        # Common university-related keywords
-        university_keywords = [
-            'university', 'college', 'campus', 'state', 'tech',
-            'berkeley', 'stanford', 'ucla', 'usc', 'caltech',
-            'mit', 'harvard', 'yale', 'princeton', 'columbia'
-        ]
+        prop_info = f'Property: "{property_name}"\n' if property_name else ""
         
-        address_lower = address.lower()
+        prompt = f"""
+        Act as a location analyst. Determine if the following property is within 6 blocks (approx 0.5 miles) of a major university campus.
         
-        # Check for university keywords in address
-        for keyword in university_keywords:
-            if keyword in address_lower:
-                return f"Likely (Address contains '{keyword}')"
+        {prop_info}Address: "{address}"
         
-        # TODO: Integrate with Google Maps API or similar to calculate actual distance
-        # Example: Use geocoding to get lat/lng, then calculate distance to nearest universities
+        Instructions:
+        1. Identify the nearest major university or college.
+        2. Estimate the walking distance.
+        3. If it is within 6 blocks or 0.5 miles, answer "Yes".
+        4. If it is nearby (0.5 - 1.5 miles), answer "Likely".
+        5. If it is far, answer "No".
         
-        return "Unknown (Requires Geocoding Analysis)"
+        Output Format:
+        Return ONLY a JSON object: {{"status": "Yes/Likely/No", "reason": "Short explanation"}}
+        """
+        
+        try:
+            if self.openai_service and self.openai_service.client:
+                response_text = await self.openai_service.generate_content_async(prompt)
+            elif self.gemini_client:
+                response_text = await self.gemini_client.generate_content_async(prompt, use_fast_model=True)
+            else:
+                # Fallback to simple keyword check if LLM not available
+                return "Unknown (LLM Unavailable)"
+            
+            # Simple parsing of the JSON response
+            import json
+            import re
+            
+            # Extract JSON block
+            match = re.search(r"\{.*\}", response_text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                data = json.loads(json_str)
+                status = data.get("status", "Unknown")
+                reason = data.get("reason", "")
+                
+                return f"{status} ({reason})"
+            else:
+                return "Unknown (Parsing Error)"
+                
+        except Exception as e:
+            print(f"Error determining campus proximity: {e}")
+            return "Unknown (Service Error)"
     
     def _identify_primary_risks(self) -> str:
         """

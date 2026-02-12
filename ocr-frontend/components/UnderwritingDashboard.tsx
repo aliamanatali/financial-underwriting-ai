@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
+import CombinedRentRollTable from "./CombinedRentRollTable";
+import ExpenseRevenueList from "./ExpenseRevenueList";
 import WidgetTooltip from "./WidgetTooltip";
 
 interface UnderwritingDashboardProps {
@@ -488,6 +490,20 @@ export default function UnderwritingDashboard({
         fullAnalysis={analysis} // Pass full analysis for export purposes
       />
 
+      {/* Combined Rent Roll Table (Read-Only Aggregated View) - HIDDEN
+      <CombinedRentRollTable
+        rentRoll={analysis.rent_roll || []}
+        formatCurrency={formatCurrency}
+      />
+      */}
+
+      {/* Expense & Revenue List (Historical Financials) - HIDDEN
+      <ExpenseRevenueList
+        expenses={analysis.historical_expenses || []}
+        formatCurrency={formatCurrency}
+      />
+      */}
+
       {/* AI Underwriting Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* AI Conclusion Card */}
@@ -548,9 +564,9 @@ export default function UnderwritingDashboard({
                       </div>
                     </div>
                     <div className="flex items-start justify-between gap-4">
-                      <span className="text-xs text-neutral-600">Is it within 6 blocks of campus?</span>
-                      <div className="relative group/source inline-block">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-600 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.near_campus}</span>
+                      <span className="text-xs text-neutral-600 shrink-0">Is it within 6 blocks of campus?</span>
+                      <div className="relative group/source flex-1 text-right">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-600 inline-block text-left cursor-help">{analysis.conclusion.investment_checklist.near_campus}</span>
                         <SourceTooltip source={analysis.conclusion.investment_checklist.near_campus_source} />
                       </div>
                     </div>

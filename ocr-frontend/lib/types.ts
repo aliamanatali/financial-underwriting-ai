@@ -142,6 +142,10 @@ export interface RentRollItem {
   move_in_date: string;
   lease_start: string;
   lease_end: string;
+  deposit?: number;
+  parking?: string;
+  comments?: string;
+  source_file?: string;
 }
 
 export interface RentRollSummary {

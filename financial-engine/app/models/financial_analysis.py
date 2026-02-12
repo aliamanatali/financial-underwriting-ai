@@ -38,6 +38,8 @@ class RentRollItem(BaseModel):
     move_in_date: Optional[str] = Field(None, alias="Move-In Date")
     lease_start: Optional[str] = Field(None, alias="Lease Start")
     lease_end: Optional[str] = Field(None, alias="Lease End")
+    source_file: Optional[str] = Field(None, alias="Source File")
+    floor: Optional[str] = Field(None, alias="Floor")
 
 # --- 4. Expense Schema ---
 class StandardizedExpense(BaseModel):

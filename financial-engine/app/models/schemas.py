@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
 
@@ -17,6 +17,7 @@ class DocumentType(str, Enum):
     DISCLOSURES = "Disclosures"
     TAX_BILLS = "Tax Bills"
     UTILITIES = "Utilities"
+    IMAGES = "Images"
 
 
 class DataClassification(str, Enum):
@@ -66,6 +67,8 @@ class ExpenseCategory(str, Enum):
     TOTAL_UNITS = "Total Units"
     YEAR_BUILT = "Year Built"
     CURRENT_LOAN_BALANCE = "Current Loan Balance"
+    PROPERTY_NAME = "Property Name"
+    PROPERTY_ADDRESS = "Property Address"
     
     UNCATEGORIZED = "Uncategorized"
 
@@ -87,6 +90,7 @@ class AuditLog(BaseModel):
     bbox: Optional[List[float]] = None
 
 class PropertyMeta(BaseModel):
+    property_name: Optional[str] = None
     address: Optional[str] = "Unknown"
     year_built: Optional[int] = 0
     purchase_price: Optional[float] = 0.0
@@ -96,16 +100,39 @@ class PropertyMeta(BaseModel):
     current_loan_balance: Optional[float] = 0.0
 
 class RentRollItem(BaseModel):
-    unit_number: str
+    unit_number: Optional[str] = "N/A"
     unit_size: Optional[int] = 0
-    unit_type: str
+    unit_type: Optional[str] = "Unknown"
     tenant_name: Optional[str] = "Unknown"
-    current_rent: float = 0.0
+    current_rent: Optional[float] = 0.0
     stabilized_rent: Optional[float] = 0.0
     market_rent: Optional[float] = 0.0
     move_in_date: Optional[str] = None
     lease_start: Optional[str] = None
     lease_end: Optional[str] = None
+    deposit: Optional[float] = 0.0
+    parking: Optional[str] = None
+    comments: Optional[str] = None
+    source_file: Optional[str] = None
+    floor: Optional[str] = None
+    property_address: Optional[str] = None
+    
+    @validator('unit_number', 'unit_type', 'tenant_name', pre=True)
+    def validate_string_fields(cls, v):
+        """Handle None/Empty strings"""
+        if v is None:
+            return "Unknown"
+        return str(v)
+
+    @validator('current_rent', 'stabilized_rent', 'market_rent', 'deposit', pre=True)
+    def validate_rent_fields(cls, v):
+        """Ensure rent fields are valid floats, default to 0.0 if None or invalid"""
+        if v is None or v == "":
+            return 0.0
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return 0.0
 
 class RentRollSummary(BaseModel):
     total_units: int
@@ -160,7 +187,7 @@ class DealParameters(BaseModel):
     # Gating Thresholds
     min_loan_amount: float = 5_000_000
     min_unit_count: int = 15
-    max_unit_count: int = 80
+    max_unit_count: int = 8000
     max_build_year: int = 1970
 
 class StandardizedExpense(BaseModel):
@@ -171,6 +198,8 @@ class StandardizedExpense(BaseModel):
     audit_log: AuditLog
     user_verified: bool = False  # Track if user has manually verified/corrected this mapping
     user_corrected_category: Optional[ExpenseCategory] = None  # If user changed the mapping
+    expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
+    source_document: Optional[str] = None # Source file name for traceability and deduplication
 
 # --- 2.2 Explainability Models ---
 
@@ -286,8 +315,16 @@ class DealPackage(BaseModel):
     documents: Dict[DocumentType, List[DocumentMetadata]] = {}  # Multiple docs per type
     normalization_status: str = "pending"  # pending, in_progress, completed
     verification_progress: float = 0.0  # Percentage of items verified by user
-    normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data
+    normalized_data: List[NormalizedDataItem] = [] # Persisted extracted data (Legacy/General)
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
+    
+    # Segmented Data Storage
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
+    
+    rent_roll_data: List[RentRollItem] = []
+    financials_data: List[NormalizedDataItem] = [] # Specifically for financials (T12, P&L, Tax Bills)
     om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
+    
     manual_overrides: Dict[str, Any] = {} # User provided manual overrides
 # --- 4. OM Proforma Models ---
 
@@ -333,6 +370,7 @@ class UnderwritingAnalysis(BaseModel):
     document_id: str
     pass_fail_status: str
     gating_reasons: List[str] = []
+    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
 
     property_meta: PropertyMeta
     rent_roll: List[RentRollItem]
@@ -353,6 +391,7 @@ class UnderwritingAnalysis(BaseModel):
     loss_to_lease: Optional[float] = 0.0
     vacancy_loss: Optional[float] = 0.0
     effective_gross_income: Optional[float] = 0.0
+    other_income: Optional[float] = 0.0 # Extracted from T12
     pro_forma_expenses: Optional[float] = 0.0
     pro_forma_noi: Optional[float] = 0.0
     

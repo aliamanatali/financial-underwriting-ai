@@ -62,14 +62,16 @@ class DocumentService:
     async def upload_document(
         self,
         file_data: bytes,
-        filename: str
+        filename: str,
+        mime_type: str = "application/pdf"
     ) -> DocumentUploadResponse:
         """
         Upload a document and queue Celery task for processing.
         
         Args:
-            file_data: PDF file content as bytes
+            file_data: File content as bytes
             filename: Original filename
+            mime_type: MIME type of the file
             
         Returns:
             DocumentUploadResponse with document ID, task ID, and status
@@ -90,6 +92,7 @@ class DocumentService:
                 "document_id": file_id,
                 "filename": filename,
                 "storage_path": storage_path,
+                "mime_type": mime_type,
                 "status": ProcessingStatus.QUEUED,
                 "task_id": task.id,
                 "task_status": "PENDING",
@@ -125,6 +128,111 @@ class DocumentService:
         except Exception as e:
             logger.error(f"Failed to upload document: {str(e)}")
             raise
+
+    async def create_upload_url(
+        self,
+        filename: str,
+        mime_type: str
+    ) -> Dict[str, str]:
+        """
+        Generate a signed URL for direct upload to GCP.
+        
+        Args:
+            filename: Original filename
+            mime_type: MIME type of the file
+            
+        Returns:
+            Dictionary with upload_url, document_id, and storage_path
+        """
+        try:
+            # Generate ID and path
+            file_id, storage_path = self.storage_service.generate_file_id(filename)
+            
+            # Generate signed URL
+            upload_url = self.storage_service.generate_upload_signed_url(
+                storage_path=storage_path,
+                content_type=mime_type
+            )
+            
+            return {
+                "upload_url": upload_url,
+                "document_id": file_id,
+                "storage_path": storage_path
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to generate upload URL: {str(e)}")
+            raise
+
+    async def confirm_upload(
+        self,
+        document_id: str,
+        storage_path: str,
+        filename: str,
+        mime_type: str
+    ) -> DocumentUploadResponse:
+        """
+        Confirm that a file has been uploaded to storage and queue processing.
+        
+        Args:
+            document_id: Document ID generated during URL creation
+            storage_path: Storage path generated during URL creation
+            filename: Original filename
+            mime_type: MIME type of the file
+            
+        Returns:
+            DocumentUploadResponse with document ID, task ID, and status
+        """
+        try:
+            # Verify file exists in storage
+            if not self.storage_service.file_exists(storage_path):
+                raise FileNotFoundError(f"File not found in storage: {storage_path}")
+            
+            # Queue Celery task for processing
+            from app.tasks.document_tasks import process_document_task
+            task = process_document_task.delay(document_id, storage_path)
+            
+            # Create document record
+            document_data = {
+                "document_id": document_id,
+                "filename": filename,
+                "storage_path": storage_path,
+                "mime_type": mime_type,
+                "status": ProcessingStatus.QUEUED,
+                "task_id": task.id,
+                "task_status": "PENDING",
+                "progress_percentage": 0.0,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "extracted_text": None,
+                "metadata": None,
+                "error_message": None
+            }
+            
+            # Save to database or Redis storage
+            if self.db is not None:
+                await self.db.documents.insert_one(document_data)
+            else:
+                # Save to Redis
+                key = f"document:{document_id}"
+                doc_copy = document_data.copy()
+                doc_copy['created_at'] = doc_copy['created_at'].isoformat()
+                doc_copy['updated_at'] = doc_copy['updated_at'].isoformat()
+                self.redis_client.set(key, json.dumps(doc_copy))
+            
+            logger.info(f"Document upload confirmed and queued: {document_id} ({filename}), task_id: {task.id}")
+            
+            return DocumentUploadResponse(
+                document_id=document_id,
+                filename=filename,
+                status=ProcessingStatus.QUEUED,
+                task_id=task.id,
+                message="Document processing queued."
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to confirm upload: {str(e)}")
+            raise
     
     async def process_document(self, document_id: str) -> DocumentResponse:
         """
@@ -146,14 +254,20 @@ class DocumentService:
             # Retrieve file from storage
             file_data = await self.storage_service.get_file(doc["storage_path"])
             
+            # Check for image type
+            mime_type = doc.get("mime_type", "application/pdf")
+            if mime_type.startswith("image/"):
+                logger.info(f"Processing image document {document_id} ({mime_type})")
+                return await self._process_image_document(document_id, file_data, mime_type)
+            
             # Get PDF info to determine processing strategy
             pdf_info = await self.chunking_service.get_pdf_info(file_data)
             
-            # Determine if chunking is needed
-            # We use the configured thresholds from settings (updated to higher values)
-            should_chunk = self.chunking_service.should_use_chunking(
+            # Determine chunking strategy
+            should_chunk, chunk_size = self.chunking_service.get_optimal_chunk_strategy(
                 page_count=pdf_info["page_count"],
                 file_size_mb=pdf_info["file_size_mb"],
+                default_chunk_size=settings.chunk_size_pages,
                 page_threshold=settings.large_file_page_threshold,
                 size_threshold_mb=settings.large_file_threshold_mb
             )
@@ -161,9 +275,10 @@ class DocumentService:
             if should_chunk:
                 logger.info(
                     f"Processing large document {document_id} with chunking strategy "
-                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB)"
+                    f"({pdf_info['page_count']} pages, {pdf_info['file_size_mb']} MB, "
+                    f"chunk_size={chunk_size})"
                 )
-                return await self._process_large_document(document_id, file_data, pdf_info)
+                return await self._process_large_document(document_id, file_data, pdf_info, chunk_size)
             else:
                 logger.info(
                     f"Processing small document {document_id} without chunking "
@@ -183,6 +298,52 @@ class DocumentService:
             
             raise
     
+    async def _process_image_document(
+        self,
+        document_id: str,
+        file_data: bytes,
+        mime_type: str
+    ) -> DocumentResponse:
+        """
+        Process an image document.
+        
+        Args:
+            document_id: Document identifier
+            file_data: Image file bytes
+            mime_type: Mime type of the image
+            
+        Returns:
+            DocumentResponse with extraction results
+        """
+        # Update status to extracting
+        await self._update_document_status(
+            document_id,
+            ProcessingStatus.EXTRACTING
+        )
+        
+        # Extract text using Gemini
+        extraction_result = await self.gemini_service.extract_image_content(file_data, mime_type)
+        
+        # Update metadata with file info
+        metadata = extraction_result.metadata
+        metadata.file_size = len(file_data)
+        metadata.is_chunked = False
+        metadata.mime_type = mime_type
+        
+        # Update document with extraction results
+        update_data = {
+            "status": ProcessingStatus.COMPLETED,
+            "extracted_text": extraction_result.text,
+            "metadata": metadata.model_dump(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        await self._update_document(document_id, update_data)
+        
+        logger.info(f"Image document processed successfully: {document_id}")
+        
+        return await self.get_document(document_id)
+
     async def _process_small_document(
         self,
         document_id: str,
@@ -232,7 +393,8 @@ class DocumentService:
         self,
         document_id: str,
         file_data: bytes,
-        pdf_info: Dict[str, Any]
+        pdf_info: Dict[str, Any],
+        chunk_size: int = None
     ) -> DocumentResponse:
         """
         Process a large document using chunking strategy.
@@ -241,13 +403,14 @@ class DocumentService:
             document_id: Document identifier
             file_data: PDF file bytes
             pdf_info: PDF metadata
+            chunk_size: Optional chunk size (overrides default)
             
         Returns:
             DocumentResponse with extraction results
         """
         try:
             # Split PDF into chunks
-            chunks = await self.chunking_service.split_pdf(file_data)
+            chunks = await self.chunking_service.split_pdf(file_data, chunk_size)
             total_chunks = len(chunks)
             
             logger.info(f"Split document {document_id} into {total_chunks} chunks")
@@ -267,7 +430,7 @@ class DocumentService:
                     "page_count": pdf_info["page_count"],
                     "file_size": pdf_info["file_size"],
                     "is_chunked": True,
-                    "chunk_size": settings.chunk_size_pages,
+                    "chunk_size": chunk_size or settings.chunk_size_pages,
                     "chunk_progress": chunk_progress.model_dump()
                 },
                 "updated_at": datetime.utcnow()
@@ -388,7 +551,7 @@ class DocumentService:
                 mime_type="application/pdf",
                 extraction_notes=extraction_notes,
                 is_chunked=True,
-                chunk_size=settings.chunk_size_pages,
+                chunk_size=chunk_size or settings.chunk_size_pages,
                 chunk_progress=chunk_progress
             )
             

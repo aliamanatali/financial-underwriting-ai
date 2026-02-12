@@ -401,3 +401,97 @@ export const SquarePlusIcon: React.FC<IconProps> = ({
     <path d="M12 8v8"></path>
   </svg>
 );
+
+// Sparkles Icon
+export const SparklesIcon: React.FC<IconProps> = ({
+  className = "",
+  size = 24,
+  strokeWidth = 2,
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path>
+    <path d="M5 3v4"></path>
+    <path d="M9 5h4"></path>
+    <path d="M3 7v2"></path>
+    <path d="M7 8H9"></path>
+  </svg>
+);
+
+// X Icon (Close)
+export const XIcon: React.FC<IconProps> = ({
+  className = "",
+  size = 24,
+  strokeWidth = 2,
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M18 6 6 18"></path>
+    <path d="m6 6 12 12"></path>
+  </svg>
+);
+
+// Send Icon
+export const SendIcon: React.FC<IconProps> = ({
+  className = "",
+  size = 24,
+  strokeWidth = 2,
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="m22 2-7 20-4-9-9-4Z"></path>
+    <path d="M22 2 11 13"></path>
+  </svg>
+);
+
+// Chevron Up Icon
+export const ChevronUpIcon: React.FC<IconProps> = ({
+  className = "",
+  size = 24,
+  strokeWidth = 2,
+}) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={strokeWidth}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="m18 15-6-6-6 6"></path>
+  </svg>
+);

@@ -7,10 +7,15 @@ pytest-asyncio
 openpyxl
 httpx
 python-dotenv
-google-generativeai
 google-genai
 google-cloud-storage
 pandas
 python-multipart
 numpy-financial
 fpdf2
+motor
+redis
+PyPDF2
+xlrd
+tenacity
+openai
