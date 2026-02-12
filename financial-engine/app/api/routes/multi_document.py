@@ -1023,6 +1023,47 @@ async def delete_document_from_package(
     }
 
 
+@router.delete("/packages/{package_id}")
+async def delete_deal_package(package_id: str):
+    """
+    Delete an entire deal package and all its associated data.
+    This includes:
+    - Package metadata from MongoDB
+    - Analysis results from MongoDB
+    - All document files from GCP/local storage
+    """
+    # Load from storage to verify it exists
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    
+    try:
+        # Delete the package (this also deletes analysis results and files)
+        success = await storage_service.delete_deal_package(package_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete package completely")
+        
+        # Remove from file cache if present
+        package = DealPackage(**package_data)
+        for category, docs in package.documents.items():
+            for doc in docs:
+                if doc.document_id in file_storage_cache:
+                    del file_storage_cache[doc.document_id]
+        
+        logger.info(f"Successfully deleted package {package_id}")
+        
+        return {
+            "message": "Package deleted successfully",
+            "package_id": package_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting package {package_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete package: {str(e)}")
+
+
 @router.put("/packages/{package_id}/documents/{document_id}/category")
 async def update_document_category(
     package_id: str,
