@@ -15,7 +15,6 @@ import {
   DragEndEvent,
   useDroppable,
 } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
 import { useDraggable } from "@dnd-kit/core";
 import { apiClient } from "@/lib/api";
 import { DealPackage } from "@/lib/types";
@@ -133,16 +132,11 @@ interface DraggableFileRowProps {
 }
 
 function DraggableFileRow({ file, packageId, onDelete, onPreview, isDragDisabled }: DraggableFileRowProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: file.id,
     data: { type: "file", file },
     disabled: isDragDisabled
   });
-
-  const style = transform ? {
-    transform: CSS.Translate.toString(transform),
-    zIndex: 999,
-  } : undefined;
 
   const formatDate = (dateStr: string) => {
     try {
@@ -178,12 +172,11 @@ function DraggableFileRow({ file, packageId, onDelete, onPreview, isDragDisabled
   return (
     <div
       ref={setNodeRef}
-      style={style}
       {...attributes}
       {...listeners}
       className={`
         flex items-center py-3 px-4 bg-white border-b border-neutral-100 hover:bg-neutral-50 transition-colors group cursor-pointer
-        ${isDragging ? "opacity-50 shadow-lg ring-2 ring-[#FF5E00] rounded-lg z-50 bg-orange-50" : ""}
+        ${isDragging ? "opacity-40" : ""}
       `}
       onClick={() => onPreview(file.id, file.name)}
     >
