@@ -13,19 +13,15 @@ import {
   DragStartEvent,
   DragOverEvent,
   DragEndEvent,
+  useDroppable,
 } from "@dnd-kit/core";
-import { 
-  arrayMove, 
-  SortableContext, 
-  sortableKeyboardCoordinates, 
-  verticalListSortingStrategy,
-  useSortable
-} from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useDraggable } from "@dnd-kit/core";
 import { apiClient } from "@/lib/api";
 import { DealPackage } from "@/lib/types";
 import ConfirmationModal from "./ConfirmationModal";
 import WarningModal from "./WarningModal";
+import DocumentSidePanel from "./DocumentSidePanel";
 import dynamic from 'next/dynamic';
 
 const FilePreviewModal = dynamic(() => import("./FilePreviewModal"), {
@@ -38,6 +34,8 @@ export interface DocumentFile {
   id: string; // document_id
   name: string; // filename
   type: string; // document_type
+  date: string;
+  size: number;
 }
 
 interface FileOrganizationProps {
@@ -45,161 +43,6 @@ interface FileOrganizationProps {
   initialPackage: DealPackage;
   onComplete: (files: Record<string, DocumentFile[]>) => void;
 }
-
-// --- Draggable File Component ---
-
-interface SortableFileProps {
-  id: string;
-  file: DocumentFile;
-  onDelete?: (fileId: string, fileName: string) => void;
-  onPreview?: (fileId: string, fileName: string) => void;
-}
-
-function SortableFile({ id, file, onDelete, onPreview }: SortableFileProps) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging
-  } = useSortable({ id: id, data: { type: "file", file } });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent drag start
-    if (onDelete) {
-      onDelete(id, file.name);
-    }
-  };
-
-  const handlePreview = (e: React.MouseEvent) => {
-      // If user is not dragging, trigger preview
-      // Note: isDragging prop in this component is about the item being dragged, not detecting drag intent
-      // We can use a simple onClick here, dnd-kit should prevent onClick if it's a drag operation usually
-      if (onPreview) {
-          onPreview(id, file.name);
-      }
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      title={file.name}
-      className="flex items-center gap-3 p-3 bg-white border border-neutral-200 rounded-lg shadow-sm mb-2 group hover:border-neutral-300 transition-colors relative"
-    >
-        {/* Drag Handle Area */}
-        <div
-            {...attributes}
-            {...listeners}
-            onClick={handlePreview}
-            className="flex-1 flex items-center gap-3 min-w-0 cursor-pointer"
-        >
-            <div className="w-8 h-8 flex-shrink-0 bg-neutral-100 rounded flex items-center justify-center text-neutral-400">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-            </div>
-            <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-neutral-900 truncate hover:underline text-left" title={file.name}>
-                {file.name}
-                </p>
-            </div>
-        </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-2">
-        {onDelete && (
-            <button
-                onClick={handleDelete}
-                className="p-1 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                title="Delete file"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 6h18"></path>
-                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                </svg>
-            </button>
-        )}
-        <div {...attributes} {...listeners} className="text-neutral-300 cursor-grab active:cursor-grabbing">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="9" cy="12" r="1"></circle>
-                <circle cx="9" cy="5" r="1"></circle>
-                <circle cx="9" cy="19" r="1"></circle>
-                <circle cx="15" cy="12" r="1"></circle>
-                <circle cx="15" cy="5" r="1"></circle>
-                <circle cx="15" cy="19" r="1"></circle>
-            </svg>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- Droppable Folder Component ---
-
-interface FolderProps {
-  id: string; // This is the category name (DocumentType)
-  title: string;
-  files: DocumentFile[];
-  onDeleteFile: (fileId: string, fileName: string) => void;
-  onPreviewFile: (fileId: string, fileName: string) => void;
-}
-
-function Folder({ id, title, files, onDeleteFile, onPreviewFile }: FolderProps) {
-  const { setNodeRef, isOver } = useSortable({
-    id: id,
-    data: { type: "folder", category: id },
-    disabled: true // Folders themselves are not draggable, just droppable via SortableContext logic
-  });
-
-  return (
-    <div 
-      ref={setNodeRef}
-      className={`bg-neutral-50 rounded-xl border-2 transition-colors h-full flex flex-col ${
-        isOver ? "border-amber-500 bg-amber-50" : "border-transparent"
-      }`}
-    >
-      <div className="p-4 border-b border-neutral-200 flex items-center justify-between bg-white rounded-t-xl">
-        <h3 className="font-semibold text-neutral-900 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-neutral-400"></span>
-            {title}
-        </h3>
-        <span className="text-xs font-medium text-neutral-500 bg-neutral-100 px-2 py-1 rounded-full">
-          {files.length}
-        </span>
-      </div>
-      <div className="p-4 flex-1 overflow-y-auto min-h-[120px] max-h-[400px]">
-        <SortableContext
-            id={id}
-            items={files.map(f => f.id)}
-            strategy={verticalListSortingStrategy}
-        >
-          {files.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-neutral-400 py-8 border-2 border-dashed border-neutral-200 rounded-lg">
-              <p className="text-sm">Empty Folder</p>
-              <p className="text-xs">Drop files here</p>
-            </div>
-          ) : (
-            files.map((file) => (
-              <SortableFile key={file.id} id={file.id} file={file} onDelete={onDeleteFile} onPreview={onPreviewFile} />
-            ))
-          )}
-        </SortableContext>
-      </div>
-    </div>
-  );
-}
-
-// --- Main Component ---
 
 // Available Categories (Document Types)
 const CATEGORIES = [
@@ -214,46 +57,222 @@ const CATEGORIES = [
   "Images"
 ];
 
+// --- Components ---
+
+function FileIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
+      <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+      <polyline points="14 2 14 8 20 8"></polyline>
+    </svg>
+  );
+}
+
+function FolderIcon({ active }: { active?: boolean }) {
+  return (
+    <svg 
+      xmlns="http://www.w3.org/2000/svg" 
+      width="18" 
+      height="18" 
+      viewBox="0 0 24 24" 
+      fill={active ? "#FF5E00" : "none"} 
+      stroke={active ? "#FF5E00" : "currentColor"} 
+      strokeWidth="2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+      className={active ? "text-[#FF5E00]" : "text-neutral-400"}
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+    </svg>
+  );
+}
+
+// Sidebar Folder Droppable
+interface SidebarFolderProps {
+  id: string;
+  title: string;
+  count: number;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+function SidebarFolder({ id, title, count, isActive, onClick }: SidebarFolderProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: id,
+    data: { type: "folder", category: id },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={onClick}
+      className={`
+        flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm mb-1
+        ${isActive ? "bg-orange-50 text-[#FF5E00] font-medium" : "text-neutral-600 hover:bg-neutral-50"}
+        ${isOver ? "bg-orange-100 border border-orange-200" : ""}
+      `}
+    >
+      <div className="flex items-center gap-2">
+        <FolderIcon active={isActive} />
+        <span className="truncate max-w-[140px]" title={title}>{title}</span>
+      </div>
+      <span className={`text-xs px-2 py-0.5 rounded-full ${isActive ? "bg-orange-100 text-[#FF5E00]" : "bg-neutral-100 text-neutral-500"}`}>
+        {count}
+      </span>
+    </div>
+  );
+}
+
+// Draggable File Row
+interface DraggableFileRowProps {
+  file: DocumentFile;
+  packageId: string;
+  onDelete: (id: string, name: string) => void;
+  onPreview: (id: string, name: string) => void;
+  isDragDisabled?: boolean;
+}
+
+function DraggableFileRow({ file, packageId, onDelete, onPreview, isDragDisabled }: DraggableFileRowProps) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: file.id,
+    data: { type: "file", file },
+    disabled: isDragDisabled
+  });
+
+  const style = transform ? {
+    transform: CSS.Translate.toString(transform),
+    zIndex: 999,
+  } : undefined;
+
+  const formatDate = (dateStr: string) => {
+    try {
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    } catch (e) {
+        return dateStr;
+    }
+  };
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+        const response = await apiClient.getDocumentContentUrl(packageId, file.id);
+        const url = response.signed_url || (response.content ? `data:${response.content_type};base64,${response.content}` : null);
+        
+        if (url) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        } else {
+            alert('Could not generate download link');
+        }
+    } catch (error) {
+        console.error("Download failed", error);
+        alert('Download failed');
+    }
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`
+        flex items-center py-3 px-4 bg-white border-b border-neutral-100 hover:bg-neutral-50 transition-colors group cursor-pointer
+        ${isDragging ? "opacity-50 shadow-lg ring-2 ring-[#FF5E00] rounded-lg z-50 bg-orange-50" : ""}
+      `}
+      onClick={() => onPreview(file.id, file.name)}
+    >
+      {/* File Icon & Name */}
+      <div className="flex-1 flex items-center gap-3 min-w-0">
+        <div className="p-2 bg-white border border-neutral-100 rounded-lg shrink-0 text-red-500">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" x2="8" y1="13" y2="13"></line>
+                <line x1="16" x2="8" y1="17" y2="17"></line>
+                <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-neutral-900 truncate pr-4" title={file.name}>
+            {file.name}
+          </p>
+          <p className="text-xs text-neutral-400 truncate">
+             {file.type}/{file.name.split('/').pop()}
+          </p>
+        </div>
+      </div>
+
+      {/* Date */}
+      <div className="w-32 text-xs text-neutral-500 hidden sm:block text-right mr-8">
+        {file.date ? formatDate(file.date) : "-"}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={handleDownload}
+          className="p-1.5 text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 rounded transition-colors"
+          title="Download"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" x2="12" y1="15" y2="3"></line>
+            </svg>
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(file.id, file.name); }}
+          className="p-1.5 text-neutral-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+          title="Delete"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// --- Main Component ---
+
 export default function FileOrganization({ packageId, initialPackage, onComplete }: FileOrganizationProps) {
-  // State to track files in each category
   // Map: CategoryName -> List of DocumentFile
   const [filesByCategory, setFilesByCategory] = useState<Record<string, DocumentFile[]>>({});
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [activeFile, setActiveFile] = useState<DocumentFile | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string>("All Documents");
+  const [selectedFile, setSelectedFile] = useState<DocumentFile | null>(null);
+  
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [activeDragFile, setActiveDragFile] = useState<DocumentFile | null>(null);
+
   const [isUploading, setIsUploading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Modals
   const [warningModal, setWarningModal] = useState<{ isOpen: boolean; title: string; message: string }>({
-    isOpen: false,
-    title: "",
-    message: ""
+    isOpen: false, title: "", message: ""
   });
   const [confirmModal, setConfirmModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: () => void;
-    isDangerous?: boolean;
-    confirmLabel?: string;
+    isOpen: boolean; title: string; message: string; onConfirm: () => void; isDangerous?: boolean; confirmLabel?: string;
   }>({
-    isOpen: false,
-    title: "",
-    message: "",
-    onConfirm: () => {}
+    isOpen: false, title: "", message: "", onConfirm: () => {}
   });
-  const [previewModal, setPreviewModal] = useState<{
-      isOpen: boolean;
-      fileId: string;
-      fileName: string;
-  }>({
-      isOpen: false,
-      fileId: "",
-      fileName: ""
+  const [previewModal, setPreviewModal] = useState<{ isOpen: boolean; fileId: string; fileName: string; }>({
+      isOpen: false, fileId: "", fileName: ""
   });
 
-  // Helper to parse package data into map
+  // Helpers
   const parsePackageToMap = (pkg: DealPackage) => {
       const map: Record<string, DocumentFile[]> = {};
       CATEGORIES.forEach(cat => map[cat] = []);
@@ -263,7 +282,6 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
             if (!map[type]) map[type] = [];
             if (Array.isArray(docs)) {
                 docs.forEach(doc => {
-                    // Filter out system files
                     const lowerName = doc.filename.toLowerCase();
                     const isSystemFile = lowerName.endsWith('thumbs.db') ||
                                        lowerName.endsWith('desktop.ini') ||
@@ -275,7 +293,9 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
                         map[type].push({
                             id: doc.document_id,
                             name: doc.filename,
-                            type: doc.document_type
+                            type: doc.document_type,
+                            date: doc.upload_timestamp,
+                            size: doc.file_size
                         });
                     }
                 });
@@ -285,109 +305,91 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
       return map;
   };
 
-  // Initialize state from initialPackage
   useEffect(() => {
     setFilesByCategory(parsePackageToMap(initialPackage));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPackage]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-        activationConstraint: {
-            distance: 8,
-        },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor)
   );
+
+  // --- Drag Handlers ---
 
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     const { file } = active.data.current as { file: DocumentFile } || {};
-    setActiveId(active.id as string);
-    setActiveFile(file);
-  };
-
-  const handleDragOver = (event: DragOverEvent) => {
-    const { active, over } = event;
-    if (!over) return;
-
-    // Find the containers
-    const activeContainer = findContainer(active.id as string);
-    const overContainer = findContainer(over.id as string) || (CATEGORIES.includes(over.id as string) ? over.id as string : null);
-
-    if (!activeContainer || !overContainer || activeContainer === overContainer) {
-      return;
-    }
-
-    // Move item in local state for smooth visual feedback
-    setFilesByCategory((prev) => {
-      const activeItems = prev[activeContainer];
-      const overItems = prev[overContainer];
-      const activeIndex = activeItems.findIndex((item) => item.id === active.id);
-      
-      // If dropping on a container (folder), add to end
-      // If dropping on an item, insert at that index
-      let overIndex;
-      if (CATEGORIES.includes(over.id as string)) {
-        overIndex = overItems.length + 1;
-      } else {
-        const isBelowOverItem =
-          over &&
-          active.rect.current.translated &&
-          active.rect.current.translated.top >
-            over.rect.top + over.rect.height;
-
-        const modifier = isBelowOverItem ? 1 : 0;
-        overIndex = overIndex = overItems.findIndex((item) => item.id === over.id) + modifier;
-      }
-
-      return {
-        ...prev,
-        [activeContainer]: [
-          ...prev[activeContainer].filter((item) => item.id !== active.id),
-        ],
-        [overContainer]: [
-          ...prev[overContainer].slice(0, overIndex),
-          activeItems[activeIndex],
-          ...prev[overContainer].slice(overIndex, prev[overContainer].length),
-        ],
-      };
-    });
+    setActiveDragId(active.id as string);
+    setActiveDragFile(file);
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
     const { file } = active.data.current as { file: DocumentFile } || {};
 
-    // Determine final container
-    const activeContainer = findContainer(active.id as string);
-    const overContainer = findContainer(over?.id as string) || (over && CATEGORIES.includes(over.id as string) ? over.id as string : null);
+    setActiveDragId(null);
+    setActiveDragFile(null);
 
-    if (activeContainer && overContainer && activeContainer !== overContainer) {
-       // Backend Update
-       setIsUpdating(true);
-       try {
-           console.log(`Moving document ${file.id} from ${activeContainer} to ${overContainer}`);
-           await apiClient.updateDocumentCategory(packageId, file.id, overContainer);
-           // Update the file's type locally
-           file.type = overContainer;
-       } catch (error) {
-           console.error("Failed to update category:", error);
-           setWarningModal({
-               isOpen: true,
-               title: "Move Failed",
-               message: "Failed to move file. Please try again."
-           });
-       } finally {
-           setIsUpdating(false);
-       }
+    if (!over || !file) return;
+
+    // Identified target folder
+    const targetCategory = over.id as string;
+    
+    // Check if moving to a different category
+    // We need to find the current category of the file
+    let currentCategory = "";
+    Object.entries(filesByCategory).forEach(([cat, files]) => {
+        if (files.find(f => f.id === file.id)) {
+            currentCategory = cat;
+        }
+    });
+
+    if (currentCategory && targetCategory && currentCategory !== targetCategory && CATEGORIES.includes(targetCategory)) {
+        // Optimistic UI Update
+        const fileToMove = filesByCategory[currentCategory].find(f => f.id === file.id);
+        if (!fileToMove) return;
+
+        const updatedFile = { ...fileToMove, type: targetCategory };
+
+        setFilesByCategory(prev => {
+            const sourceList = prev[currentCategory].filter(f => f.id !== file.id);
+            const targetList = [...prev[targetCategory], updatedFile];
+            return {
+                ...prev,
+                [currentCategory]: sourceList,
+                [targetCategory]: targetList
+            };
+        });
+
+        // Backend Update
+        setIsUpdating(true);
+        try {
+            console.log(`Moving document ${file.id} from ${currentCategory} to ${targetCategory}`);
+            await apiClient.updateDocumentCategory(packageId, file.id, targetCategory);
+        } catch (error) {
+            console.error("Failed to update category:", error);
+            // Revert on failure
+            setFilesByCategory(prev => {
+                const targetList = prev[targetCategory].filter(f => f.id !== file.id);
+                const sourceList = [...prev[currentCategory], fileToMove];
+                return {
+                    ...prev,
+                    [currentCategory]: sourceList,
+                    [targetCategory]: targetList
+                };
+            });
+            setWarningModal({
+                isOpen: true,
+                title: "Move Failed",
+                message: "Failed to move file. Please try again."
+            });
+        } finally {
+            setIsUpdating(false);
+        }
     }
-
-    setActiveId(null);
-    setActiveFile(null);
   };
+
+  // --- Actions ---
 
   const handleDeleteRequest = (fileId: string, fileName: string) => {
       setConfirmModal({
@@ -400,12 +402,8 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
       });
   };
 
-  const handlePreviewRequest = (fileId: string, fileName: string) => {
-      setPreviewModal({
-          isOpen: true,
-          fileId,
-          fileName
-      });
+  const handleFileSelect = (file: DocumentFile) => {
+      setSelectedFile(file);
   };
 
   const executeDeleteFile = async (fileId: string) => {
@@ -420,6 +418,9 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
               });
               return newState;
           });
+          if (selectedFile?.id === fileId) {
+              setSelectedFile(null);
+          }
       } catch (err) {
           console.error("Failed to delete file:", err);
           setWarningModal({
@@ -434,22 +435,15 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
 
   const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!e.target.files || e.target.files.length === 0) return;
-      
       const files = Array.from(e.target.files);
       setIsUploading(true);
-      
       try {
-          // Upload and get updated package
-          // This endpoint automatically characterizes files via AI
           const updatedPackage = await apiClient.uploadAdditionalDocuments(packageId, files);
-          
-          // Update local state with new package data
           setFilesByCategory(parsePackageToMap(updatedPackage));
-          
           setWarningModal({
               isOpen: true,
               title: "Upload Successful",
-              message: `Successfully uploaded ${files.length} file(s).\n\nThey have been automatically characterized and placed in the appropriate folders.`
+              message: `Successfully uploaded ${files.length} file(s).`
           });
       } catch (err) {
           console.error("Failed to upload files:", err);
@@ -460,23 +454,11 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
           });
       } finally {
           setIsUploading(false);
-          // Reset input
           if (fileInputRef.current) fileInputRef.current.value = "";
       }
   };
 
-  const findContainer = (id: string): string | undefined => {
-    if (CATEGORIES.includes(id)) {
-      return id;
-    }
-
-    return Object.keys(filesByCategory).find((key) =>
-      filesByCategory[key].find((item) => item.id === id)
-    );
-  };
-
   const handleContinue = () => {
-    // Check if critical folders have files
     const missingCritical = [];
     if (filesByCategory["Offering Memorandum"]?.length === 0) missingCritical.push("Offering Memorandum");
     if (filesByCategory["Rent Roll"]?.length === 0) missingCritical.push("Rent Roll");
@@ -492,79 +474,158 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
         });
         return;
     }
-    
     onComplete(filesByCategory);
   };
 
+  // --- Render ---
+
+  // Flatten files if "All Documents" is selected
+  const displayFiles = activeCategory === "All Documents" 
+    ? Object.values(filesByCategory).flat().sort((a,b) => (a.type || "").localeCompare(b.type || "")) 
+    : filesByCategory[activeCategory] || [];
+  
+  const totalFilesCount = Object.values(filesByCategory).flat().length;
+
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-6">
-        <div>
+    <div className="flex flex-col h-[calc(100vh-180px)] min-h-[600px] bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
+        {/* Header Section */}
+        <div className="flex items-center justify-between p-6 border-b border-neutral-100 bg-white">
             <h2 className="text-xl font-semibold text-neutral-900">Review & Organize Files</h2>
-            <p className="text-sm text-neutral-500">Drag and drop files to their correct categories. Add or remove files as needed.</p>
+            <div className="flex items-center gap-3">
+                 <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    ref={fileInputRef}
+                    onChange={handleUploadFiles}
+                />
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg text-sm font-medium hover:bg-neutral-50 transition-colors shadow-sm flex items-center gap-2"
+                >
+                    {isUploading ? "Uploading..." : "Upload Files"}
+                </button>
+                <button
+                    onClick={handleContinue}
+                    disabled={isUploading || isUpdating}
+                    className="px-6 py-2 bg-[#FF5E00] text-white rounded-lg text-sm font-medium hover:bg-[#E05200] transition-colors shadow-sm disabled:opacity-50"
+                >
+                    {isUpdating ? "Updating..." : "Confirm & Start Analysis"}
+                </button>
+            </div>
         </div>
-        <div className="flex items-center gap-3">
-            <input
-                type="file"
-                multiple
-                className="hidden"
-                ref={fileInputRef}
-                onChange={handleUploadFiles}
-            />
-            <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="px-4 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-lg font-medium hover:bg-neutral-50 transition-colors shadow-sm flex items-center gap-2"
-            >
-                {isUploading ? (
-                    <>
-                        <div className="w-4 h-4 border-2 border-neutral-400 border-t-neutral-800 rounded-full animate-spin"></div>
-                        <span>Uploading...</span>
-                    </>
-                ) : (
-                    <>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" x2="12" y1="3" y2="15"></line>
-                        </svg>
-                        Upload Files
-                    </>
-                )}
-            </button>
-            <button
-                onClick={handleContinue}
-                disabled={isUploading || isUpdating}
-                className="px-6 py-2 bg-neutral-900 text-white rounded-lg font-medium hover:bg-neutral-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                {isUpdating ? "Updating..." : "Confirm & Start Analysis"}
-            </button>
-        </div>
-      </div>
 
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-20">
-          {CATEGORIES.map((category) => (
-            <Folder
-              key={category}
-              id={category}
-              title={category}
-              files={filesByCategory[category] || []}
-              onDeleteFile={handleDeleteRequest}
-              onPreviewFile={handlePreviewRequest}
-            />
-          ))}
+        <div className="flex flex-1 overflow-hidden">
+            {/* Sidebar */}
+            <div className="w-72 bg-white border-r border-neutral-100 flex flex-col p-4 overflow-y-auto custom-scrollbar">
+                <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-4 px-3">
+                    Directories
+                </div>
+
+                {/* All Documents Option */}
+                <div
+                    onClick={() => setActiveCategory("All Documents")}
+                    className={`
+                        flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors text-sm mb-1
+                        ${activeCategory === "All Documents" ? "bg-orange-50 text-[#FF5E00] font-medium" : "text-neutral-600 hover:bg-neutral-50"}
+                    `}
+                >
+                    <div className="flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={activeCategory === "All Documents" ? "text-[#FF5E00]" : "text-neutral-400"}>
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <line x1="16" x2="8" y1="13" y2="13"></line>
+                            <line x1="16" x2="8" y1="17" y2="17"></line>
+                            <polyline points="10 9 9 9 8 9"></polyline>
+                        </svg>
+                        <span>All Documents</span>
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${activeCategory === "All Documents" ? "bg-orange-100 text-[#FF5E00]" : "bg-neutral-100 text-neutral-500"}`}>
+                        {totalFilesCount}
+                    </span>
+                </div>
+
+                <div className="my-2 border-b border-neutral-100"></div>
+
+                {/* Category Folders */}
+                {CATEGORIES.map(category => (
+                    <SidebarFolder
+                        key={category}
+                        id={category}
+                        title={category}
+                        count={filesByCategory[category]?.length || 0}
+                        isActive={activeCategory === category}
+                        onClick={() => setActiveCategory(category)}
+                    />
+                ))}
+            </div>
+
+            {/* Main Content Area */}
+            <div className="flex-1 bg-white flex flex-col overflow-hidden">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
+                    <h3 className="font-semibold text-neutral-900">{activeCategory}</h3>
+                </div>
+
+                {/* Table Header */}
+                <div className="px-6 py-2 bg-neutral-50 border-b border-neutral-100 flex items-center text-xs font-semibold text-neutral-500 uppercase tracking-wider">
+                    <div className="flex-1">File Name</div>
+                    <div className="w-32 text-right mr-16">Date</div>
+                </div>
+
+                {/* File List */}
+                <div className="flex-1 overflow-y-auto p-2 min-h-0 custom-scrollbar">
+                    {displayFiles.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-64 text-neutral-400">
+                            <p className="mb-2">No files in this folder</p>
+                            <p className="text-sm">Drag files here from other folders or upload new ones</p>
+                        </div>
+                    ) : (
+                        displayFiles.map(file => (
+                            <DraggableFileRow
+                                key={file.id}
+                                file={file}
+                                packageId={packageId}
+                                onDelete={handleDeleteRequest}
+                                onPreview={() => handleFileSelect(file)}
+                                isDragDisabled={activeCategory === "All Documents"}
+                            />
+                        ))
+                    )}
+                </div>
+            </div>
+
+            {selectedFile && (
+                <DocumentSidePanel
+                    file={selectedFile}
+                    packageId={packageId}
+                    onClose={() => setSelectedFile(null)}
+                    onDelete={handleDeleteRequest}
+                    onViewFull={(id, name) => setPreviewModal({ isOpen: true, fileId: id, fileName: name })}
+                />
+            )}
         </div>
 
         <DragOverlay dropAnimation={{ sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: '0.5' } } }) }}>
-          {activeFile ? <SortableFile id={activeId!} file={activeFile} /> : null}
+           {activeDragFile ? (
+             <div className="flex items-center gap-3 p-3 bg-white border border-[#FF5E00] rounded-lg shadow-xl w-80">
+                <div className="p-2 bg-red-50 rounded-lg shrink-0">
+                    <FileIcon />
+                </div>
+                <div>
+                   <p className="text-sm font-medium text-neutral-900 truncate">{activeDragFile.name}</p>
+                </div>
+             </div>
+           ) : null}
         </DragOverlay>
+
       </DndContext>
 
       <ConfirmationModal

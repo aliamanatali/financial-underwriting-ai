@@ -364,7 +364,7 @@ function ProcessingContent() {
 
         {/* Main Workspace */}
         <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar">
-          <div className="max-w-5xl mx-auto flex flex-col gap-8">
+          <div className={`mx-auto flex flex-col gap-8 ${isReviewing ? 'max-w-[90%]' : 'max-w-5xl'}`}>
             
             {isReviewing && dealPackage ? (
                 <FileOrganization
