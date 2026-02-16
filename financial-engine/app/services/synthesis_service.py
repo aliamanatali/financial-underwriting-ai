@@ -53,6 +53,131 @@ class SynthesisService:
         """Initialize the synthesis service."""
         pass
 
+    async def verify_purchase_price(
+        self,
+        candidates: List[Dict[str, Any]],
+        gemini_service: Any
+    ) -> Dict[str, Any]:
+        """
+        Verify Purchase Price using an LLM agent that analyzes context from all sources.
+        
+        Args:
+            candidates: List of dicts containing:
+                - value: float
+                - source: str (filename)
+                - text_context: str (surrounding text or full page text)
+                - document_id: str
+            gemini_service: Service to interact with LLM
+            
+        Returns:
+            Dict with "value" (float), "source" (str), "confidence" (float), "reasoning" (str)
+        """
+        if not candidates:
+            return {"value": 0.0, "source": None, "confidence": 0.0, "reasoning": "No candidates found"}
+            
+        # Deduplicate candidates based on value and source
+        unique_candidates = {}
+        for c in candidates:
+            key = f"{c['value']}_{c['source']}"
+            if key not in unique_candidates:
+                unique_candidates[key] = c
+        
+        candidates_list = list(unique_candidates.values())
+        
+        # If only one candidate, just return it (unless we want to verify it specifically?)
+        # But the prompt says "looks through... context... come up with final value"
+        # Even with 1 candidate, context verification helps ensure it's not a deposit.
+        
+        prompt = """
+        You are a real estate underwriting verification agent. Your goal is to determine the definitive Purchase Price of the property from the provided data excerpts.
+        
+        Candidates found:
+        """
+        
+        for idx, c in enumerate(candidates_list):
+            prompt += f"""
+            --- Candidate {idx + 1} ---
+            Extracted Value: ${c['value']:,.2f}
+            Source Document: {c['source']}
+            Context/Page Content:
+            {c['text_context'][:2000]}  # Truncated to avoid token limits
+            -----------------------
+            """
+            
+        prompt += """
+        
+        INSTRUCTIONS:
+        1. Analyze the context for each candidate.
+        2. Identify the TRUE Purchase Price.
+        3. CRITICAL - DISTINGUISH FROM DEPOSIT:
+           - You MUST distinguish between "Purchase Price" and "Deposit" / "Earnest Money".
+           - Deposits are often smaller amounts (e.g. $50k, $100k, or 3-5% of price) mentioned in "Deposit" sections.
+           - Do NOT confuse the Deposit amount with the Purchase Price.
+        4. SOURCE PRIORITY - MAIN AGREEMENT:
+           - The "Main" Purchase and Sale Agreement (PSA) is the PRIMARY authority.
+           - Be cautious with "Amendments" or "Addenda" - they often discuss deposits or extensions, not necessarily the total price.
+           - Always prefer the value defined in the "Purchase Price" section (often Section 2) of the Main PSA.
+        5. IGNORE extracted values that are actually:
+           - "Earnest Money Deposit" or "Deposit"
+           - "Loan Amount" or "Debt"
+           - "Price per Unit"
+           - "Broker Opinion of Value" (unless it's the only price available in an OM)
+           - "Strike Price" or "Guidance" (if a firm contract price exists)
+        
+        Return a JSON object:
+        {
+            "selected_value": float,
+            "selected_source": "Source filename",
+            "confidence": float (0.0 to 1.0),
+            "reasoning": "Explanation of why this value was chosen and others rejected."
+        }
+        """
+        
+        try:
+            # Use generate_structured_data if available on the service, or just content
+            # Assuming gemini_service has generate_content or generate_structured_data
+            # We'll use a simple wrapper or if it's the GeminiService class we saw earlier
+            
+            if hasattr(gemini_service, "generate_content_async"):
+                response = await gemini_service.generate_content_async(prompt)
+            else:
+                # Fallback synchronous or different method signature
+                response = gemini_service.generate_content(prompt)
+            
+            # Clean and parse JSON
+            import json
+            import re
+            
+            cleaned_text = response.strip()
+            # Extract JSON block
+            match = re.search(r"```json\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            if match:
+                cleaned_text = match.group(1)
+            else:
+                # Try generic block
+                match = re.search(r"```\s*(.*?)```", cleaned_text, re.DOTALL)
+                if match:
+                    cleaned_text = match.group(1)
+            
+            # Cleanup potential trailing chars
+            cleaned_text = cleaned_text.strip()
+            if cleaned_text.startswith("json"):
+                cleaned_text = cleaned_text[4:]
+            
+            result = json.loads(cleaned_text)
+            
+            return {
+                "value": result.get("selected_value", 0.0),
+                "source": result.get("selected_source", "Verification Agent"),
+                "confidence": result.get("confidence", 0.0),
+                "reasoning": result.get("reasoning", "")
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Purchase Price Verification Agent: {e}")
+            # Fallback to the highest priority logic already in place (caller handles this)
+            return None
+
     def _normalize_unit_id(self, unit_id: str) -> str:
         """
         Normalize unit ID for deduplication.
