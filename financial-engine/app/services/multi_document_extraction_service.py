@@ -900,6 +900,13 @@ class MultiDocumentExtractionService:
                 if item_type == "expense":
                     exp["type"] = "capex"
                     logger.info(f"Recategorized permit '{exp.get('raw_text')}' as capital expenditure")
+
+            # Fix 6b: Deposits (Earnest Money) should not be expenses or purchase price
+            elif any(keyword in raw_text for keyword in ["deposit", "earnest money", "escrow"]):
+                # Ensure it is not categorized as purchase price or expense if it's a deposit
+                if item_type == "expense":
+                    exp["type"] = "property_info"
+                    logger.info(f"Recategorized '{exp.get('raw_text')}' as property_info (Deposit)")
             
             # Fix 7: Ensure rent has correct subtype
             elif any(keyword in raw_text for keyword in ["monthly rent", "rent", "rental income"]) and "late" not in raw_text:
@@ -975,6 +982,7 @@ class MultiDocumentExtractionService:
             - If type is "revenue" and subtype is "reimbursement", map to Group: "Revenue" and Category: "Reimbursements"
             - If type is "capex", map to Group: "Capital Expenditure" and Category: "Capital Reserves"
             - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price"
+            - Map "Deposit", "Earnest Money", "Escrow Deposit" to Group: "Property Info" and Category: "Deposit"
             - Map "Price per Unit", "Cost per Unit" to Group: "Property Info" and Category: "Price per Unit"
             - Map "Units", "Total Units", "Unit Count" to Group: "Property Info" and Category: "Total Units"
             - Map "Year Built", "Build Year", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built"
@@ -1116,7 +1124,8 @@ class MultiDocumentExtractionService:
         
         # Keyword mapping for operating expenses
         category_keywords = {
-            "Purchase Price": (["purchase price","price", "asking price", "sale price"], "Property Info"),
+            "Purchase Price": (["purchase price", "asking price", "sale price"], "Property Info"),
+            "Deposit": (["deposit", "earnest money", "escrow"], "Property Info"),
             "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),
             "Total Units": (["units", "total units", "unit count", "number of units"], "Property Info"),
             "Year Built": (["year built", "build year", "construction year", "built in"], "Property Info"),

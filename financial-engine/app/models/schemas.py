@@ -63,6 +63,7 @@ class ExpenseCategory(str, Enum):
     
     # Explicit Major Variables
     PURCHASE_PRICE = "Purchase Price"
+    DEPOSIT = "Deposit"
     PRICE_PER_UNIT = "Price per Unit"
     TOTAL_UNITS = "Total Units"
     YEAR_BUILT = "Year Built"

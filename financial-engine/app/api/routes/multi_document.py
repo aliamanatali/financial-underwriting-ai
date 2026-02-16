@@ -1399,6 +1399,10 @@ async def _analyze_deal_package_logic(
                     is_pp = True
                 elif item.raw_text and ("purchase price" in item.raw_text.lower() or "sale price" in item.raw_text.lower() or "contract price" in item.raw_text.lower()):
                     is_pp = True
+
+                # Exclude explicit Deposits/Earnest Money
+                if item.normalized_value == "Deposit" or (item.raw_text and ("deposit" in item.raw_text.lower() or "earnest money" in item.raw_text.lower())):
+                    is_pp = False
                 
                 if is_pp:
                     doc_id = item.metadata.get("document_id")

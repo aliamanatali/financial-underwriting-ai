@@ -362,6 +362,11 @@ class SynthesisService:
                 "contract price" in raw_text or
                 "price" in normalized_val):
                 
+                # Critical: Exclude explicit Deposits
+                if "deposit" in normalized_val or "deposit" in raw_text or "earnest" in raw_text or "escrow" in raw_text:
+                    logger.info(f"Skipping Purchase Price candidate (identified as Deposit): {raw_text} - ${amount:,.2f}")
+                    continue
+
                 # Exclude small amounts that might be deposits or fees
                 # Increased threshold to $100k to avoid "Earnest Money Deposit" ($50k) errors
                 if amount > 100000 and doc_score > best_values["purchase_price"]["score"]:

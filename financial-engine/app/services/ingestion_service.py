@@ -432,6 +432,7 @@ class IngestionService:
         - It is often on the cover page or Executive Summary.
         - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
         - If "Unpriced", "TBD", or "Best Offer", look for a "Strike Price" or "Guidance" elsewhere. If still not found, return 0.0.
+        - CRITICAL: Do NOT confuse with "Earnest Money Deposit", "Initial Deposit", "Escrow Deposit", or "Down Payment". Deposits are typically smaller amounts ($50k-$200k).
         
         CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
         - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
@@ -715,6 +716,7 @@ class IngestionService:
             - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
             - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
             - If "Unpriced", "TBD", or "Best Offer", return 0.0.
+            - CRITICAL: Do NOT confuse with "Earnest Money Deposit", "Initial Deposit", "Escrow Deposit", or "Down Payment". Deposits are typically smaller amounts ($50k-$200k).
             
             CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
             - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
