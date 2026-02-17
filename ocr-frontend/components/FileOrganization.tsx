@@ -612,7 +612,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
                 <div className="p-2 bg-red-50 rounded-lg shrink-0">
                     <FileIcon />
                 </div>
-                <div>
+                <div className="flex-1 min-w-0">
                    <p className="text-sm font-medium text-neutral-900 truncate">{activeDragFile.name}</p>
                 </div>
              </div>

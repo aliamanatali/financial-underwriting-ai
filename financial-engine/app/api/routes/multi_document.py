@@ -1372,7 +1372,9 @@ async def _analyze_deal_package_logic(
     # Run Metadata Synthesizer
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
     
-    # --- Purchase Price Verification Agent (Non-OM Flow) ---
+    # --- Verification Agents (Non-OM Flow) ---
+    verification_audit_logs = []
+    
     if package.underwriting_flow == "MULTI_SOURCE":
         try:
             logger.info("Running Purchase Price Verification Agent (Non-OM Flow)...")
@@ -1493,9 +1495,8 @@ async def _analyze_deal_package_logic(
                         "source": f"Verified: {v_source}",
                         "score": 999 # Highest priority
                     }
-                    
-                    # Add to Audit Trail
-                    analysis.audit_trail.append({
+
+                    verification_audit_logs.append({
                         "field_name": "Purchase Price (Verified)",
                         "extracted_value": f"${v_val:,.2f}",
                         "source": v_source,
@@ -1503,11 +1504,109 @@ async def _analyze_deal_package_logic(
                         "method": "Verification Agent (Context Analysis)",
                         "reasoning": v_reason
                     })
+                    
             else:
                 logger.info("No Purchase Price candidates found for verification.")
+
+            # --- Year Built Verification Agent ---
+            logger.info("Running Year Built Verification Agent...")
+            yb_candidates = []
+            
+            for item in normalized_items:
+                is_yb = False
+                if item.normalized_value == "Year Built":
+                    is_yb = True
+                elif item.raw_text and ("year built" in item.raw_text.lower() or "date of construction" in item.raw_text.lower()):
+                    is_yb = True
                 
+                if is_yb:
+                    doc_id = item.metadata.get("document_id")
+                    if not doc_id: continue
+                    
+                    val = 0
+                    if item.metadata and item.metadata.get("amount"):
+                        try: val = int(float(item.metadata.get("amount")))
+                        except: pass
+                    
+                    # If val is 0, try regex on raw_text
+                    if val == 0 and item.raw_text:
+                        import re
+                        matches = re.findall(r'\b(18\d{2}|19\d{2}|20\d{2})\b', item.raw_text)
+                        if matches:
+                            try: val = int(matches[0])
+                            except: pass
+
+                    if val > 1800 and val < 2030:
+                        # Fetch context (Reuse logic)
+                        full_text = ""
+                        source_filename = item.source_document or "unknown.pdf"
+                        
+                        try:
+                            full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
+                        except: pass
+                        
+                        if not full_text:
+                            try:
+                                content = None
+                                if doc_id in file_storage_cache:
+                                    content = file_storage_cache[doc_id]["content"]
+                                else:
+                                    ext = Path(source_filename).suffix
+                                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
+                                    content = await storage_service.get_document_file(storage_path)
+                                
+                                if content and source_filename.lower().endswith(".pdf"):
+                                    import PyPDF2
+                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                                    text_pages = []
+                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
+                                        text_pages.append(page.extract_text())
+                                    full_text = "\n".join(text_pages)
+                            except: pass
+                        
+                        if full_text:
+                            window_text = full_text[:3000]
+                            if item.raw_text and item.raw_text in full_text:
+                                idx = full_text.find(item.raw_text)
+                                start = max(0, idx - 1000)
+                                end = min(len(full_text), idx + 1000)
+                                window_text = full_text[start:end]
+                            
+                            yb_candidates.append({
+                                "value": val,
+                                "source": item.source_document,
+                                "text_context": window_text,
+                                "document_id": doc_id
+                            })
+
+            if yb_candidates:
+                verified_yb = await synthesis_service.verify_year_built(yb_candidates, gemini_service)
+                if verified_yb and verified_yb.get("value", 0) > 0:
+                    v_val = verified_yb["value"]
+                    v_conf = verified_yb.get("confidence", 0.0)
+                    v_source = verified_yb.get("source", "Verification Agent")
+                    v_reason = verified_yb.get("reasoning", "")
+                    
+                    logger.info(f"Verified Year Built: {v_val} (Conf: {v_conf})")
+                    
+                    synthesized_metadata["year_built"] = {
+                        "value": v_val,
+                        "source": f"Verified: {v_source}",
+                        "score": 999
+                    }
+                    
+                    verification_audit_logs.append({
+                        "field_name": "Year Built (Verified)",
+                        "extracted_value": str(v_val),
+                        "source": v_source,
+                        "confidence_score": v_conf,
+                        "method": "Verification Agent (Conflict Resolution)",
+                        "reasoning": v_reason
+                    })
+            
+
         except Exception as e:
-            logger.error(f"Error in Purchase Price Verification Agent: {e}")
+            logger.error(f"Error in Verification Agents: {e}")
             # Continue without failing the whole analysis
 
     # Note: If rent roll has more units than found in expenses/OM, update it
@@ -1875,8 +1974,14 @@ async def _analyze_deal_package_logic(
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")
 
     # Populate Audit Trail with Ingestion Data
-    audit_log_service.add_ingestion_logs(analysis)
+    audit_log_service.add_ingestion_logs(analysis, synthesized_metadata=synthesized_metadata)
     
+    # Add Verification Logs
+    if verification_audit_logs:
+        if analysis.audit_trail is None:
+            analysis.audit_trail = []
+        analysis.audit_trail.extend(verification_audit_logs)
+
     # ===== STEP 3: CHECK DEAL VIABILITY =====
     await update_progress(50, "Checking deal viability criteria...")
     viability_check = financial_service.check_deal_viability(analysis)

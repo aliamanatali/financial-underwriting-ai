@@ -53,6 +53,110 @@ class SynthesisService:
         """Initialize the synthesis service."""
         pass
 
+    async def verify_year_built(
+        self,
+        candidates: List[Dict[str, Any]],
+        gemini_service: Any
+    ) -> Dict[str, Any]:
+        """
+        Verify Year Built using an LLM agent that analyzes context from all sources.
+        
+        Args:
+            candidates: List of dicts containing:
+                - value: int/str
+                - source: str (filename)
+                - text_context: str
+                - document_id: str
+            gemini_service: Service to interact with LLM
+            
+        Returns:
+            Dict with "value", "source", "confidence", "reasoning"
+        """
+        if not candidates:
+            return {"value": 0, "source": None, "confidence": 0.0, "reasoning": "No candidates found"}
+            
+        # Deduplicate
+        unique_candidates = {}
+        for c in candidates:
+            key = f"{c['value']}_{c['source']}"
+            if key not in unique_candidates:
+                unique_candidates[key] = c
+        
+        candidates_list = list(unique_candidates.values())
+        
+        prompt = """
+        You are a real estate underwriting verification agent. Your goal is to determine the definitive "Year Built" of the property.
+        
+        Candidates found:
+        """
+        
+        for idx, c in enumerate(candidates_list):
+            prompt += f"""
+            --- Candidate {idx + 1} ---
+            Extracted Year: {c['value']}
+            Source Document: {c['source']}
+            Context:
+            {c['text_context'][:1000]}
+            -----------------------
+            """
+            
+        prompt += """
+        
+        INSTRUCTIONS:
+        1. Identify the TRUE Year Built.
+        2. CONFLICT RESOLUTION:
+           - "Offering Memorandum" (OM) is often marketing material and may be less accurate than technical reports.
+           - "Appraisal", "Physical Needs Assessment" (PNA), "Engineering Report", "Property Condition Report", "Tax Bill", or "Fire Inspection" are usually MORE reliable sources for Year Built.
+           - If there is a conflict between OM (e.g. 1980) and a technical report (e.g. 1965), FAVOR THE TECHNICAL REPORT.
+           - Be careful of "Renovated Year" or "Effective Year Built". We want the ORIGINAL Year Built unless "Effective Year" is explicitly requested. Usually underwriting wants original.
+        3. IGNORE:
+           - Dates that refer to "inspection date", "report date", or "renovation date" (unless it's the only info).
+        
+        Return a JSON object:
+        {
+            "selected_value": int,
+            "selected_source": "Source filename",
+            "confidence": float (0.0 to 1.0),
+            "reasoning": "Explanation of why this value was chosen."
+        }
+        """
+        
+        try:
+            if hasattr(gemini_service, "generate_content_async"):
+                response = await gemini_service.generate_content_async(prompt)
+            else:
+                response = gemini_service.generate_content(prompt)
+            
+            # Clean and parse JSON
+            import json
+            import re
+            
+            cleaned_text = response.strip()
+            match = re.search(r"```json\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            if match:
+                cleaned_text = match.group(1)
+            else:
+                match = re.search(r"```\s*(.*?)```", cleaned_text, re.DOTALL)
+                if match:
+                    cleaned_text = match.group(1)
+            
+            cleaned_text = cleaned_text.strip()
+            if cleaned_text.startswith("json"):
+                cleaned_text = cleaned_text[4:]
+            
+            result = json.loads(cleaned_text)
+            
+            return {
+                "value": int(result.get("selected_value", 0)),
+                "source": result.get("selected_source", "Verification Agent"),
+                "confidence": result.get("confidence", 0.0),
+                "reasoning": result.get("reasoning", "")
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Year Built Verification Agent: {e}")
+            return None
+
     async def verify_purchase_price(
         self,
         candidates: List[Dict[str, Any]],
@@ -538,6 +642,19 @@ class SynthesisService:
         logger.info("=== METADATA SYNTHESIS RESULTS ===")
         for field, data in best_values.items():
             if data["source"]:
+                # Enhance source with page number if available in metadata of winning item
+                # Find the item that contributed this value
+                # This is a best-effort lookup
+                for item in normalized_items:
+                    if item.source_document == data["source"]:
+                        # Check if value matches
+                        item_val = item.metadata.get("text_value") if item.metadata else item.raw_text
+                        if item_val and str(item_val).strip() == str(data["value"]).strip():
+                             # Check for page number
+                             if item.metadata and item.metadata.get("page_number"):
+                                 data["source"] = f"{data['source']} (Page {item.metadata['page_number']})"
+                                 break
+                
                 logger.info(f"{field}: {data['value']} (from {data['source']}, score: {data['score']})")
             else:
                 logger.info(f"{field}: NOT FOUND")
