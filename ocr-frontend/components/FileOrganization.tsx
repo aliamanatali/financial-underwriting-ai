@@ -483,7 +483,10 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
     <div className="flex flex-col h-[calc(100vh-180px)] min-h-[600px] bg-white rounded-xl shadow-sm border border-neutral-200 overflow-hidden">
         {/* Header Section */}
         <div className="flex items-center justify-between p-6 border-b border-neutral-100 bg-white">
-            <h2 className="text-xl font-semibold text-neutral-900">Review & Organize Files</h2>
+            <div>
+                <h2 className="text-xl font-semibold text-neutral-900">Review & Organize Files</h2>
+                <p className="text-sm text-neutral-400 mt-1">You can drag files and place in any folders you want.</p>
+            </div>
             <div className="flex items-center gap-3">
                  <input
                     type="file"
