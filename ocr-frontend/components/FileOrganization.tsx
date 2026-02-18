@@ -485,7 +485,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
         <div className="flex items-center justify-between p-6 border-b border-neutral-100 bg-white">
             <div>
                 <h2 className="text-xl font-semibold text-neutral-900">Review & Organize Files</h2>
-                <p className="text-sm text-neutral-400 mt-1">You can drag files and place in any folders you want.</p>
+                <p className="text-sm text-neutral-400 mt-1">Files can be organized by dragging them into the desired folders.</p>
             </div>
             <div className="flex items-center gap-3">
                  <input
