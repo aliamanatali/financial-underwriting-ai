@@ -1023,6 +1023,34 @@ async def delete_document_from_package(
     }
 
 
+@router.patch("/packages/{package_id}/rename")
+async def rename_deal_package(
+    package_id: str,
+    new_name: str
+):
+    """
+    Rename a deal package.
+    """
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
+    
+    # Update name
+    package.property_name = new_name
+    package.updated_at = datetime.utcnow().isoformat()
+    
+    # Save changes
+    await storage_service.save_deal_package(package.model_dump())
+    
+    return {
+        "message": "Package renamed successfully",
+        "package_id": package_id,
+        "new_name": new_name
+    }
+
+
 @router.delete("/packages/{package_id}")
 async def delete_deal_package(package_id: str):
     """
