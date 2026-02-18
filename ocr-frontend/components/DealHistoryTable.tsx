@@ -101,10 +101,37 @@ export default function DealHistoryTable() {
     try {
       setRenaming(packageId);
       await apiClient.renameDealPackage(packageId, newName.trim());
-      // Clear cache to force refresh
-      setCache({});
-      // Refresh the current page
-      await fetchPackages(currentPage, itemsPerPage);
+      
+      // Update local state without refetching
+      const updatedName = newName.trim();
+      const now = new Date().toISOString();
+      
+      setPackages(prev => prev.map(pkg =>
+        pkg.package_id === packageId
+          ? { ...pkg, property_name: updatedName, updated_at: now }
+          : pkg
+      ));
+
+      // Update cache
+      const cacheKey = `page_${currentPage}_limit_${itemsPerPage}`;
+      setCache(prev => {
+        if (!prev[cacheKey]) return prev;
+        return {
+          ...prev,
+          [cacheKey]: {
+            ...prev[cacheKey],
+            data: {
+              ...prev[cacheKey].data,
+              packages: prev[cacheKey].data.packages.map((pkg: DealPackage) =>
+                pkg.package_id === packageId
+                  ? { ...pkg, property_name: updatedName, updated_at: now }
+                  : pkg
+              )
+            }
+          }
+        };
+      });
+
       setEditingName(null);
       setNewName("");
       setOpenMenuId(null);
