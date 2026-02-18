@@ -270,13 +270,13 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
 
   return (
     <div className="overflow-x-auto p-4 horizontal-scrollbar">
-      <table className="min-w-full text-left text-sm whitespace-nowrap">
+      <table className="min-w-full text-center text-sm whitespace-nowrap">
         <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
-          <tr>
-            <th className="px-4 py-3">Unit Type</th>
-            <th className="px-4 py-3 text-right">Pro Forma Rent</th>
-            <th className="px-4 py-3 text-right">
-              <div className="flex items-center justify-end">
+          <tr className="whitespace-nowrap">
+            <th className="px-4 py-3 text-center">Unit Type</th>
+            <th className="px-4 py-3 text-center">Pro Forma Rent</th>
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-1">
                 Size
                 <WidgetTooltip
                   title="Average Unit Size"
@@ -285,8 +285,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                 />
               </div>
             </th>
-            <th className="px-4 py-3 text-right">
-              <div className="flex items-center justify-end">
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-1">
                 Total SF
                 <WidgetTooltip
                   title="Total Square Feet"
@@ -295,8 +295,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                 />
               </div>
             </th>
-            <th className="px-4 py-3 text-right">
-              <div className="flex items-center justify-end">
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-1">
                 Rent / SF
                 <WidgetTooltip
                   title="Rent per Square Foot"
@@ -307,7 +307,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
             </th>
             <th className="px-4 py-3 text-center">Units</th>
             <th className="px-4 py-3 text-center">
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center gap-1">
                 Mix %
                 <WidgetTooltip
                   title="Unit Mix Percentage"
@@ -317,7 +317,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
               </div>
             </th>
             <th className="px-4 py-3 text-center">
-              <div className="flex items-center justify-center">
+              <div className="flex items-center justify-center gap-1">
                 SF %
                 <WidgetTooltip
                   title="Square Footage Percentage"
@@ -327,8 +327,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
               </div>
             </th>
             <th className="px-4 py-3 text-center">Beds</th>
-            <th className="px-4 py-3 text-right">
-              <div className="flex items-center justify-end">
+            <th className="px-4 py-3 text-center">
+              <div className="flex items-center justify-center gap-1">
                 $/Beds
                 <WidgetTooltip
                   title="Rent per Bed"
@@ -341,37 +341,37 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
             <th className="px-4 py-3 text-center">Occupancy Type</th>
             <th className="px-4 py-3 text-center">Single</th>
             <th className="px-4 py-3 text-center">Double</th>
-            <th className="px-4 py-3 text-right">Single $</th>
-            <th className="px-4 py-3 text-right">Double $</th>
+            <th className="px-4 py-3 text-center">Single $</th>
+            <th className="px-4 py-3 text-center">Double $</th>
             <th className="px-4 py-3 text-center">Unit Config</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-neutral-100">
           {data.map((row, idx) => (
             <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
-              <td className="px-4 py-2.5 font-medium">{row.unit_type}</td>
-              <td className="px-4 py-2.5 text-right">
+              <td className="px-4 py-2.5 font-medium text-center">{row.unit_type}</td>
+              <td className="px-4 py-2.5 text-center">
                 {isEditing && onItemChange ? (
                   <input
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "market_rent", e.target.value)}
-                    className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                    className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
                   />
                 ) : (
                   formatCurrency(row.avgMarketRent)
                 )}
               </td>
-              <td className="px-4 py-2.5 text-right">
+              <td className="px-4 py-2.5 text-center">
                 {row.avgSize.toFixed(0)}
               </td>
-              <td className="px-4 py-2.5 text-right">{row.totalSf.toFixed(0)}</td>
-              <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerSf, 2)}</td>
+              <td className="px-4 py-2.5 text-center">{row.totalSf.toFixed(0)}</td>
+              <td className="px-4 py-2.5 text-center">{formatCurrency(row.rentPerSf, 2)}</td>
               <td className="px-4 py-2.5 text-center">{row.unitCount}</td>
               <td className="px-4 py-2.5 text-center">{formatPercent(row.mixPercent)}</td>
               <td className="px-4 py-2.5 text-center">{formatPercent(row.sfPercent)}</td>
               <td className="px-4 py-2.5 text-center">{row.beds}</td>
-              <td className="px-4 py-2.5 text-right">{formatCurrency(row.rentPerBed)}</td>
+              <td className="px-4 py-2.5 text-center">{formatCurrency(row.rentPerBed)}</td>
               <td className="px-4 py-2.5 text-center">
                   {isEditing && onItemChange ? (
                       <input
@@ -389,7 +389,7 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                       <select
                           value={localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single'}
                           onChange={(e) => handleLocalChange(row.unit_type, "occupancy_type" as any, e.target.value)}
-                          className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                          className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
                       >
                           <option value="Single">Single</option>
                           <option value="Double">Double</option>
@@ -425,27 +425,27 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
                   row.beds_d > 0 ? row.beds_d : "-"
                 )}
               </td>
-              <td className="px-4 py-2.5 text-right">
+              <td className="px-4 py-2.5 text-center">
                 {isEditing && onItemChange ? (
                   <input
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_single || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "market_rent_single" as any, parseFloat(e.target.value) || 0)}
                     disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double"}
-                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.price_s > 0 ? formatCurrency(row.price_s) : (row.beds_s > 0 ? formatCurrency(row.rentPerBed) : "-")
                 )}
               </td>
-              <td className="px-4 py-2.5 text-right">
+              <td className="px-4 py-2.5 text-center">
                 {isEditing && onItemChange ? (
                   <input
                     type="text"
                     value={localRentRoll.find(item => item.unit_type === row.unit_type)?.market_rent_double || ''}
                     onChange={(e) => handleLocalChange(row.unit_type, "market_rent_double" as any, parseFloat(e.target.value) || 0)}
                     disabled={(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single"}
-                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                    className={`w-24 border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none ${(localRentRoll.find(item => item.unit_type === row.unit_type)?.occupancy_type || 'Single') === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                   />
                 ) : (
                   row.price_d > 0 ? formatCurrency(row.price_d) : (row.beds_d > 0 ? formatCurrency(row.rentPerBed) : "-")
@@ -463,22 +463,22 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
         </tbody>
         <tfoot className="bg-neutral-900 text-white border-t-2 border-neutral-800 font-bold">
             <tr>
-                <td className="px-4 py-3">Total / Wtd Avg</td>
-                <td className="px-4 py-3 text-right">{formatCurrency(totals.weightedAvgRent)}</td>
-                <td className="px-4 py-3 text-right">{totals.weightedAvgSize.toFixed(0)}</td>
-                <td className="px-4 py-3 text-right">{totals.totalSf.toFixed(0)}</td>
-                <td className="px-4 py-3 text-right">{formatCurrency(totals.weightedAvgRentPerSf, 2)}</td>
+                <td className="px-4 py-3 text-center">Total / Wtd Avg</td>
+                <td className="px-4 py-3 text-center">{formatCurrency(totals.weightedAvgRent)}</td>
+                <td className="px-4 py-3 text-center">{totals.weightedAvgSize.toFixed(0)}</td>
+                <td className="px-4 py-3 text-center">{totals.totalSf.toFixed(0)}</td>
+                <td className="px-4 py-3 text-center">{formatCurrency(totals.weightedAvgRentPerSf, 2)}</td>
                 <td className="px-4 py-3 text-center">{totals.totalUnits}</td>
                 <td className="px-4 py-3 text-center">{formatPercent(totals.totalMixPercent)}</td>
                 <td className="px-4 py-3 text-center">{formatPercent(totals.totalSfPercent)}</td>
                 <td className="px-4 py-3 text-center">{totals.weightedAvgBeds.toFixed(1)}</td>
-                <td className="px-4 py-3 text-right">{formatCurrency(totals.weightedAvgRentPerBed)}</td>
+                <td className="px-4 py-3 text-center">{formatCurrency(totals.weightedAvgRentPerBed)}</td>
                 <td className="px-4 py-3 text-center">-</td>
                 <td className="px-4 py-3 text-center">-</td>
                 <td className="px-4 py-3 text-center">{totals.totalBedsSingle}</td>
                 <td className="px-4 py-3 text-center">{totals.totalBedsDouble}</td>
-                <td className="px-4 py-3 text-right">{formatCurrency(totals.totalMarketRentSingle)}</td>
-                <td className="px-4 py-3 text-right">{formatCurrency(totals.totalMarketRentDouble)}</td>
+                <td className="px-4 py-3 text-center">{formatCurrency(totals.totalMarketRentSingle)}</td>
+                <td className="px-4 py-3 text-center">{formatCurrency(totals.totalMarketRentDouble)}</td>
                 <td className="px-4 py-3 text-center">-</td>
             </tr>
         </tfoot>

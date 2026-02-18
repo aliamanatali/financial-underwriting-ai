@@ -70,7 +70,8 @@ export default function RentRollPreviewModal({
              filter: false,
              resizable: true,
              pinned: col.pinned,
-             cellStyle: col.cellStyle
+             cellStyle: { ...col.cellStyle, textAlign: 'center' },
+             cellClass: 'text-center'
          };
 
          if (col.type === "currency") {
@@ -88,6 +89,11 @@ export default function RentRollPreviewModal({
          } else if (col.field && ['unit_size', 'size', 'total_sf', 'avg_size'].some(k => col.field.includes(k))) {
              def.valueFormatter = (params) => params.value ? params.value.toLocaleString() : '';
              def.type = 'numericColumn';
+         } else if (col.field && ['lease_start', 'lease_end', 'move_in_date', 'date'].some(k => col.field.toLowerCase().includes(k))) {
+             def.valueFormatter = (params) => {
+                 if (!params.value) return "";
+                 return String(params.value).split(/[ T]/)[0];
+             };
          }
 
          return def;

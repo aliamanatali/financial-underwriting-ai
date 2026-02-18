@@ -799,10 +799,12 @@ class ExcelService:
             def fmt_date(d):
                 if not d: return ""
                 try:
-                    parts = d.split('-')
+                    # Strip time if present (handles space or T separator)
+                    d_str = str(d).split(' ')[0].split('T')[0]
+                    parts = d_str.split('-')
                     if len(parts) == 3:
                         return f"{int(parts[1])}/{int(parts[2])}/{parts[0]}"
-                    return d
+                    return d_str
                 except:
                     return d
 
@@ -1285,10 +1287,12 @@ class ExcelService:
             def fmt_date(d):
                 if not d: return ""
                 try:
-                    parts = d.split('-')
+                    # Strip time if present (handles space or T separator)
+                    d_str = str(d).split(' ')[0].split('T')[0]
+                    parts = d_str.split('-')
                     if len(parts) == 3:
                         return f"{int(parts[1])}/{int(parts[2])}/{parts[0]}"
-                    return d
+                    return d_str
                 except:
                     return d
 

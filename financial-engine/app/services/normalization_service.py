@@ -57,7 +57,8 @@ class NormalizationService:
                         clean_doc = {
                             "original_text": doc["original_text"],
                             "mapped_category": doc["mapped_category"],
-                            "confidence": doc.get("confidence", 0.85)
+                            "confidence": doc.get("confidence", 0.85),
+                            "reasoning": doc.get("reasoning")
                         }
                         cache[doc["original_text"]] = clean_doc
                         mongo_hits.append(clean_doc)
@@ -96,7 +97,8 @@ class NormalizationService:
                         cache_obj = {
                             "original_text": item["original_text"],
                             "mapped_category": item["mapped_category"],
-                            "confidence": item.get("confidence", 0.85)
+                            "confidence": item.get("confidence", 0.85),
+                            "reasoning": item.get("reasoning")
                         }
                         pipeline.set(f"mapping:{item['original_text']}", json.dumps(cache_obj), ex=86400 * 30)
                 await pipeline.execute()
@@ -117,6 +119,7 @@ class NormalizationService:
                                     "original_text": item["original_text"],
                                     "mapped_category": item["mapped_category"],
                                     "confidence": item.get("confidence", 0.85),
+                                    "reasoning": item.get("reasoning"),
                                     "updated_at": datetime.now().isoformat()
                                 }},
                                 upsert=True
@@ -256,6 +259,7 @@ class NormalizationService:
                     "mapped_category": cached["mapped_category"],
                     "amount": expense.get("amount"), # Use current amount, not cached amount
                     "confidence": cached.get("confidence", 0.95), # High confidence for cache
+                    "reasoning": cached.get("reasoning"),
                     "page_number": expense.get("page_number"),
                     "bbox": expense.get("bbox")
                 }
@@ -505,12 +509,15 @@ class NormalizationService:
                         category_enum = ExpenseCategory.CAPITAL_RESERVES
                         # Capital Reserves ensures it's excluded from NOI ("below the line")
 
+                # Fetch reasoning if available, otherwise default
+                reasoning = mapped_item.get("reasoning", f"LLM mapped '{desc}' based on semantic similarity.")
+
                 audit_log = AuditLog(
                     field_name=f"Expense: {category_enum.value}",
                     extracted_value=parsed_amount,
                     source="T12 Income Statement",
                     confidence_score=mapped_item.get("confidence", 0.85),
-                    method=f"LLM mapped '{desc}' to {category_enum.value} with {mapped_item.get('confidence', 0.85):.0%} confidence",
+                    method=f"{reasoning} (Confidence: {mapped_item.get('confidence', 0.85):.0%})",
                     document_id=document_id,
                     page_number=expense.get("page_number"),
                     bbox=expense.get("bbox")
