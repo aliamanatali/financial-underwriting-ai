@@ -1372,6 +1372,243 @@ async def _analyze_deal_package_logic(
     # Run Metadata Synthesizer
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
     
+    # --- Verification Agents (Non-OM Flow) ---
+    verification_audit_logs = []
+    
+    if package.underwriting_flow == "MULTI_SOURCE":
+        try:
+            logger.info("Running Purchase Price Verification Agent (Non-OM Flow)...")
+            pp_candidates = []
+            
+            # Helper to extract numeric value from text if metadata missing
+            def extract_price_from_text(text):
+                import re
+                # Look for $XX,XXX,XXX patterns
+                matches = re.findall(r'\$\s?([0-9,]+)', text)
+                if matches:
+                    try:
+                        # Return the largest value found (heuristic)
+                        vals = [float(m.replace(",", "")) for m in matches]
+                        return max(vals)
+                    except: pass
+                return 0.0
+
+            # 1. Identify Candidates
+            for item in normalized_items:
+                # Check for Purchase Price items
+                is_pp = False
+                if item.normalized_value == "Purchase Price":
+                    is_pp = True
+                elif item.raw_text and ("purchase price" in item.raw_text.lower() or "sale price" in item.raw_text.lower() or "contract price" in item.raw_text.lower()):
+                    is_pp = True
+
+                # Exclude explicit Deposits/Earnest Money
+                if item.normalized_value == "Deposit" or (item.raw_text and ("deposit" in item.raw_text.lower() or "earnest money" in item.raw_text.lower())):
+                    is_pp = False
+                
+                if is_pp:
+                    doc_id = item.metadata.get("document_id")
+                    if not doc_id: continue
+                    
+                    # Determine value
+                    val = 0.0
+                    if item.metadata and item.metadata.get("amount"):
+                        try: val = float(item.metadata.get("amount"))
+                        except: pass
+                    
+                    if val == 0.0 and item.raw_text:
+                        val = extract_price_from_text(item.raw_text)
+                    
+                    if val > 10000: # Filter out small amounts/noise
+                        # Fetch context robustly
+                        full_text = ""
+                        source_filename = item.source_document or "unknown.pdf"
+                        
+                        # 1. Try OCR Backend first (Fastest/Best)
+                        try:
+                            full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
+                        except Exception as e:
+                            logger.warning(f"Backend text fetch failed for {doc_id}: {e}")
+                        
+                        # 2. Fallback to Storage Service (GCP/Local) if backend failed
+                        # This handles cases where server restarted and cache is empty, or backend 404s
+                        if not full_text:
+                            try:
+                                # Try cache first
+                                content = None
+                                if doc_id in file_storage_cache:
+                                    content = file_storage_cache[doc_id]["content"]
+                                else:
+                                    # Fetch from storage
+                                    ext = Path(source_filename).suffix
+                                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
+                                    content = await storage_service.get_document_file(storage_path)
+                                
+                                if content and source_filename.lower().endswith(".pdf"):
+                                    import PyPDF2
+                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                                    text_pages = []
+                                    # Extract text from first 20 pages (PSA/OM usually has price early)
+                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
+                                        text_pages.append(page.extract_text())
+                                    full_text = "\n".join(text_pages)
+                                    logger.info(f"Recovered text from storage for {source_filename} ({len(full_text)} chars)")
+                            except Exception as ex:
+                                logger.warning(f"Storage extraction failed for {doc_id}: {ex}")
+
+                        if full_text:
+                            # Extract relevant window (centered on raw_text match)
+                            # Expanded window to 5000 chars to capture more context
+                            window_text = full_text[:5000]
+                            
+                            # If we found the specific text, center on it
+                            if item.raw_text and item.raw_text in full_text:
+                                idx = full_text.find(item.raw_text)
+                                start = max(0, idx - 2000)
+                                end = min(len(full_text), idx + 3000)
+                                window_text = full_text[start:end]
+                            
+                            pp_candidates.append({
+                                "value": val,
+                                "source": item.source_document,
+                                "text_context": window_text,
+                                "document_id": doc_id
+                            })
+                        else:
+                            logger.warning(f"Could not retrieve text context for Purchase Price candidate in {item.source_document} (ID: {doc_id})")
+
+            # 2. Run Verification if candidates exist
+            if pp_candidates:
+                verified_result = await synthesis_service.verify_purchase_price(pp_candidates, gemini_service)
+                
+                if verified_result and verified_result.get("value", 0) > 0:
+                    v_val = verified_result["value"]
+                    v_conf = verified_result.get("confidence", 0.0)
+                    v_source = verified_result.get("source", "Verification Agent")
+                    v_reason = verified_result.get("reasoning", "")
+                    
+                    logger.info(f"Verified Purchase Price: ${v_val:,.2f} (Conf: {v_conf})")
+                    
+                    # Update synthesized metadata
+                    synthesized_metadata["purchase_price"] = {
+                        "value": v_val,
+                        "source": f"Verified: {v_source}",
+                        "score": 999 # Highest priority
+                    }
+
+                    verification_audit_logs.append({
+                        "field_name": "Purchase Price (Verified)",
+                        "extracted_value": f"${v_val:,.2f}",
+                        "source": v_source,
+                        "confidence_score": v_conf,
+                        "method": "Verification Agent (Context Analysis)",
+                        "reasoning": v_reason
+                    })
+                    
+            else:
+                logger.info("No Purchase Price candidates found for verification.")
+
+            # --- Year Built Verification Agent ---
+            logger.info("Running Year Built Verification Agent...")
+            yb_candidates = []
+            
+            for item in normalized_items:
+                is_yb = False
+                if item.normalized_value == "Year Built":
+                    is_yb = True
+                elif item.raw_text and ("year built" in item.raw_text.lower() or "date of construction" in item.raw_text.lower()):
+                    is_yb = True
+                
+                if is_yb:
+                    doc_id = item.metadata.get("document_id")
+                    if not doc_id: continue
+                    
+                    val = 0
+                    if item.metadata and item.metadata.get("amount"):
+                        try: val = int(float(item.metadata.get("amount")))
+                        except: pass
+                    
+                    # If val is 0, try regex on raw_text
+                    if val == 0 and item.raw_text:
+                        import re
+                        matches = re.findall(r'\b(18\d{2}|19\d{2}|20\d{2})\b', item.raw_text)
+                        if matches:
+                            try: val = int(matches[0])
+                            except: pass
+
+                    if val > 1800 and val < 2030:
+                        # Fetch context (Reuse logic)
+                        full_text = ""
+                        source_filename = item.source_document or "unknown.pdf"
+                        
+                        try:
+                            full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
+                        except: pass
+                        
+                        if not full_text:
+                            try:
+                                content = None
+                                if doc_id in file_storage_cache:
+                                    content = file_storage_cache[doc_id]["content"]
+                                else:
+                                    ext = Path(source_filename).suffix
+                                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
+                                    content = await storage_service.get_document_file(storage_path)
+                                
+                                if content and source_filename.lower().endswith(".pdf"):
+                                    import PyPDF2
+                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                                    text_pages = []
+                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
+                                        text_pages.append(page.extract_text())
+                                    full_text = "\n".join(text_pages)
+                            except: pass
+                        
+                        if full_text:
+                            window_text = full_text[:3000]
+                            if item.raw_text and item.raw_text in full_text:
+                                idx = full_text.find(item.raw_text)
+                                start = max(0, idx - 1000)
+                                end = min(len(full_text), idx + 1000)
+                                window_text = full_text[start:end]
+                            
+                            yb_candidates.append({
+                                "value": val,
+                                "source": item.source_document,
+                                "text_context": window_text,
+                                "document_id": doc_id
+                            })
+
+            if yb_candidates:
+                verified_yb = await synthesis_service.verify_year_built(yb_candidates, gemini_service)
+                if verified_yb and verified_yb.get("value", 0) > 0:
+                    v_val = verified_yb["value"]
+                    v_conf = verified_yb.get("confidence", 0.0)
+                    v_source = verified_yb.get("source", "Verification Agent")
+                    v_reason = verified_yb.get("reasoning", "")
+                    
+                    logger.info(f"Verified Year Built: {v_val} (Conf: {v_conf})")
+                    
+                    synthesized_metadata["year_built"] = {
+                        "value": v_val,
+                        "source": f"Verified: {v_source}",
+                        "score": 999
+                    }
+                    
+                    verification_audit_logs.append({
+                        "field_name": "Year Built (Verified)",
+                        "extracted_value": str(v_val),
+                        "source": v_source,
+                        "confidence_score": v_conf,
+                        "method": "Verification Agent (Conflict Resolution)",
+                        "reasoning": v_reason
+                    })
+            
+
+        except Exception as e:
+            logger.error(f"Error in Verification Agents: {e}")
+            # Continue without failing the whole analysis
+
     # Note: If rent roll has more units than found in expenses/OM, update it
     if rent_roll_items:
         rr_units = len(rent_roll_items)
@@ -1737,8 +1974,14 @@ async def _analyze_deal_package_logic(
     logger.info(f"Built analysis object with {len(rent_roll)} units and {len(historical_expenses)} expenses")
 
     # Populate Audit Trail with Ingestion Data
-    audit_log_service.add_ingestion_logs(analysis)
+    audit_log_service.add_ingestion_logs(analysis, synthesized_metadata=synthesized_metadata)
     
+    # Add Verification Logs
+    if verification_audit_logs:
+        if analysis.audit_trail is None:
+            analysis.audit_trail = []
+        analysis.audit_trail.extend(verification_audit_logs)
+
     # ===== STEP 3: CHECK DEAL VIABILITY =====
     await update_progress(50, "Checking deal viability criteria...")
     viability_check = financial_service.check_deal_viability(analysis)

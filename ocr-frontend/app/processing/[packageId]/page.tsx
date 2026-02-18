@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
@@ -27,31 +27,12 @@ function ProcessingContent() {
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Starting normalization..." });
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
-  const [missingDocs, setMissingDocs] = useState<string[]>([]);
-  const [isUploadingMissing, setIsUploadingMissing] = useState(false);
   const [activeFiles, setActiveFiles] = useState<string[]>([]);
   const [isReviewing, setIsReviewing] = useState(true);
   const [startProcessing, setStartProcessing] = useState(false);
-  const missingFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded);
-  };
-
-  const handleMissingFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      const files = Array.from(e.target.files);
-      setIsUploadingMissing(true);
-      try {
-        await apiClient.uploadAdditionalDocuments(packageId, files);
-        // Reload page to restart processing with new files
-        window.location.reload();
-      } catch (err) {
-        console.error("Failed to upload additional documents:", err);
-        alert("Failed to upload documents. Please try again.");
-        setIsUploadingMissing(false);
-      }
-    }
   };
 
   // Fetch package details
@@ -91,19 +72,6 @@ function ProcessingContent() {
         });
         setCategories(cats);
         
-        // Check for missing critical documents
-        const requiredDocs = ["Offering Memorandum", "Rent Roll", "Financials"];
-        const missing = requiredDocs.filter(req => {
-            const hasDocs = Object.entries(data.documents).some(([key, docs]) =>
-                key.includes(req) && Array.isArray(docs) && docs.length > 0
-            );
-            return !hasDocs;
-        });
-        
-        if (missing.length > 0) {
-            setMissingDocs(missing);
-        }
-
         // Check if package is already normalized
         if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
           // Note: If in_progress, we might want to attach to stream instead of redirecting
@@ -364,7 +332,7 @@ function ProcessingContent() {
 
         {/* Main Workspace */}
         <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar">
-          <div className="max-w-5xl mx-auto flex flex-col gap-8">
+          <div className={`mx-auto flex flex-col gap-8 ${isReviewing ? 'max-w-[90%]' : 'max-w-5xl'}`}>
             
             {isReviewing && dealPackage ? (
                 <FileOrganization
@@ -388,59 +356,6 @@ function ProcessingContent() {
                 </div>
                 </div>
 
-                {/* Missing Documents Alert */}
-                {missingDocs.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div>
-                    <h3 className="text-amber-800 font-semibold flex items-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                        <line x1="12" y1="9" x2="12" y2="13"></line>
-                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                        </svg>
-                        Missing Required Information
-                    </h3>
-                    <p className="text-amber-700 text-sm mt-1">
-                        To ensure accurate analysis, please upload the following documents:
-                        <span className="font-semibold ml-1">{missingDocs.join(", ")}</span>
-                    </p>
-                    </div>
-                    <div>
-                    <input
-                        type="file"
-                        multiple
-                        ref={missingFileInputRef}
-                        className="hidden"
-                        onChange={handleMissingFileSelect}
-                        disabled={isUploadingMissing}
-                    />
-                    <button
-                        onClick={() => missingFileInputRef.current?.click()}
-                        disabled={isUploadingMissing}
-                        className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors shadow-sm flex items-center gap-2"
-                    >
-                        {isUploadingMissing ? (
-                        <>
-                            <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            Uploading...
-                        </>
-                        ) : (
-                        <>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                            <polyline points="17 8 12 3 7 8"></polyline>
-                            <line x1="12" x2="12" y1="3" y2="15"></line>
-                            </svg>
-                            Upload Files
-                        </>
-                        )}
-                    </button>
-                    </div>
-                </div>
-                )}
 
                 {/* Content Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

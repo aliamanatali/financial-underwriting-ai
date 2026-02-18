@@ -179,6 +179,8 @@ class OMScraperService:
            - Property Address: The full legal address (e.g. "2419 Durant Ave, Berkeley, CA 94704").
              * Check for rows labeled "Legal Address", "Property Address", "Location", or "Address".
            - Purchase Price / Asking Price
+             * CRITICAL: Do NOT confuse with "Earnest Money Deposit", "Initial Deposit", or "Escrow Deposit".
+             * Deposits are usually smaller amounts (e.g. $50k-$200k). Purchase Price is the full value.
            - Total Units (Unit Count)
            - Year Built
            - Rentable Sq Ft (NRA)

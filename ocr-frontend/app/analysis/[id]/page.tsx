@@ -6,6 +6,7 @@ import { UnderwritingAnalysis, FinancialAnalysisProgress, DealParameters } from 
 import LoadingSpinner from "@/components/LoadingSpinner";
 import UnderwritingDashboard from "@/components/UnderwritingDashboard";
 import AuditTrailWidget from "@/components/AuditTrailWidget";
+import VerificationWidget from "@/components/VerificationWidget";
 import ExportButtons from "@/components/ExportButtons";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
@@ -79,7 +80,7 @@ export default function AnalysisResultPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
-  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export" | "verification">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
@@ -95,6 +96,8 @@ export default function AnalysisResultPage() {
       setActiveTab("export");
     } else if (tab === "dashboard") {
       setActiveTab("dashboard");
+    } else if (tab === "verification") {
+      setActiveTab("verification");
     }
     
     if (rentRollTab) {
@@ -463,7 +466,7 @@ export default function AnalysisResultPage() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => router.push(`/verification/${id}`)}
+              onClick={() => setActiveTab('verification')}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -513,6 +516,16 @@ export default function AnalysisResultPage() {
                 initialRentRollTab={initialRentRollTab}
                 initialRentRollEditMode={initialRentRollEditMode}
                 validationTrigger={validationTrigger}
+              />
+            )}
+
+            {activeTab === "verification" && (
+              <VerificationWidget
+                packageId={id}
+                onAnalysisUpdate={(newAnalysis) => {
+                    console.log("Updating analysis state from verification", newAnalysis);
+                    setAnalysis(newAnalysis);
+                }}
               />
             )}
 

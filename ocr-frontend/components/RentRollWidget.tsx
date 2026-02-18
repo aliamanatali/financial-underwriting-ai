@@ -850,7 +850,13 @@ export default function RentRollWidget({
                    <th className="px-4 py-3">Unit Type</th>
                    <th className="px-4 py-3 text-right">Current Rent</th>
                    <th className="px-4 py-3 text-right">Stabilized Rent</th>
-                   <th className="px-4 py-3 text-right">Market Rent</th>
+                   <th className="px-4 py-3 text-right">
+                     Market Rent
+                     <WidgetTooltip
+                       title="Market Rent Calculation"
+                       description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                     />
+                   </th>
                    {hasDeposits && <th className="px-4 py-3 text-right">Deposit</th>}
                    {hasParking && <th className="px-4 py-3">Parking</th>}
                    {hasComments && <th className="px-4 py-3">Comments</th>}
@@ -1126,7 +1132,13 @@ export default function RentRollWidget({
                     <th className="px-6 py-3 text-center">%</th>
                     <th className="px-6 py-3 text-right">Avg. Current Rent</th>
                     <th className="px-6 py-3 text-right">Stabilized Rent</th>
-                    <th className="px-6 py-3 text-right">Market Rent</th>
+                    <th className="px-6 py-3 text-right">
+                      Market Rent
+                      <WidgetTooltip
+                        title="Market Rent Calculation"
+                        description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                      />
+                    </th>
                     <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
                   </tr>
                 </thead>

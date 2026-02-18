@@ -432,6 +432,7 @@ class IngestionService:
         - It is often on the cover page or Executive Summary.
         - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
         - If "Unpriced", "TBD", or "Best Offer", look for a "Strike Price" or "Guidance" elsewhere. If still not found, return 0.0.
+        - CRITICAL: Do NOT confuse with "Earnest Money Deposit", "Initial Deposit", "Escrow Deposit", or "Down Payment". Deposits are typically smaller amounts ($50k-$200k).
         
         CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
         - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
@@ -675,7 +676,7 @@ class IngestionService:
                     audit_trail=[{
                         "field_name": "Rent Roll Extraction",
                         "extracted_value": f"{len(rent_roll)} units",
-                        "source": "Excel File",
+                        "source": f"Excel File: doc_{document_id}.xlsx",
                         "confidence_score": 1.0 if rent_roll else 0.0,
                         "method": "Direct Excel Parsing + LLM Fallback",
                         "document_id": document_id
@@ -715,6 +716,7 @@ class IngestionService:
             - Look for "Purchase Price", "Asking Price", "Offering Price", "Price", "Guidance", "Pricing", "Market Value", or "Request for Offers".
             - If a range is given (e.g., $10M - $11M), use the lower bound ($10M).
             - If "Unpriced", "TBD", or "Best Offer", return 0.0.
+            - CRITICAL: Do NOT confuse with "Earnest Money Deposit", "Initial Deposit", "Escrow Deposit", or "Down Payment". Deposits are typically smaller amounts ($50k-$200k).
             
             CRITICAL INSTRUCTIONS FOR EXISTING LOAN:
             - Look for "Existing Loan", "Current Debt", "Loan Balance", "Assumable Debt", or "Principal Balance".
@@ -896,19 +898,26 @@ class IngestionService:
         # 8. Build Audit Trail
         audit_trail_entries = []
         
+        # Determine source label
+        # In single document ingestion, we know the document_id. We can try to map it to a filename if available in context,
+        # but here we only have the ID. Let's assume the caller context might provide it, or fallback to ID.
+        # Since this is "ingest_pdf_document", it's usually processing ONE file.
+        # We'll use a generic "Document {id}" label unless we can infer better.
+        source_label = f"Document {document_id}"
+        
         # Property Meta Logs
         audit_trail_entries.extend([
-            {"field_name": "Property Address", "extracted_value": property_meta.address, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from OM cover page", "document_id": document_id},
-            {"field_name": "Year Built", "extracted_value": property_meta.year_built, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
-            {"field_name": "Building Size (Sq Ft)", "extracted_value": property_meta.building_size, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from property description", "document_id": document_id},
-            {"field_name": "Purchase Price", "extracted_value": property_meta.purchase_price, "source": "OM / PDF", "confidence_score": 0.9, "method": "Extracted from offering summary", "document_id": document_id},
-            {"field_name": "Total Units", "extracted_value": property_meta.total_units, "source": "Rent Roll / PDF", "confidence_score": 0.95, "method": f"Counted {len(rent_roll)} units from rent roll", "document_id": document_id}
+            {"field_name": "Property Address", "extracted_value": property_meta.address, "source": source_label, "confidence_score": 0.9, "method": "Extracted from PDF content", "document_id": document_id},
+            {"field_name": "Year Built", "extracted_value": property_meta.year_built, "source": source_label, "confidence_score": 0.9, "method": "Extracted from PDF content", "document_id": document_id},
+            {"field_name": "Building Size (Sq Ft)", "extracted_value": property_meta.building_size, "source": source_label, "confidence_score": 0.9, "method": "Extracted from PDF content", "document_id": document_id},
+            {"field_name": "Purchase Price", "extracted_value": property_meta.purchase_price, "source": source_label, "confidence_score": 0.9, "method": "Extracted from PDF content", "document_id": document_id},
+            {"field_name": "Total Units", "extracted_value": property_meta.total_units, "source": source_label, "confidence_score": 0.95, "method": f"Counted {len(rent_roll)} units from extracted rent roll", "document_id": document_id}
         ])
         
         # Rent Roll Logs
         audit_trail_entries.extend([
-            {"field_name": "Occupancy Rate", "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}", "source": "Rent Roll / PDF", "confidence_score": 0.98, "method": f"Calculated from {rent_roll_summary.occupied_units} occupied / {rent_roll_summary.total_units} total", "document_id": document_id},
-            {"field_name": "Total Annual Rent (T12)", "extracted_value": rent_roll_summary.total_annual_rent, "source": "Rent Roll / PDF", "confidence_score": 0.98, "method": "Summed current rents", "document_id": document_id}
+            {"field_name": "Occupancy Rate", "extracted_value": f"{rent_roll_summary.occupancy_rate:.2%}", "source": source_label, "confidence_score": 0.98, "method": f"Calculated from {rent_roll_summary.occupied_units} occupied / {rent_roll_summary.total_units} total", "document_id": document_id},
+            {"field_name": "Total Annual Rent (T12)", "extracted_value": rent_roll_summary.total_annual_rent, "source": source_label, "confidence_score": 0.98, "method": "Summed current rents", "document_id": document_id}
         ])
         
         # Expense Logs

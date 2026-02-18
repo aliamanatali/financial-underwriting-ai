@@ -92,6 +92,12 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
                 </th>
                 <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-right" onClick={() => handleSort("market_rent")}>
                   Market Rent {sortField === "market_rent" && (sortDirection === "asc" ? "↑" : "↓")}
+                  <div className="inline-block" onClick={(e) => e.stopPropagation()}>
+                    <WidgetTooltip
+                      title="Market Rent Calculation"
+                      description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                    />
+                  </div>
                 </th>
                 
                 {hasDeposits && (

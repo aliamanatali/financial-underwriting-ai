@@ -37,6 +37,18 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
         rent_roll_summary = analysis.get("rent_roll_summary", {})
         conclusion = analysis.get("conclusion", {}) or {}
         
+        # --- Map Audit Trail for Source Context ---
+        audit_trail = analysis.get("audit_trail", [])
+        source_map = {}
+        for log in audit_trail:
+            field = log.get("field_name")
+            if field:
+                source = log.get("source", "Unknown")
+                page = log.get("page_number")
+                if page:
+                    source += f" (Page {page})"
+                source_map[field] = source
+
         # --- 0. Comprehensive Metrics ---
         metrics = {
             # Property
@@ -133,23 +145,25 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
                  hist_str += f"| {cat} | ${amt:,.0f} |\n"
              
              # Full Normalized Data View
-             hist_full_str = "| Original Text | Mapped Category | Amount | Year | Source | Confidence | Verified | Notes |\n|---|---|---|---|---|---|---|---|\n"
+             hist_full_str = "| Original Text | Mapped Category | Amount | Year | Source | Page | Confidence | Verified | Notes |\n|---|---|---|---|---|---|---|---|---|\n"
              for h in hist_expenses:
                  orig = str(h.get('original_text', '')).replace('|', ' ')
                  cat = h.get('mapped_category', 'Uncategorized')
                  amt = h.get('amount', 0)
                  year = h.get('expense_year', 'N/A')
                  src = str(h.get('source_document', 'N/A')).replace('|', ' ')
+                 audit = h.get('audit_log', {})
+                 page = audit.get('page_number', 'N/A') if audit else 'N/A'
                  conf = h.get('confidence', 0)
                  verified = "Yes" if h.get('user_verified') else "No"
                  notes = str(h.get('audit_log', {}).get('method', '')).replace('|', ' ')
-                 hist_full_str += f"| {orig} | {cat} | ${amt:,.2f} | {year} | {src} | {conf:.2f} | {verified} | {notes} |\n"
+                 hist_full_str += f"| {orig} | {cat} | ${amt:,.2f} | {year} | {src} | {page} | {conf:.2f} | {verified} | {notes} |\n"
 
         # --- 3b. Rent Roll (Full Extended) ---
         rent_roll = analysis.get("rent_roll", [])
         rent_roll_full_str = "No individual rent roll data available."
         if rent_roll:
-             rent_roll_full_str = "| Unit | Type | Tenant | Current | Market | Stabilized | SqFt | Start | End | Move In | Deposit | Notes |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+             rent_roll_full_str = "| Unit | Type | Tenant | Current | Market | Stabilized | SqFt | Source | Start | End | Move In | Deposit | Notes |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
              for item in rent_roll:
                  u = str(item.get('unit_number', 'N/A')).replace('|', ' ')
                  t = str(item.get('unit_type', 'N/A')).replace('|', ' ')
@@ -158,12 +172,13 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
                  mr = item.get('market_rent', 0)
                  sr = item.get('stabilized_rent', 0)
                  sf = item.get('unit_size', 0)
+                 src_file = str(item.get('source_file', 'N/A')).replace('|', ' ')
                  ls = str(item.get('lease_start') or 'N/A').replace('|', ' ')
                  le = str(item.get('lease_end') or 'N/A').replace('|', ' ')
                  mi = str(item.get('move_in_date') or 'N/A').replace('|', ' ')
                  dep = item.get('deposit', 0)
                  notes = str(item.get('comments') or '').replace('|', ' ')
-                 rent_roll_full_str += f"| {u} | {t} | {tn} | ${cr:,.0f} | ${mr:,.0f} | ${sr:,.0f} | {sf} | {ls} | {le} | {mi} | ${dep:,.0f} | {notes} |\n"
+                 rent_roll_full_str += f"| {u} | {t} | {tn} | ${cr:,.0f} | ${mr:,.0f} | ${sr:,.0f} | {sf} | {src_file} | {ls} | {le} | {mi} | ${dep:,.0f} | {notes} |\n"
 
         # --- 3c. Deal Parameters (Assumptions) ---
         params = analysis.get("deal_parameters", {})
@@ -243,16 +258,16 @@ def format_context_from_analysis(analysis: Dict[str, Any]) -> str:
         # Format as readable text
         context = f"""
         == PROPERTY DETAILS ==
-        Property Name: {property_meta.get("property_name", "Unknown")}
-        Address: {property_meta.get("address", "Unknown")}
-        Units: {metrics.get("total_units", "N/A")}
-        Year Built: {metrics.get("year_built", "N/A")}
-        Building Size: {metrics.get("building_size", 0):,.0f} SqFt
+        Property Name: {property_meta.get("property_name", "Unknown")} [Source: {source_map.get('Property Name', 'N/A')}]
+        Address: {property_meta.get("address", "Unknown")} [Source: {source_map.get('Property Address', 'N/A')}]
+        Units: {metrics.get("total_units", "N/A")} [Source: {source_map.get('Total Units', 'N/A')}]
+        Year Built: {metrics.get("year_built", "N/A")} [Source: {source_map.get('Year Built', 'N/A')}]
+        Building Size: {metrics.get("building_size", 0):,.0f} SqFt [Source: {source_map.get('Building Size (Sq Ft)', 'N/A')}]
         Renovated: {metrics.get("is_renovated", False)}
         Current Loan Balance: ${metrics.get("current_loan_balance", 0):,.2f}
         
         == FINANCIAL SUMMARY (PRO FORMA) ==
-        Purchase Price: ${metrics.get("purchase_price", 0):,.2f}
+        Purchase Price: ${metrics.get("purchase_price", 0):,.2f} [Source: {source_map.get('Purchase Price', 'N/A')}]
         Total Project Cost: ${metrics.get("total_project_cost", 0):,.2f}
         Equity Invested: ${metrics.get("equity_invested", 0):,.2f}
         
@@ -396,10 +411,15 @@ async def chat_with_report(
     
     RULES:
     1. STRICTLY restrict your answers to the provided "REPORT CONTEXT". You have access to detailed financials, unit mix, and risk matrices.
-    2. If the user asks about something not in the report, politely say you don't have that information in the current analysis.
-    3. Be concise, professional, and analytical. Use the provided tables to answer specific questions about expenses or unit counts.
-    4. You can explain general real estate concepts if asked (e.g., "What is a Cap Rate?"), but always tie it back to the current deal's numbers if applicable.
-    5. Format your response with Markdown for readability (bold key numbers, lists, tables).
+    2. CITATION REQUIREMENT: When citing specific numbers (Expenses, Price, Units, Rent), YOU MUST MENTION THE SOURCE FILE AND PAGE NUMBER if available in the context.
+       - Example: "The Purchase Price is $5.2M (Source: OM.pdf, Page 3)."
+       - Example: "Property Taxes are $45,000 (Source: T12_2023.xlsx)."
+    3. UNDERWRITING FLOW AWARENESS:
+       - If the "UNDERWRITING STATUS" section indicates "Flow: OM_DRIVEN", emphasize that data is primarily from the Offering Memorandum.
+       - If "Flow: MULTI_SOURCE", emphasize that data is synthesized from multiple documents (PSA, Rent Roll, T12, etc.).
+    4. If the user asks about something not in the report, politely say you don't have that information in the current analysis.
+    5. Be concise, professional, and analytical. Use the provided tables to answer specific questions about expenses or unit counts.
+    6. Format your response with Markdown for readability (bold key numbers, lists, tables).
     """
     
     # Format history (last 10 messages max to fit context window)

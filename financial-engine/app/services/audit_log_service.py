@@ -47,7 +47,7 @@ class AuditLogService:
             
         analysis.audit_trail.append(entry)
 
-    def add_ingestion_logs(self, analysis: UnderwritingAnalysis, document_id: Optional[str] = None):
+    def add_ingestion_logs(self, analysis: UnderwritingAnalysis, document_id: Optional[str] = None, synthesized_metadata: Optional[Dict[str, Any]] = None):
         """
         Adds initial ingestion logs (Property Meta, Rent Roll, Historical Expenses) to the audit trail.
         Call this before running financial calculations.
@@ -57,12 +57,30 @@ class AuditLogService:
             
         now = datetime.now().isoformat()
         
+        # Helper to get source from synthesis metadata
+        def get_source(field_key, default):
+            if synthesized_metadata and field_key in synthesized_metadata:
+                src = synthesized_metadata[field_key].get("source")
+                if src:
+                    return src
+            return default
+
         # Property Meta Audits
+        analysis.audit_trail.append({
+            "field_name": "Property Name",
+            "extracted_value": analysis.property_meta.property_name or "Unknown",
+            "source": get_source("property_name", "Offering Memorandum (OM)"),
+            "method": "Data Synthesis / LLM extraction",
+            "confidence_score": 0.95,
+            "timestamp": now,
+            "document_id": document_id
+        })
+
         analysis.audit_trail.append({
             "field_name": "Property Address",
             "extracted_value": analysis.property_meta.address or "Unknown",
-            "source": "Offering Memorandum (OM)",
-            "method": "LLM extraction from OM",
+            "source": get_source("address", "Offering Memorandum (OM)"),
+            "method": "Data Synthesis / LLM extraction",
             "confidence_score": 0.95,
             "timestamp": now,
             "document_id": document_id
@@ -71,8 +89,8 @@ class AuditLogService:
         analysis.audit_trail.append({
             "field_name": "Year Built",
             "extracted_value": str(analysis.property_meta.year_built or 0),
-            "source": "Offering Memorandum",
-            "method": "Extracted from property description section",
+            "source": get_source("year_built", "Offering Memorandum"),
+            "method": "Data Synthesis / LLM extraction",
             "confidence_score": 0.98,
             "timestamp": now,
             "document_id": document_id
@@ -81,8 +99,8 @@ class AuditLogService:
         analysis.audit_trail.append({
             "field_name": "Total Units",
             "extracted_value": str(analysis.property_meta.total_units or 0),
-            "source": "Rent Roll",
-            "method": "Counted from rent roll entries",
+            "source": get_source("total_units", "Rent Roll"),
+            "method": "Counted from rent roll / Data Synthesis",
             "confidence_score": 1.0,
             "timestamp": now,
             "document_id": document_id
@@ -92,8 +110,8 @@ class AuditLogService:
         analysis.audit_trail.append({
             "field_name": "Purchase Price",
             "extracted_value": f"${purchase_price:,.0f}",
-            "source": "Offering Memorandum (Deal Terms)",
-            "method": "Extracted from executive summary",
+            "source": get_source("purchase_price", "Offering Memorandum (Deal Terms)"),
+            "method": "Data Synthesis / LLM extraction",
             "confidence_score": 0.99,
             "timestamp": now,
             "document_id": document_id
@@ -119,10 +137,24 @@ class AuditLogService:
             else:
                 sanitized_rent_summary[k] = v
 
+        # Attempt to identify the primary rent roll source
+        rr_source = "Rent Roll Document"
+        if analysis.rent_roll:
+            # Check if all items come from the same source
+            sources = set(item.source_file for item in analysis.rent_roll if item.source_file)
+            if len(sources) == 1:
+                rr_source = list(sources)[0]
+            elif len(sources) > 1:
+                # If too many sources, just list top 2
+                rr_list = list(sources)
+                rr_source = "Multiple Sources: " + ", ".join(rr_list[:2])
+                if len(rr_list) > 2:
+                    rr_source += "..."
+
         analysis.audit_trail.append({
             "field_name": "Rent Roll Summary",
             "extracted_value": sanitized_rent_summary,
-            "source": "Rent Roll Document",
+            "source": rr_source,
             "method": "Aggregated from individual unit entries",
             "confidence_score": 0.99,
             "timestamp": now,
@@ -156,10 +188,17 @@ class AuditLogService:
             if math.isnan(exp_amount) or math.isinf(exp_amount):
                 exp_amount = 0.0
             
+            # Determine source from the expense object itself (populated during ingestion)
+            source_doc = "T12 P&L Statement"
+            if expense.source_document:
+                source_doc = expense.source_document
+            elif expense.audit_log and expense.audit_log.source:
+                source_doc = expense.audit_log.source
+                
             entry = {
                 "field_name": f"Expense: {category_name}",
                 "extracted_value": f"${exp_amount:,.0f}",
-                "source": "T12 P&L Statement",
+                "source": source_doc,
                 "method": f"Original: '{expense.original_text}' mapped to {category_name}",
                 "confidence_score": expense.confidence,
                 "timestamp": now,
