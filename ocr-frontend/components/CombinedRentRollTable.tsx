@@ -9,6 +9,11 @@ interface CombinedRentRollTableProps {
   formatCurrency: (val: number) => string;
 }
 
+const formatDateOnly = (dateStr: string | undefined | null) => {
+  if (!dateStr) return "";
+  return dateStr.split(/[ T]/)[0];
+};
+
 export default function CombinedRentRollTable({ rentRoll, formatCurrency }: CombinedRentRollTableProps) {
   const [sortField, setSortField] = useState<keyof RentRollItem>("unit_number");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
@@ -43,10 +48,10 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
   });
 
   // Determine if optional columns have data
-  // Determine if optional columns have data
   const hasDeposits = rentRoll.some(i => i.deposit && i.deposit > 0);
   const hasParking = rentRoll.some(i => i.parking && i.parking.trim() !== "");
   const hasComments = rentRoll.some(i => i.comments && i.comments.trim() !== "");
+  const hasMoveInDate = rentRoll.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-");
   // Using explicit type cast to access optional floor property
   const hasFloor = rentRoll.some(i => (i as any).floor && (i as any).floor.trim() !== "");
 
@@ -65,64 +70,71 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
 
       <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm whitespace-nowrap">
+          <table className="w-full text-center text-sm whitespace-nowrap">
             <thead className="bg-neutral-50 border-b border-neutral-200 text-xs text-neutral-500 font-semibold uppercase tracking-wider">
               <tr>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("unit_number")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_number")}>
                   Unit # {sortField === "unit_number" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("unit_type")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_type")}>
                   Type {sortField === "unit_type" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
                 
                 {hasFloor && (
-                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("floor" as any)}>
+                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("floor" as any)}>
                     Floor {sortField === ("floor" as any) && (sortDirection === "asc" ? "↑" : "↓")}
                   </th>
                 )}
 
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-right" onClick={() => handleSort("unit_size")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_size")}>
                   Size (SF) {sortField === "unit_size" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("tenant_name")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("tenant_name")}>
                   Tenant {sortField === "tenant_name" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-right" onClick={() => handleSort("current_rent")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("current_rent")}>
                   Current Rent {sortField === "current_rent" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-right" onClick={() => handleSort("market_rent")}>
-                  Market Rent {sortField === "market_rent" && (sortDirection === "asc" ? "↑" : "↓")}
-                  <div className="inline-block" onClick={(e) => e.stopPropagation()}>
-                    <WidgetTooltip
-                      title="Market Rent Calculation"
-                      description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
-                    />
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("market_rent")}>
+                  <div className="flex items-center justify-center gap-1">
+                    Market Rent {sortField === "market_rent" && (sortDirection === "asc" ? "↑" : "↓")}
+                    <div className="inline-block" onClick={(e) => e.stopPropagation()}>
+                      <WidgetTooltip
+                        title="Market Rent Calculation"
+                        description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                      />
+                    </div>
                   </div>
                 </th>
                 
                 {hasDeposits && (
-                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-right" onClick={() => handleSort("deposit")}>
+                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("deposit")}>
                     Deposit {sortField === "deposit" && (sortDirection === "asc" ? "↑" : "↓")}
                   </th>
                 )}
                 {hasParking && (
-                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("parking")}>
+                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("parking")}>
                     Parking {sortField === "parking" && (sortDirection === "asc" ? "↑" : "↓")}
                   </th>
                 )}
                 {hasComments && (
-                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("comments")}>
+                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("comments")}>
                     Comments {sortField === "comments" && (sortDirection === "asc" ? "↑" : "↓")}
                   </th>
                 )}
+                {hasMoveInDate && (
+                  <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("move_in_date" as any)}>
+                    Move-In Date {sortField === "move_in_date" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                )}
 
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("lease_start")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("lease_start")}>
                   Lease Start {sortField === "lease_start" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("lease_end")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("lease_end")}>
                   Lease End {sortField === "lease_end" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100" onClick={() => handleSort("source_file")}>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("source_file")}>
                   Source File {sortField === "source_file" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
               </tr>
@@ -130,33 +142,36 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
             <tbody className="divide-y divide-neutral-100">
               {sortedRentRoll.map((item, idx) => (
                 <tr key={idx} className="hover:bg-neutral-50 transition-colors">
-                  <td className="px-4 py-2.5 font-medium text-neutral-900">{item.unit_number}</td>
-                  <td className="px-4 py-2.5 text-neutral-600">{item.unit_type}</td>
+                  <td className="px-4 py-2.5 font-medium text-neutral-900 text-center">{item.unit_number}</td>
+                  <td className="px-4 py-2.5 text-neutral-600 text-center">{item.unit_type}</td>
                   
                   {hasFloor && (
-                    <td className="px-4 py-2.5 text-neutral-600">{(item as any).floor || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-center">{(item as any).floor || "-"}</td>
                   )}
 
-                  <td className="px-4 py-2.5 text-right text-neutral-600">{item.unit_size || "-"}</td>
-                  <td className="px-4 py-2.5 text-neutral-900 truncate max-w-[150px]" title={item.tenant_name}>{item.tenant_name}</td>
-                  <td className="px-4 py-2.5 text-right font-medium text-neutral-900">{formatCurrency(item.current_rent)}</td>
-                  <td className="px-4 py-2.5 text-right text-neutral-600">{formatCurrency(item.market_rent)}</td>
+                  <td className="px-4 py-2.5 text-center text-neutral-600">{item.unit_size || "-"}</td>
+                  <td className="px-4 py-2.5 text-neutral-900 text-center truncate max-w-[150px] mx-auto" title={item.tenant_name}>{item.tenant_name}</td>
+                  <td className="px-4 py-2.5 text-center font-medium text-neutral-900">{formatCurrency(item.current_rent)}</td>
+                  <td className="px-4 py-2.5 text-center text-neutral-600">{formatCurrency(item.market_rent)}</td>
                   
                   {hasDeposits && (
-                    <td className="px-4 py-2.5 text-right text-neutral-600">{item.deposit ? formatCurrency(item.deposit) : "-"}</td>
+                    <td className="px-4 py-2.5 text-center text-neutral-600">{item.deposit ? formatCurrency(item.deposit) : "-"}</td>
                   )}
                   {hasParking && (
-                    <td className="px-4 py-2.5 text-neutral-600 truncate max-w-[150px]" title={item.parking}>{item.parking || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-center truncate max-w-[150px] mx-auto" title={item.parking}>{item.parking || "-"}</td>
                   )}
                   {hasComments && (
-                    <td className="px-4 py-2.5 text-neutral-600 text-xs truncate max-w-[200px]" title={item.comments}>{item.comments || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center truncate max-w-[200px] mx-auto" title={item.comments}>{item.comments || "-"}</td>
+                  )}
+                  {hasMoveInDate && (
+                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.move_in_date) || "-"}</td>
                   )}
 
-                  <td className="px-4 py-2.5 text-neutral-600 text-xs">{item.lease_start || "-"}</td>
-                  <td className="px-4 py-2.5 text-neutral-600 text-xs">{item.lease_end || "-"}</td>
-                  <td className="px-4 py-2.5 text-xs text-neutral-500 max-w-[200px] truncate" title={item.source_file}>
+                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.lease_start) || "-"}</td>
+                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.lease_end) || "-"}</td>
+                  <td className="px-4 py-2.5 text-xs text-neutral-500 max-w-[200px] truncate text-center" title={item.source_file}>
                     {item.source_file ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-neutral-600">
+                      <span className="inline-flex items-center justify-center gap-1.5 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-neutral-600 mx-auto">
                         <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
                           <polyline points="14 2 14 8 20 8"/>

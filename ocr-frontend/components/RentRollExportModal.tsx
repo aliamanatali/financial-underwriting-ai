@@ -195,41 +195,41 @@ export default function RentRollExportModal({
                 </div>
                 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm text-left">
+                    <table className="w-full text-sm text-center">
                         <thead className="bg-neutral-100 text-neutral-600 text-xs uppercase font-semibold">
                             <tr>
-                                <th className="px-6 py-3 w-[15%]">Unit Type</th>
-                                <th className="px-6 py-3 w-[10%]">Bed Count</th>
-                                <th className="px-6 py-3 w-[15%]">Occupancy Type</th>
-                                <th className="px-6 py-3 w-[15%]">Unit Label</th>
-                                <th className="px-6 py-3 w-[45%]">Market Rent & Bed Config</th>
+                                <th className="px-6 py-3 w-[15%] text-center">Unit Type</th>
+                                <th className="px-6 py-3 w-[10%] text-center">Bed Count</th>
+                                <th className="px-6 py-3 w-[15%] text-center">Occupancy Type</th>
+                                <th className="px-6 py-3 w-[15%] text-center">Unit Label</th>
+                                <th className="px-6 py-3 w-[45%] text-center">Market Rent & Bed Config</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-neutral-100">
                             {config.unit_type_configs.map((conf, idx) => (
                                 <tr key={idx} className="hover:bg-neutral-50 transition-colors">
-                                    <td className="px-6 py-4 font-medium text-neutral-900 align-top">
+                                    <td className="px-6 py-4 font-medium text-neutral-900 align-top text-center">
                                         {conf.unit_type}
                                     </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <div className="flex flex-col gap-1">
+                                    <td className="px-6 py-4 align-top text-center">
+                                        <div className="flex flex-col gap-1 items-center">
                                             <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Beds / Unit</span>
                                             <input
                                                 type="text"
                                                 value={conf.bed_count}
                                                 onChange={(e) => handleConfigChange(idx, "bed_count", parseInt(e.target.value) || 0)}
                                                 onBlur={() => saveConfiguration()}
-                                                className="w-20 border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                                                className="w-20 border border-neutral-300 rounded px-2 py-1 text-sm text-center focus:ring-1 focus:ring-emerald-500 outline-none"
                                             />
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4 align-top">
-                                        <div className="flex flex-col gap-1">
+                                    <td className="px-6 py-4 align-top text-center">
+                                        <div className="flex flex-col gap-1 items-center">
                                             <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold">Occupancy</span>
                                             <select
                                                 value={conf.occupancy_type}
                                                 onChange={(e) => handleConfigChange(idx, "occupancy_type", e.target.value, true)}
-                                                className="border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none bg-white w-full"
+                                                className="border border-neutral-300 rounded px-2 py-1 text-sm text-center focus:ring-1 focus:ring-emerald-500 outline-none bg-white w-full"
                                             >
                                                 <option value="Single">Single</option>
                                                 <option value="Double">Double</option>
@@ -245,7 +245,7 @@ export default function RentRollExportModal({
                                                 value={conf.unit_config_label}
                                                 onChange={(e) => handleConfigChange(idx, "unit_config_label", e.target.value)}
                                                 onBlur={() => saveConfiguration()}
-                                                className="w-full border border-neutral-300 rounded px-2 py-1 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
+                                                className="w-full border border-neutral-300 rounded px-2 py-1 text-sm text-center focus:ring-1 focus:ring-emerald-500 outline-none"
                                                 placeholder="e.g. Single"
                                             />
                                         </div>
@@ -263,7 +263,7 @@ export default function RentRollExportModal({
                                                         onChange={(e) => handleConfigChange(idx, "beds_single", parseInt(e.target.value) || 0)}
                                                         onBlur={() => saveConfiguration()}
                                                         disabled={conf.occupancy_type === "Double"}
-                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                     />
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -276,7 +276,7 @@ export default function RentRollExportModal({
                                                             onChange={(e) => handleConfigChange(idx, "market_rent_single", parseFloat(e.target.value) || 0)}
                                                             onBlur={() => saveConfiguration()}
                                                             disabled={conf.occupancy_type === "Double"}
-                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs text-center focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Double" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                         />
                                                     </div>
                                                 </div>
@@ -293,7 +293,7 @@ export default function RentRollExportModal({
                                                         onChange={(e) => handleConfigChange(idx, "beds_double", parseInt(e.target.value) || 0)}
                                                         onBlur={() => saveConfiguration()}
                                                         disabled={conf.occupancy_type === "Single"}
-                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                        className={`w-full border border-neutral-300 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                     />
                                                 </div>
                                                 <div className="flex items-center gap-2">
@@ -306,7 +306,7 @@ export default function RentRollExportModal({
                                                             onChange={(e) => handleConfigChange(idx, "market_rent_double", parseFloat(e.target.value) || 0)}
                                                             onBlur={() => saveConfiguration()}
                                                             disabled={conf.occupancy_type === "Single"}
-                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
+                                                            className={`w-full border border-neutral-300 rounded pl-5 pr-2 py-1 text-xs text-center focus:ring-1 focus:ring-emerald-500 outline-none ${conf.occupancy_type === "Single" ? "bg-neutral-100 text-neutral-400" : "bg-white"}`}
                                                         />
                                                     </div>
                                                 </div>

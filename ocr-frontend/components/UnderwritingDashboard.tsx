@@ -523,12 +523,6 @@ export default function UnderwritingDashboard({
               <p className="text-sm text-neutral-600 max-w-xs mb-6">
                 We cannot determine if this deal passes investment criteria until critical data issues are resolved.
               </p>
-              <button
-                onClick={() => setIsEditingPropertyDetails(true)}
-                className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
-              >
-                Fix Data Issues
-              </button>
             </div>
           )}
 
@@ -886,12 +880,6 @@ export default function UnderwritingDashboard({
                   )}
                 </div>
                 
-                <button
-                  onClick={() => setIsEditingPropertyDetails(true)}
-                  className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
-                >
-                  Verify & Fix Data
-                </button>
               </div>
             ) : null}
             
@@ -1084,12 +1072,6 @@ export default function UnderwritingDashboard({
                   <p className="text-sm text-neutral-600 max-w-sm mb-6">
                     Professional commentary and final verdict cannot be generated while critical data is missing or invalid.
                   </p>
-                  <button
-                    onClick={() => setIsEditingPropertyDetails(true)}
-                    className="bg-neutral-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-neutral-800 transition-colors"
-                  >
-                    Resolve Data Issues
-                  </button>
                 </div>
               )}
 

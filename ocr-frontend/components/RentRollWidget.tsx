@@ -58,17 +58,29 @@ interface RentRollWidgetProps {
 
 // Helpers for date input conversion (YYYY-MM-DD <-> MM/DD/YYYY)
 /**
+ * Strips time from a date string (e.g. "2024-06-01 00:00:00" -> "2024-06-01")
+ * @param {string | undefined | null} dateStr - The date string to clean.
+ * @returns {string} The date part only.
+ */
+const formatDateOnly = (dateStr: string | undefined | null) => {
+  if (!dateStr) return "";
+  // Split by space or 'T' to handle both SQL-style and ISO-style date-times
+  return dateStr.split(/[ T]/)[0];
+};
+
+/**
  * Converts a date string from MM/DD/YYYY format to YYYY-MM-DD format for date inputs.
  * @param {string | undefined | null} displayDate - The date string to convert.
  * @returns {string} The formatted date string or an empty string if invalid.
  */
 const toInputDate = (displayDate: string | undefined | null) => {
-  if (!displayDate) return "";
+  const dateOnly = formatDateOnly(displayDate);
+  if (!dateOnly) return "";
   
   // If it's already in YYYY-MM-DD format, return as is
-  if (displayDate.match(/^\d{4}-\d{2}-\d{2}$/)) return displayDate;
+  if (dateOnly.match(/^\d{4}-\d{2}-\d{2}$/)) return dateOnly;
 
-  const parts = displayDate.split('/');
+  const parts = dateOnly.split('/');
   if (parts.length === 3) {
     let [month, day, year] = parts;
     
@@ -94,13 +106,14 @@ const toInputDate = (displayDate: string | undefined | null) => {
  * @returns {string} The formatted date string.
  */
 const fromInputDate = (inputDate: string) => {
-  if (!inputDate) return "";
-  const parts = inputDate.split('-');
+  const dateOnly = formatDateOnly(inputDate);
+  if (!dateOnly) return "";
+  const parts = dateOnly.split('-');
   if (parts.length === 3) {
     // YYYY-MM-DD -> MM/DD/YYYY
     return `${parts[1]}/${parts[2]}/${parts[0]}`;
   }
-  return inputDate;
+  return dateOnly;
 };
 
 function getBedCountFromUnitType(unit_type: string): number {
@@ -214,6 +227,7 @@ export default function RentRollWidget({
   const hasDeposits = React.useMemo(() => items.some(i => Number(i.deposit) > 0), [items]);
   const hasParking = React.useMemo(() => items.some(i => i.parking && i.parking.trim() !== ""), [items]);
   const hasComments = React.useMemo(() => items.some(i => i.comments && i.comments.trim() !== ""), [items]);
+  const hasMoveInDate = React.useMemo(() => items.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-"), [items]);
 
   useEffect(() => {
     setItems(initializeItems(rentRoll, studentHousingConfig));
@@ -766,20 +780,20 @@ export default function RentRollWidget({
                 className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "omExport" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
               >
                 Rent Roll Detailed
-             </button>
-             <button
-               onClick={() => setActiveTab("unitBreakdown")}
-               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdown" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
-             >
-               Unit Breakdown - Existing
-             </button>
-             <button
-               onClick={() => setActiveTab("unitBreakdownStabilized")}
-               className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdownStabilized" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
-             >
-               Unit Breakdown Stabilized
-             </button>
-           </div>
+              </button>
+              <button
+                onClick={() => setActiveTab("unitBreakdown")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdown" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+              >
+                Unit Breakdown - Existing
+              </button>
+              <button
+                onClick={() => setActiveTab("unitBreakdownStabilized")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${activeTab === "unitBreakdownStabilized" ? "bg-neutral-800 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-100"}`}
+              >
+                Unit Breakdown Stabilized
+              </button>
+            </div>
           </div>
           {!isEditing[activeTab] ? (
             <div className="flex gap-2">
@@ -842,27 +856,29 @@ export default function RentRollWidget({
              collisionDetection={closestCenter}
              onDragEnd={handleDragEnd}
            >
-             <table className="w-full text-left text-sm">
+             <table className="w-full text-center text-sm">
                <thead>
-                 <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold">
-                   <th className="px-4 py-3">Unit #</th>
-                   <th className="px-4 py-3 text-right">Unit Size</th>
-                   <th className="px-4 py-3">Unit Type</th>
-                   <th className="px-4 py-3 text-right">Current Rent</th>
-                   <th className="px-4 py-3 text-right">Stabilized Rent</th>
-                   <th className="px-4 py-3 text-right">
+                 <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold whitespace-nowrap">
+                 <th className="px-4 py-3 text-center">Unit #</th>
+                 <th className="px-4 py-3 text-center">Unit Size</th>
+                 <th className="px-4 py-3 text-center">Unit Type</th>
+                 <th className="px-4 py-3 text-center">Current Rent</th>
+                 <th className="px-4 py-3 text-center">Stabilized Rent</th>
+                 <th className="px-4 py-3 text-center">
+                   <div className="flex items-center justify-center gap-1">
                      Market Rent
                      <WidgetTooltip
                        title="Market Rent Calculation"
                        description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
                      />
-                   </th>
-                   {hasDeposits && <th className="px-4 py-3 text-right">Deposit</th>}
-                   {hasParking && <th className="px-4 py-3">Parking</th>}
-                   {hasComments && <th className="px-4 py-3">Comments</th>}
-                   <th className="px-4 py-3 text-center">Move-In Date</th>
-                   <th className="px-4 py-3 text-center">Lease Start</th>
-                   <th className="px-4 py-3 text-center">Lease End</th>
+                   </div>
+                 </th>
+                 {hasDeposits && <th className="px-4 py-3 text-center">Deposit</th>}
+                 {hasParking && <th className="px-4 py-3 text-center">Parking</th>}
+                 {hasComments && <th className="px-4 py-3 text-center">Comments</th>}
+                 {hasMoveInDate && <th className="px-4 py-3 text-center">Move-In Date</th>}
+                 <th className="px-4 py-3 text-center">Lease Start</th>
+                 <th className="px-4 py-3 text-center">Lease End</th>
                    {isEditing.details && <th className="px-4 py-3 text-center">Action</th>}
                  </tr>
                </thead>
@@ -884,6 +900,7 @@ export default function RentRollWidget({
                        hasDeposits={hasDeposits}
                        hasParking={hasParking}
                        hasComments={hasComments}
+                       hasMoveInDate={hasMoveInDate}
                      />
                    ))}
                  </SortableContext>
@@ -899,26 +916,26 @@ export default function RentRollWidget({
                 {/* Header Row */}
                 <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
                   <td className="px-4 py-3 text-center">Total Units</td>
-                  <td className="px-4 py-3 text-right">Avg Unit Size</td>
+                  <td className="px-4 py-3 text-center">Avg Unit Size</td>
                   <td className="px-4 py-3"></td>
-                  <td className="px-4 py-3 text-right">Current Rent</td>
-                  <td className="px-4 py-3 text-right">Stabilized Rent</td>
-                  <td className="px-4 py-3 text-right">Market Rent</td>
+                  <td className="px-4 py-3 text-center">Current Rent</td>
+                  <td className="px-4 py-3 text-center">Stabilized Rent</td>
+                  <td className="px-4 py-3 text-center">Market Rent</td>
                   {(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0) > 0 && (
                       <td colSpan={(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0)}></td>
                   )}
-                  <td colSpan={isEditing.details ? 4 : 3}></td>
+                  <td colSpan={(isEditing.details ? 1 : 0) + (hasMoveInDate ? 1 : 0) + 2}></td>
                 </tr>
                 {/* Data Row */}
                 <tr className="border-b border-neutral-800/50 align-top">
                   <td className="px-4 py-3 text-center">
                     <div className="font-bold text-lg">{displaySummary.total_units}</div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-center">
                      <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
                   </td>
                   <td className="px-4 py-3"></td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-center">
                      <div className="text-xs space-y-1">
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_monthly_rent)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
@@ -926,7 +943,7 @@ export default function RentRollWidget({
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_rent_per_sf || 0).toFixed(2)}</span></div>
                      </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-center">
                      <div className="text-xs space-y-1">
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
@@ -934,7 +951,7 @@ export default function RentRollWidget({
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${(displaySummary.avg_stabilized_per_sf || 0).toFixed(2)}</span></div>
                      </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-center">
                      <div className="text-xs space-y-1">
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_market_rent)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_market_rent || 0) * 12)}</span></div>
@@ -946,7 +963,7 @@ export default function RentRollWidget({
                   {(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0) > 0 && (
                       <td colSpan={(hasDeposits ? 1 : 0) + (hasParking ? 1 : 0) + (hasComments ? 1 : 0)}></td>
                   )}
-                  <td colSpan={isEditing.details ? 4 : 3}></td>
+                  <td colSpan={(isEditing.details ? 1 : 0) + (hasMoveInDate ? 1 : 0) + 2}></td>
                 </tr>
              </tfoot>
              </table>
@@ -955,7 +972,7 @@ export default function RentRollWidget({
         )}
         {activeTab === 'omExport' && (
           <div className="overflow-x-auto horizontal-scrollbar">
-            <table className="min-w-full text-left text-sm whitespace-nowrap">
+            <table className="min-w-full text-center text-sm whitespace-nowrap">
             <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
                 <tr>
                   <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
@@ -963,17 +980,17 @@ export default function RentRollWidget({
                   <th colSpan={1} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
                   <th colSpan={3} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Pro Forma Rents</th>
                   <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Pro Forma Rent Comparison</th>
-                  <th colSpan={6} className="px-4 py-2 text-center border-b border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
+                  <th colSpan={6} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
                 </tr>
-                <tr className="tracking-wider">
-                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10">Count</th>
-                  <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10">Unit</th>
-                  <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10">Occupancy Type</th>
-                  <th className="px-4 py-3 border-r">Beds</th>
-                  <th className="px-4 py-3 border-r">Size</th>
-                  <th className="px-4 py-3 border-r">$/Month</th>
-                  <th className="px-4 py-3 border-r">
-                    <div className="flex items-center justify-end">
+                <tr className="tracking-wider whitespace-nowrap">
+                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10 text-center">Count</th>
+                  <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10 text-center">Unit</th>
+                  <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10 text-center">Occupancy Type</th>
+                  <th className="px-4 py-3 border-r text-center">Beds</th>
+                  <th className="px-4 py-3 border-r text-center">Size</th>
+                  <th className="px-4 py-3 border-r text-center">$/Month</th>
+                  <th className="px-4 py-3 border-r text-center">
+                    <div className="flex items-center justify-center gap-1">
                       $/SF
                       <WidgetTooltip
                         title="Rent per Square Foot (Annual)"
@@ -982,9 +999,9 @@ export default function RentRollWidget({
                       />
                     </div>
                 </th>
-                <th className="px-4 py-3 border-r">$/Month</th>
-                <th className="px-4 py-3 border-r">
-                    <div className="flex items-center justify-end">
+                <th className="px-4 py-3 border-r text-center">$/Month</th>
+                <th className="px-4 py-3 border-r text-center">
+                    <div className="flex items-center justify-center gap-1">
                       $/SqFt
                       <WidgetTooltip
                         title="Pro Forma Rent per Square Foot (Annual)"
@@ -993,8 +1010,8 @@ export default function RentRollWidget({
                       />
                     </div>
                   </th>
-                  <th className="px-4 py-3 border-r">
-                    <div className="flex items-center justify-end">
+                  <th className="px-4 py-3 border-r text-center">
+                    <div className="flex items-center justify-center gap-1">
                       $ Increase
                       <WidgetTooltip
                         title="Rent Increase ($)"
@@ -1003,8 +1020,8 @@ export default function RentRollWidget({
                       />
                     </div>
                   </th>
-                  <th className="px-4 py-3 border-r">
-                    <div className="flex items-center justify-end">
+                  <th className="px-4 py-3 border-r text-center">
+                    <div className="flex items-center justify-center gap-1">
                       % Increase
                       <WidgetTooltip
                         title="Rent Increase (%)"
@@ -1013,12 +1030,12 @@ export default function RentRollWidget({
                       />
                     </div>
                   </th>
-                  <th className="px-4 py-3 border-r">Pro Forma Unit Type</th>
-                  <th className="px-4 py-3 border-r">Unit Config</th>
-                  <th className="px-4 py-3 border-r">Beds</th>
-                  <th className="px-4 py-3 border-r">RC</th>
-                  <th className="px-4 py-3 border-r">Start Date</th>
-                  <th className="px-4 py-3">End Date</th>
+                  <th className="px-4 py-3 border-r text-center">Pro Forma Unit Type</th>
+                  <th className="px-4 py-3 border-r text-center">Unit Config</th>
+                  <th className="px-4 py-3 border-r text-center">Beds</th>
+                  <th className="px-4 py-3 border-r text-center">RC</th>
+                  <th className="px-4 py-3 border-r text-center">Start Date</th>
+                  <th className="px-4 py-3 text-center">End Date</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
@@ -1029,64 +1046,64 @@ export default function RentRollWidget({
                   return (
                     <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
                       <td className="px-4 py-2.5 text-center sticky left-0 bg-white group-hover:bg-neutral-50/50">{idx + 1}</td>
-                      <td className="px-4 py-2.5 sticky left-[3rem] bg-white group-hover:bg-neutral-50/50">
+                      <td className="px-4 py-2.5 sticky left-[3rem] bg-white group-hover:bg-neutral-50/50 text-center">
                         {isEditing.omExport ? (
-                          <input type="text" value={item.unit_number} onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="text" value={item.unit_number} onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_number
                         )}
                       </td>
-                      <td className="px-4 py-2.5 sticky left-[7rem] bg-white group-hover:bg-neutral-50/50">
+                      <td className="px-4 py-2.5 sticky left-[7rem] bg-white group-hover:bg-neutral-50/50 text-center">
                         {isEditing.omExport ? (
-                          <input type="text" value={item.unit_type} onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="text" value={item.unit_type} onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_type
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">{bedCount}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-center">
                         {isEditing.omExport ? (
-                          <input type="text" value={item.unit_size} onChange={(e) => handleNumericChange(idx, "unit_size", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="text" value={item.unit_size} onChange={(e) => handleNumericChange(idx, "unit_size", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_size
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-center">
                         {isEditing.omExport ? (
-                          <input type="text" value={item.current_rent} onChange={(e) => handleNumericChange(idx, "current_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="text" value={item.current_rent} onChange={(e) => handleNumericChange(idx, "current_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           formatCurrency(Number(item.current_rent))
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">${(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-center">${(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-center">
                         {isEditing.omExport ? (
-                          <input type="text" value={item.market_rent} onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="text" value={item.market_rent} onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           formatCurrency(Number(item.market_rent))
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-right">${(Number(item.market_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
-                      <td className="px-4 py-2.5 text-right">{formatCurrency(Number(item.market_rent) - Number(item.current_rent))}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-center">${(Number(item.market_rent) * 12 / (Number(item.unit_size) || 1)).toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-center">{formatCurrency(Number(item.market_rent) - Number(item.current_rent))}</td>
+                      <td className="px-4 py-2.5 text-center">
                         {Number(item.current_rent) > 0 ? `${(((Number(item.market_rent) - Number(item.current_rent)) / Number(item.current_rent)) * 100).toFixed(0)}%` : "0%"}
                       </td>
-                      <td className="px-4 py-2.5">{item.unit_type}</td>
-                      <td className="px-4 py-2.5">{config?.unit_config_label || item.unit_type}</td>
+                      <td className="px-4 py-2.5 text-center">{item.unit_type}</td>
+                      <td className="px-4 py-2.5 text-center">{config?.unit_config_label || item.unit_type}</td>
                       <td className="px-4 py-2.5 text-center">{bedCount}</td>
                       <td className="px-4 py-2.5 text-center">{(item.unit_type || "").toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
-                      <td className="px-4 py-2.5">
+                      <td className="px-4 py-2.5 text-center">
                         {isEditing.omExport ? (
-                          <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChange(idx, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
-                          item.lease_start
+                          formatDateOnly(item.lease_start)
                         )}
                       </td>
-                      <td className="px-4 py-2.5">
+                      <td className="px-4 py-2.5 text-center">
                         {isEditing.omExport ? (
-                          <input type="date" value={toInputDate(item.lease_end)} onChange={(e) => handleItemChange(idx, "lease_end", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
+                          <input type="date" value={toInputDate(item.lease_end)} onChange={(e) => handleItemChange(idx, "lease_end", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
-                          item.lease_end
+                          formatDateOnly(item.lease_end)
                         )}
                       </td>
                     </tr>
@@ -1124,47 +1141,49 @@ export default function RentRollWidget({
               <h3 className="text-white font-medium">Rent Roll Summary</h3>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-center text-sm">
                 <thead>
-                  <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold">
-                    <th className="px-6 py-3">Unit Mix</th>
+                  <tr className="border-b border-neutral-200 text-xs text-neutral-900 font-bold whitespace-nowrap">
+                    <th className="px-6 py-3 text-center">Unit Mix</th>
                     <th className="px-6 py-3 text-center">Unit Count</th>
                     <th className="px-6 py-3 text-center">%</th>
-                    <th className="px-6 py-3 text-right">Avg. Current Rent</th>
-                    <th className="px-6 py-3 text-right">Stabilized Rent</th>
-                    <th className="px-6 py-3 text-right">
-                      Market Rent
-                      <WidgetTooltip
-                        title="Market Rent Calculation"
-                        description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
-                      />
+                    <th className="px-6 py-3 text-center">Avg. Current Rent</th>
+                    <th className="px-6 py-3 text-center">Stabilized Rent</th>
+                    <th className="px-4 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        Market Rent
+                        <WidgetTooltip
+                          title="Market Rent Calculation"
+                          description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                        />
+                      </div>
                     </th>
-                    <th className="px-6 py-3 text-right">Avg. Sq Ft</th>
+                    <th className="px-6 py-3 text-center">Avg. Sq Ft</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
                   {summaryGroups.map((group, idx) => (
                     <tr key={idx} className="hover:bg-neutral-50/50 transition-colors">
-                      <td className="px-6 py-3 font-medium text-neutral-900">{group.type}</td>
+                      <td className="px-6 py-3 font-medium text-neutral-900 text-center">{group.type}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
-                      <td className="px-6 py-3 text-right text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
-                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
-                      <td className="px-6 py-3 text-right text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
-                      <td className="px-6 py-3 text-right text-neutral-600">{Math.round(group.avgSqFt)}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
+                      <td className="px-6 py-3 text-center text-neutral-600">{Math.round(group.avgSqFt)}</td>
                     </tr>
                   ))}
                   {/* Totals Row */}
                   <tr className="border-t-2 border-neutral-900 font-bold bg-white">
-                    <td className="px-6 py-4 text-neutral-900">Totals/Average</td>
+                    <td className="px-6 py-4 text-neutral-900 text-center">Totals/Average</td>
                     <td className="px-6 py-4 text-center text-neutral-900">{displaySummary.total_units}</td>
                     <td className="px-6 py-4 text-center text-neutral-900">100%</td>
-                    <td className="px-6 py-4 text-right text-neutral-900">
+                    <td className="px-6 py-4 text-center text-neutral-900">
                       {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
                     </td>
-                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
-                    <td className="px-6 py-4 text-right text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
-                    <td className="px-6 py-4 text-right text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
+                    <td className="px-6 py-4 text-center text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -1188,6 +1207,7 @@ function SortableRow({
   hasDeposits,
   hasParking,
   hasComments,
+  hasMoveInDate,
 }: {
   item: EditableRentRollItem;
   idx: number;
@@ -1199,6 +1219,7 @@ function SortableRow({
   hasDeposits: boolean;
   hasParking: boolean;
   hasComments: boolean;
+  hasMoveInDate: boolean;
 }) {
   const handleNumericChange = (index: number, field: keyof EditableRentRollItem, value: string) => {
     const numericValue = value.replace(/[^0-9.]/g, '');
@@ -1231,8 +1252,8 @@ function SortableRow({
         errors ? "border-l-rose-500 bg-rose-50/10" : "border-l-transparent"
       }`}
     >
-      <td className="px-4 py-2.5 font-medium text-neutral-900">
-        <div className="flex items-center gap-2">
+      <td className="px-4 py-2.5 font-medium text-neutral-900 text-center">
+        <div className="flex items-center justify-center gap-2">
            {isEditing && (
             <div
               {...attributes}
@@ -1255,7 +1276,7 @@ function SortableRow({
                 type="text"
                 value={item.unit_number}
                 onChange={(e) => handleItemChange(idx, "unit_number", e.target.value)}
-                className={`w-full bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:outline-none ${
+                className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                   errors?.unit_number ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
                 }`}
               />
@@ -1266,14 +1287,14 @@ function SortableRow({
           )}
         </div>
       </td>
-      <td className="px-4 py-2.5 text-right text-neutral-600">
+      <td className="px-4 py-2.5 text-center text-neutral-600">
         {isEditing ? (
-          <div className="w-20 ml-auto">
+          <div className="w-20 mx-auto">
             <input
               type="text"
               value={item.unit_size}
               onChange={(e) => handleNumericChange(idx, "unit_size", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                 errors?.unit_size ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
             />
@@ -1283,14 +1304,14 @@ function SortableRow({
           item.unit_size || "-"
         )}
       </td>
-      <td className="px-4 py-2.5 text-neutral-600">
+      <td className="px-4 py-2.5 text-neutral-600 text-center">
         {isEditing ? (
           <div className="w-full">
             <input
               type="text"
               value={item.unit_type}
               onChange={(e) => handleItemChange(idx, "unit_type", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs focus:ring-1 focus:outline-none ${
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                 errors?.unit_type ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
             />
@@ -1300,28 +1321,28 @@ function SortableRow({
           item.unit_type
         )}
       </td>
-      <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
+      <td className="px-4 py-2.5 text-center font-medium text-neutral-900">
         {isEditing ? (
-          <div className="w-20 ml-auto">
+          <div className="w-20 mx-auto">
             <input
               type="text"
               value={item.current_rent}
               onChange={(e) => handleNumericChange(idx, "current_rent", e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
             />
           </div>
         ) : (
           formatCurrency(typeof item.current_rent === 'number' ? item.current_rent : parseFloat(item.current_rent) || 0)
         )}
       </td>
-      <td className="px-4 py-2.5 text-right text-neutral-600">
+      <td className="px-4 py-2.5 text-center text-neutral-600">
         {isEditing ? (
-          <div className="w-20 ml-auto">
+          <div className="w-20 mx-auto">
             <input
               type="text"
               value={item.stabilized_rent}
               onChange={(e) => handleNumericChange(idx, "stabilized_rent", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                 errors?.stabilized_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
             />
@@ -1331,14 +1352,14 @@ function SortableRow({
           formatCurrency(typeof item.stabilized_rent === 'number' ? item.stabilized_rent : parseFloat(item.stabilized_rent) || 0)
         )}
       </td>
-      <td className="px-4 py-2.5 text-right text-neutral-600">
+      <td className="px-4 py-2.5 text-center text-neutral-600">
         {isEditing ? (
-          <div className="w-20 ml-auto">
+          <div className="w-20 mx-auto">
             <input
               type="text"
               value={item.market_rent}
               onChange={(e) => handleNumericChange(idx, "market_rent", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs text-right focus:ring-1 focus:outline-none ${
+              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
                 errors?.market_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
               }`}
             />
@@ -1350,14 +1371,14 @@ function SortableRow({
       </td>
 
       {hasDeposits && (
-        <td className="px-4 py-2.5 text-right text-neutral-600">
+        <td className="px-4 py-2.5 text-center text-neutral-600">
           {isEditing ? (
-            <div className="w-20 ml-auto">
+            <div className="w-20 mx-auto">
               <input
                 type="text"
                 value={item.deposit}
                 onChange={(e) => handleNumericChange(idx, "deposit", e.target.value)}
-                className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-right focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+                className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
               />
             </div>
           ) : (
@@ -1367,13 +1388,13 @@ function SortableRow({
       )}
 
       {hasParking && (
-        <td className="px-4 py-2.5 text-neutral-600">
+        <td className="px-4 py-2.5 text-neutral-600 text-center">
           {isEditing ? (
             <input
               type="text"
               value={item.parking || ""}
               onChange={(e) => handleItemChange(idx, "parking", e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
             />
           ) : (
             item.parking || "-"
@@ -1382,36 +1403,38 @@ function SortableRow({
       )}
 
       {hasComments && (
-        <td className="px-4 py-2.5 text-neutral-600">
+        <td className="px-4 py-2.5 text-neutral-600 text-center">
            {isEditing ? (
             <input
               type="text"
               value={item.comments || ""}
               onChange={(e) => handleItemChange(idx, "comments", e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-neutral-900 focus:outline-none"
+              className="w-full bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none"
             />
           ) : (
-            <span className="truncate max-w-[150px] block" title={item.comments}>{item.comments || "-"}</span>
+            <span className="truncate max-w-[150px] block mx-auto" title={item.comments}>{item.comments || "-"}</span>
           )}
         </td>
       )}
-      <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
-        {isEditing ? (
-          <input
-            type="date"
-            value={toInputDate(item.move_in_date)}
-            min="1900-01-01"
-            max="2100-12-31"
-            onChange={(e) => handleItemChange(idx, "move_in_date", fromInputDate(e.target.value))}
-            className={`w-28 mx-auto bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
-              errors?.move_in_date ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
-          }`}
-        />
-        ) : (
-          item.move_in_date || "-"
-        )}
-         {errors?.move_in_date && <div className="text-[10px] text-rose-600 mt-1">{errors.move_in_date}</div>}
-      </td>
+      {hasMoveInDate && (
+        <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
+          {isEditing ? (
+            <input
+              type="date"
+              value={toInputDate(item.move_in_date)}
+              min="1900-01-01"
+              max="2100-12-31"
+              onChange={(e) => handleItemChange(idx, "move_in_date", fromInputDate(e.target.value))}
+              className={`w-28 mx-auto bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
+                errors?.move_in_date ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
+            }`}
+          />
+          ) : (
+            formatDateOnly(item.move_in_date) || "-"
+          )}
+          {errors?.move_in_date && <div className="text-[10px] text-rose-600 mt-1">{errors.move_in_date}</div>}
+        </td>
+      )}
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
         {isEditing ? (
           <div className="w-28 mx-auto">
@@ -1428,7 +1451,7 @@ function SortableRow({
              {errors?.lease_start && <div className="text-[10px] text-rose-600 mt-1">{errors.lease_start}</div>}
           </div>
         ) : (
-          item.lease_start || "-"
+          formatDateOnly(item.lease_start) || "-"
         )}
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-500 text-xs">
@@ -1444,7 +1467,7 @@ function SortableRow({
           }`}
         />
         ) : (
-          item.lease_end || "-"
+          formatDateOnly(item.lease_end) || "-"
         )}
         {errors?.lease_end && <div className="text-[10px] text-rose-600 mt-1">{errors.lease_end}</div>}
       </td>

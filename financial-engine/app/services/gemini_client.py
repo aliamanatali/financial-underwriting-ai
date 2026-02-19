@@ -224,12 +224,27 @@ class GeminiClient:
         Uses the fast model for cost and speed efficiency.
         """
         prompt = f"""
-        Given a list of raw expenses and a list of categories, map each expense to the most appropriate category.
-        Return a JSON array where each object has 'original_text', 'mapped_category', 'amount', and 'confidence'.
-        Confidence should be a float between 0 and 1.
+        You are an expert Real Estate Financial Analyst for Valiance Capital.
+        Your task is to normalize a list of raw expense line items from a T12 Operating Statement into standard financial categories.
 
-        Raw Expenses: {raw_expenses}
-        Categories: {categories}
+        ### GUIDELINES:
+        1. **Analyze Context**: Look at the 'description' text carefully. Ignore amounts when categorizing, focus on the nature of the expense.
+        2. **CapEx vs OpEx**: If an item looks like a major renovation (e.g., "Roof Replacement", "Unit Upgrade", "New HVAC"), categorize it as 'Capital Reserves' or 'Uncategorized' if 'Capital Expenses' is not in the list.
+        3. **Confidence**: Assign a confidence score (0.0 to 1.0). If you are unsure, use a lower score.
+        4. **Reasoning**: Provide a short, user-friendly explanation for your choice. This is critical for the user to trust the data.
+
+        ### INPUT DATA:
+        Raw Expenses: {json.dumps(raw_expenses)}
+        Target Categories: {json.dumps(categories)}
+
+        ### OUTPUT FORMAT:
+        Return a valid JSON array of objects. Each object must have:
+        - "original_text": (string) The original description.
+        - "mapped_category": (string) The category from the provided list.
+        - "reasoning": (string) A brief (5-10 words) explanation. E.g., "Identified as routine plumbing maintenance" or "Recognized as utility provider".
+        - "confidence": (float) 0.0 to 1.0.
+
+        Ensure the output is strictly valid JSON.
         """
         try:
             # Use fast model for categorization
