@@ -467,25 +467,56 @@ class MultiDocumentExtractionService:
                 # Aggregate all data
                 start_row = 2 if skip_first_row else 1
                 
+                # Check if we have a "Total" or "T12" column in the header
+                total_col_idx = None
+                if skip_first_row:
+                    header_row = [str(cell).lower() if cell else "" for cell in first_row]
+                    for idx, cell in enumerate(header_row):
+                        if "total" in cell or "t12" in cell:
+                            total_col_idx = idx
+                            logger.info(f"Detected 'Total' column at index {idx} in {filename}")
+                            break
+                
                 for row_idx, row in enumerate(all_rows[start_row-1:], start=start_row):
                     if not row or len(row) < 2:
                         continue
                     
-                    # Find category/description
+                    # Find category/description (first non-numeric string)
+                    row_category = None
                     for cell in row:
                         if cell and isinstance(cell, str) and len(str(cell).strip()) > 1:
                             try:
-                                float(cell)
+                                float(str(cell).replace("$", "").replace(",", ""))
                             except (ValueError, TypeError):
-                                categories.add(str(cell).strip())
+                                row_category = str(cell).strip()
+                                categories.add(row_category)
                                 break
                     
-                    # Find and sum amounts
-                    for cell in row:
-                        if isinstance(cell, (int, float)) and cell > 0:
-                            total_amount += float(cell)
-                            row_count += 1
-                            break
+                    # Find amount
+                    row_amount = 0.0
+                    if total_col_idx is not None and total_col_idx < len(row):
+                        # Use the specific total column
+                        val = row[total_col_idx]
+                        if val is not None:
+                            try:
+                                # Handle string currency in numeric columns if any
+                                if isinstance(val, str):
+                                    row_amount = float(val.replace("$", "").replace(",", "").strip())
+                                else:
+                                    row_amount = float(val)
+                            except: pass
+                    else:
+                        # Fallback: Find the first non-zero number (old logic, but without break if we want to sum?)
+                        # Actually, for T12s, we want the LAST number usually if no header.
+                        # But to be safe, let's look for any number.
+                        for cell in reversed(row): # Start from end (often where totals are)
+                            if isinstance(cell, (int, float)) and cell != 0:
+                                row_amount = float(cell)
+                                break
+                    
+                    if row_amount != 0:
+                        total_amount += row_amount
+                        row_count += 1
             
             if row_count == 0:
                 logger.warning(f"No valid data rows found in {filename}")
@@ -500,26 +531,92 @@ class MultiDocumentExtractionService:
             elif "p&l" in filename.lower() or "pl" in filename.lower():
                 doc_type = "P&L Statement"
             
-            # Create a single aggregated entry
-            # Determine type based on document type
-            entry_type = "expense"  # default
+            # Decide whether to return individual rows or an aggregated entry
+            # For P&L and T12 statements, individual rows are much better for underwriting
+            is_pnl = any(keyword in filename.lower() for keyword in ["p&l", "pl ", "statement", "t12", "income", "expense"])
+            
+            if is_pnl and all_rows:
+                logger.info(f"Returning individual line items for Excel P&L: {filename}")
+                line_items = []
+                
+                # Re-iterate rows to build individual items
+                for row_idx, row in enumerate(all_rows[start_row-1:], start=start_row):
+                    if not row or len(row) < 2:
+                        continue
+                        
+                    # Find category/description (first non-numeric string)
+                    row_category = None
+                    for cell in row:
+                        if cell and isinstance(cell, str) and len(str(cell).strip()) > 1:
+                            try:
+                                float(str(cell).replace("$", "").replace(",", ""))
+                            except (ValueError, TypeError):
+                                row_category = str(cell).strip()
+                                break
+                    
+                    if not row_category:
+                        continue
+                        
+                    row_cat_lower = row_category.lower()
+                    skip_keywords = ["total", "totals", "income", "expenses", "net operating income", "noi", "egi", "gross potential rent", "net rental income", "effective gross income"]
+                    
+                    # Exact match or specific start-of-string match for summary rows
+                    is_summary = any(row_cat_lower == kw or row_cat_lower.startswith(kw + " ") or row_cat_lower.startswith("total ") for kw in skip_keywords)
+                    
+                    if is_summary:
+                        logger.info(f"Skipping summary row: {row_category}")
+                        continue
+
+                    # Find amount
+                    row_amount = 0.0
+                    if total_col_idx is not None and total_col_idx < len(row):
+                        val = row[total_col_idx]
+                        if val is not None:
+                            try:
+                                if isinstance(val, str):
+                                    row_amount = float(val.replace("$", "").replace(",", "").strip())
+                                else:
+                                    row_amount = float(val)
+                            except: pass
+                    else:
+                        for cell in reversed(row):
+                            if isinstance(cell, (int, float)) and cell != 0:
+                                row_amount = float(cell)
+                                break
+                    
+                    if row_amount != 0:
+                        # Determine type
+                        row_type = "expense"
+                        if any(kw in row_category.lower() for kw in ["income", "rent", "revenue", "reimbursement"]):
+                            row_type = "revenue"
+                        
+                        logger.info(f"EXCEL ROW: Category='{row_category}', Amount={row_amount}")
+                        line_items.append({
+                            "raw_text": row_category,
+                            "amount": abs(row_amount),
+                            "source_document": filename,
+                            "type": row_type
+                        })
+                
+                if line_items:
+                    logger.info(f"Extracted {len(line_items)} line items from {filename}")
+                    return line_items
+
+            # Fallback to aggregated entry
+            entry_type = "expense"
             if "rent" in filename.lower() and "roll" in filename.lower():
                 entry_type = "property_info"
-            elif "t12" in filename.lower() or "statement" in filename.lower():
-                entry_type = "expense"
             
             aggregated_entry = {
                 "raw_text": f"{doc_type} - {filename}",
                 "amount": total_amount,
                 "source_document": filename,
                 "row_count": row_count,
-                "type": entry_type,
-                "categories_found": list(categories)[:5]  # Keep first 5 categories as sample
+                "type": entry_type
             }
             
             logger.info(f"Extracted aggregated data from {filename}: {row_count} rows, total amount: ${total_amount:,.2f}")
-            
-            return [aggregated_entry]  # Return single entry instead of multiple
+            return [aggregated_entry]
             
         except Exception as e:
             logger.error(f"Error inside sync Excel extraction for {filename}: {str(e)}", exc_info=True)
