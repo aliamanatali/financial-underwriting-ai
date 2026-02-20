@@ -617,11 +617,11 @@ class MultiDocumentExtractionService:
                 model_name = self.gemini_service.model_name
                 
                 try:
-                    # Retry logic for 500 errors
+                    # Retry logic for 500 errors and timeouts
                     async for attempt in AsyncRetrying(
                         stop=stop_after_attempt(3),
                         wait=wait_exponential(multiplier=1, min=2, max=10),
-                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError)),
+                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError, asyncio.TimeoutError)),
                         reraise=True
                     ):
                         with attempt:
@@ -784,11 +784,11 @@ class MultiDocumentExtractionService:
                 model_name = self.gemini_service.model_name
                 
                 try:
-                    # Retry logic for 500 errors
+                    # Retry logic for 500 errors and timeouts
                     async for attempt in AsyncRetrying(
                         stop=stop_after_attempt(3),
                         wait=wait_exponential(multiplier=1, min=2, max=10),
-                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError)),
+                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError, asyncio.TimeoutError)),
                         reraise=True
                     ):
                         with attempt:
@@ -944,13 +944,34 @@ class MultiDocumentExtractionService:
         try:
             # Prepare items for prompt
             items_payload = []
+            # Separate items that are extraction errors to avoid sending them to Gemini
+            gemini_items = []
+            pre_categorized = {}
+            
             for idx, exp in enumerate(expenses):
-                items_payload.append({
-                    "id": idx,
-                    "text": exp.get("raw_text", ""),
-                    "type": exp.get("type", "expense"),
-                    "subtype": exp.get("subtype", "")
-                })
+                raw_text = exp.get("raw_text", "")
+                text_lower = raw_text.lower()
+                
+                if "extraction timed out" in text_lower or "processing failed" in text_lower or "no expenses extracted" in text_lower:
+                    # Pre-categorize these items
+                    pre_categorized[idx] = {
+                        "normalized_value": "Other Operating Expenses",
+                        "category_group": "Other",
+                        "confidence": 0.1,
+                        "reasoning": "Extraction error placeholder - check source document"
+                    }
+                else:
+                    gemini_items.append({
+                        "id": idx,
+                        "text": raw_text,
+                        "type": exp.get("type", "expense"),
+                        "subtype": exp.get("subtype", "")
+                    })
+            
+            if not gemini_items:
+                return [pre_categorized.get(i) or self._fallback_categorization(expenses[i]) for i in range(len(expenses))]
+
+            items_payload = gemini_items
             
             prompt = f"""
             You are a commercial real estate financial analyst. Map these {len(items_payload)} line items to the most appropriate standard category and group.
@@ -1019,6 +1040,10 @@ class MultiDocumentExtractionService:
             # Compile final list in order
             normalized_list = []
             for idx in range(len(expenses)):
+                if idx in pre_categorized:
+                    normalized_list.append(pre_categorized[idx])
+                    continue
+                    
                 res = result_map.get(idx)
                 if res:
                     normalized_list.append({
@@ -1029,7 +1054,7 @@ class MultiDocumentExtractionService:
                     })
                 else:
                     # Fallback if item missing in response
-                    normalized_list.append(self._fallback_categorization(expenses[idx].get("raw_text", "")))
+                    normalized_list.append(self._fallback_categorization(expenses[idx]))
                     
             return normalized_list
 
@@ -1056,6 +1081,15 @@ class MultiDocumentExtractionService:
         item_type = expense_dict.get("type", "expense") if isinstance(expense_dict, dict) else "expense"
         subtype = expense_dict.get("subtype", "") if isinstance(expense_dict, dict) else ""
         
+        # Handle extraction errors / placeholders
+        if "extraction timed out" in text_lower or "processing failed" in text_lower or "no expenses extracted" in text_lower:
+            return {
+                "normalized_value": "Other Operating Expenses",
+                "category_group": "Other",
+                "confidence": 0.1,
+                "reasoning": "Extraction error placeholder - check source document"
+            }
+
         # Handle receivables (Past Due)
         if item_type == "receivable" or any(keyword in text_lower for keyword in ["past due", "delinquent", "arrears"]):
             return {
@@ -1122,8 +1156,11 @@ class MultiDocumentExtractionService:
                 "reasoning": "Financial statement document aggregation"
             }
         
-        # Keyword mapping for operating expenses
+        # Keyword mapping for operating expenses and revenue
         category_keywords = {
+            "Gross Potential Rent": (["rent", "rental income", "gross potential rent"], "Revenue"),
+            "Other Income": (["income", "late fee", "late charge", "penalty", "laundry", "parking", "pet fee"], "Revenue"),
+            "Reimbursements": (["reimbursement"], "Revenue"),
             "Purchase Price": (["purchase price", "asking price", "sale price"], "Property Info"),
             "Deposit": (["deposit", "earnest money", "escrow"], "Property Info"),
             "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),

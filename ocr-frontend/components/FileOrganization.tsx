@@ -20,8 +20,11 @@ import { apiClient } from "@/lib/api";
 import { DealPackage } from "@/lib/types";
 import ConfirmationModal from "./ConfirmationModal";
 import WarningModal from "./WarningModal";
-import DocumentSidePanel from "./DocumentSidePanel";
 import dynamic from 'next/dynamic';
+
+const DocumentSidePanel = dynamic(() => import("./DocumentSidePanel"), {
+  ssr: false,
+});
 
 const FilePreviewModal = dynamic(() => import("./FilePreviewModal"), {
   ssr: false,
