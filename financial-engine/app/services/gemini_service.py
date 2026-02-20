@@ -8,23 +8,27 @@ from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential, retry_
 
 logger = logging.getLogger(__name__)
 
+from app.config import settings
+
 class GeminiService:
     def __init__(self):
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.api_key = settings.gemini_api_key
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable not set")
         
         # Initialize the new client
         self.client = genai.Client(api_key=self.api_key)
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        self.model_name = settings.gemini_model
+        self.fast_model_name = settings.gemini_fast_model
 
-    def generate_content(self, prompt: str) -> str:
+    def generate_content(self, prompt: str, use_fast_model: bool = False) -> str:
         """
         Generates content using the Gemini model.
         """
         try:
+            model = self.fast_model_name if use_fast_model else self.model_name
             response = self.client.models.generate_content(
-                model=self.model_name,
+                model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.0)
             )
@@ -33,10 +37,11 @@ class GeminiService:
             # Handle potential API errors
             return f"An error occurred: {e}"
 
-    async def generate_content_async(self, prompt: str) -> str:
+    async def generate_content_async(self, prompt: str, use_fast_model: bool = False) -> str:
         """
         Generates content using the Gemini model asynchronously with retries.
         """
+        model = self.fast_model_name if use_fast_model else self.model_name
         try:
             # Retry logic for 500 errors and timeouts
             async for attempt in AsyncRetrying(
@@ -48,7 +53,7 @@ class GeminiService:
                 with attempt:
                     response = await asyncio.wait_for(
                         self.client.aio.models.generate_content(
-                            model=self.model_name,
+                            model=model,
                             contents=prompt,
                             config=types.GenerateContentConfig(temperature=0.0)
                         ),
