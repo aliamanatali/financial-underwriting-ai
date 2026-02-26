@@ -47,29 +47,56 @@ class FinancialService:
         # "if we have OM, we should be able to get all the data... we dont need to pick supporting documents"
         
         om_expenses = []
-        other_expenses = []
+        pnl_expenses = []
+        raw_bill_expenses = []
         
         for exp in expenses:
             src = (exp.source_document or "").upper()
             if "OM" in src or "OFFERING" in src or "MEMORANDUM" in src:
                 om_expenses.append(exp)
+            elif any(kw in src for kw in ["P&L", "PL ", "T12", "STATEMENT", "OPERATING"]):
+                pnl_expenses.append(exp)
             else:
-                other_expenses.append(exp)
+                raw_bill_expenses.append(exp)
         
+        # Priority 1: OM Primacy
         # If we have substantial data from OM, we use OM ONLY.
-        # Threshold: > 5 items suggests we extracted a table (Income, Taxes, Utilities, etc.)
         if len(om_expenses) > 5:
-            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring {len(other_expenses)} items from supporting documents.")
+            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources.")
             expenses = om_expenses
-        elif len(om_expenses) > 0:
-             # OM exists but has very few items. Maybe just Property Tax/Price?
-             # Check if we have better data in supporting docs.
-             if len(other_expenses) > 10:
-                 logger.info(f"OM Primacy: Found OM items ({len(om_expenses)}) but supporting docs have more data ({len(other_expenses)}). Using ALL (merging).")
-                 # We kept expenses as is (both OM and others)
-             else:
-                 # Both are sparse, keep both
-                 pass
+        
+        # Priority 2: T12/P&L Primacy over Raw Bills
+        # If we have a P&L, we should ignore ALL raw bills for expenses.
+        elif len(pnl_expenses) > 0:
+            logger.info(f"P&L Detected. Implementing Strict Source Hierarchy (P&L > Raw Bills).")
+            
+            # Identify if any expenses are clearly from an Excel/P&L file
+            # Instruction: Completely discard all expense extractions from PDF utility bills or invoices.
+            logger.info(f"Hierarchy: Discarding {len(raw_bill_expenses)} items from raw bills/PDFs because a P&L exists.")
+            
+            # We only keep property info or non-expense categories from raw bills?
+            # Re-reading instruction: "discard all expense extractions".
+            # So if it's categorized as an expense, we discard it.
+            
+            filtered_raw_bills = []
+            for exp in raw_bill_expenses:
+                # We only keep items from raw bills if they are NOT expenses (e.g. Property Meta)
+                # Note: In this loop, items are usually already categorized.
+                # However, many things are categorized as 'Other Operating Expenses' by default.
+                
+                # Check category group if available, or use keywords
+                is_expense = True
+                if hasattr(exp, 'category_group') and exp.category_group:
+                    from app.models.schemas import CategoryGroup
+                    if exp.category_group not in [CategoryGroup.OPERATING_EXPENSE, CategoryGroup.TAX_INSURANCE, CategoryGroup.OTHER]:
+                        is_expense = False
+                
+                if not is_expense:
+                    filtered_raw_bills.append(exp)
+                else:
+                    logger.debug(f"Hierarchy: Discarding raw expense item: {exp.original_text}")
+            
+            expenses = pnl_expenses + filtered_raw_bills
         
         # --- Step 1: Year-Based Filtering ---
         # Collect years from all expenses

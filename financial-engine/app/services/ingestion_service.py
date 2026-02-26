@@ -1,5 +1,6 @@
 import json
 import pandas as pd
+import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
 from app.models.schemas import RentRollItem, PropertyMeta, UnderwritingAnalysis, StandardizedExpense, ExpenseCategory, AuditLog, RentRollSummary
@@ -266,12 +267,26 @@ class IngestionService:
                     if idx < 5:
                         print(f"DEBUG: Row {idx} - Unit: '{unit_number}', Raw Size: '{raw_size_val}', Parsed: {parsed_size_val}")
 
+                    raw_unit_type = self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type", "Bed/Bath", "Beds/Baths"], "")
+                    if isinstance(raw_unit_type, (pd.Timestamp, datetime.datetime)):
+                        # Excel auto-converts "1/1" to a date. Convert it back to "1/1" (Beds/Baths)
+                        unit_type_str = f"{raw_unit_type.month}/{raw_unit_type.day}"
+                    elif isinstance(raw_unit_type, str) and ("2026-" in raw_unit_type or "2025-" in raw_unit_type):
+                        # Handle cases where it was already converted to a string date
+                        try:
+                            dt = pd.to_datetime(raw_unit_type)
+                            unit_type_str = f"{dt.month}/{dt.day}"
+                        except:
+                            unit_type_str = raw_unit_type
+                    else:
+                        unit_type_str = str(raw_unit_type)
+
                     current_sheet_roll.append(RentRollItem(
                         unit_number=unit_number,
-                        unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                        unit_type=unit_type_str,
                         unit_size=parsed_size_val,
                         tenant_name=tenant_name,
-                        current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
+                        current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent", "Base Rent", "Total Monthly", "Monthly Rent"], 0.0)),
                         stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
                         market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
                         move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),
@@ -376,12 +391,26 @@ class IngestionService:
                             if idx < 5:
                                 print(f"Row {idx} - Unit: '{unit_number}' | Raw Size: '{raw_size_val}' | Parsed: {parsed_size_val}")
         
+                            raw_unit_type = self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type", "Bed/Bath", "Beds/Baths"], "")
+                            if isinstance(raw_unit_type, (pd.Timestamp, datetime.datetime)):
+                                # Excel auto-converts "1/1" to a date. Convert it back to "1/1" (Beds/Baths)
+                                unit_type_str = f"{raw_unit_type.month}/{raw_unit_type.day}"
+                            elif isinstance(raw_unit_type, str) and ("2026-" in raw_unit_type or "2025-" in raw_unit_type):
+                                # Handle cases where it was already converted to a string date
+                                try:
+                                    dt = pd.to_datetime(raw_unit_type)
+                                    unit_type_str = f"{dt.month}/{dt.day}"
+                                except:
+                                    unit_type_str = raw_unit_type
+                            else:
+                                unit_type_str = str(raw_unit_type)
+
                             current_sheet_roll.append(RentRollItem(
                                 unit_number=unit_number,
-                                unit_type=str(self._get_val(row, ["Unit Type", "Type", "Floor Plan", "Occupancy Type"], "")),
+                                unit_type=unit_type_str,
                                 unit_size=parsed_size_val,
                                 tenant_name=tenant_name,
-                                current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent"], 0.0)),
+                                current_rent=self._parse_float(self._get_val(row, ["Rent Amount", "Current Rent", "Rent", "Total Rent", "$/Month", "Rate", "2024 Rent", "Base Rent", "Total Monthly", "Monthly Rent"], 0.0)),
                                 stabilized_rent=self._parse_float(self._get_val(row, ["Stabilized Rent", "Stabilized"], 0.0)),
                                 market_rent=self._parse_float(self._get_val(row, ["Market Rent", "Market", "Pro Forma"], 0.0)),
                                 move_in_date=str(self._get_val(row, ["Move In Date", "Move-In Date", "Move In"], "")),

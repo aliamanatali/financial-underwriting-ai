@@ -1397,11 +1397,167 @@ async def _analyze_deal_package_logic(
     
     await update_progress(30, "Synthesizing property metadata from all documents...")
     
-    # Run Metadata Synthesizer
-    synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
-    
     # --- Verification Agents (Non-OM Flow) ---
     verification_audit_logs = []
+
+    # NEW: Contextual Data Verification Agent (Applies to ALL extracted items)
+    # This fulfills the request to apply "Contextual Analysis" to all values
+    if normalized_items:
+        try:
+            logger.info(f"Running Contextual Data Verification Agent on {len(normalized_items)} items...")
+            await update_progress(35, "Verifying data quality with AI context...")
+
+            # 1. Group items by Document to optimize text fetching
+            items_by_doc = {}
+            for item in normalized_items:
+                doc_id = item.metadata.get("document_id")
+                if not doc_id: continue
+                if doc_id not in items_by_doc:
+                    items_by_doc[doc_id] = []
+                items_by_doc[doc_id].append(item)
+
+            verified_items_results = []
+            # Semaphore to avoid overwhelming LLM API with too many parallel batches
+            audit_sem = asyncio.Semaphore(5)
+
+            async def process_doc_audit(doc_id, items):
+                nonlocal verified_items_results
+                # Fetch document text once
+                full_text = ""
+                source_filename = items[0].source_document or "unknown.pdf"
+
+                # 1. Try OCR Backend first (Fastest/Best)
+                try:
+                    full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
+                except Exception as e:
+                    logger.warning(f"Backend text fetch failed for {doc_id} in generic audit: {e}")
+
+                # 2. Fallback to Storage Service (GCP/Local) if backend failed
+                if not full_text:
+                    try:
+                        content = None
+                        if doc_id in file_storage_cache:
+                            content = file_storage_cache[doc_id]["content"]
+                        else:
+                            ext = Path(source_filename).suffix
+                            storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
+                            content = await storage_service.get_document_file(storage_path)
+
+                        if content and source_filename.lower().endswith(".pdf"):
+                            import PyPDF2
+                            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                            text_pages = []
+                            # Extract text from first 25 pages for generic audit (faster than 40)
+                            for p_idx, page in enumerate(pdf_reader.pages[:25]):
+                                text_pages.append(page.extract_text())
+                            full_text = "\n".join(text_pages)
+                            logger.info(f"Recovered text from storage for {source_filename} in generic audit ({len(full_text)} chars)")
+                    except Exception as ex:
+                        logger.warning(f"Storage extraction failed for {doc_id} in generic audit: {ex}")
+
+                if not full_text: return
+
+                # Prepare candidates with context
+                candidates_to_verify = []
+                for item in items:
+                    # OPTIMIZATION: Skip very small/zero items that are already "Other"
+                    # We want to verify High Stakes values (Price, Units, Large Expenses)
+                    amount = item.metadata.get("amount", 0.0)
+                    if amount == 0 and item.normalized_value in ["Other Operating Expenses", "Uncategorized"]:
+                        continue
+
+                    # Center context window on item.raw_text
+                    window_text = full_text[:2000]
+                    if item.raw_text and item.raw_text in full_text:
+                        idx = full_text.find(item.raw_text)
+                        start = max(0, idx - 1000)
+                        end = min(len(full_text), idx + 1000)
+                        window_text = full_text[start:end]
+                    
+                    candidates_to_verify.append({
+                        "id": item.id,
+                        "raw_text": item.raw_text,
+                        "current_category": item.normalized_value,
+                        "amount": amount,
+                        "context": window_text,
+                        "source": item.source_document
+                    })
+
+                if not candidates_to_verify: return
+
+                # Batch verify items (max 25 per LLM call)
+                BATCH_SIZE = 25
+                audit_tasks = []
+
+                async def run_audit_batch(batch):
+                    async with audit_sem:
+                        logger.info(f"Verifying batch of {len(batch)} items from {doc_id}")
+                        return await synthesis_service.verify_items_contextual(batch, gemini_service)
+
+                for i in range(0, len(candidates_to_verify), BATCH_SIZE):
+                    batch = candidates_to_verify[i:i+BATCH_SIZE]
+                    audit_tasks.append(run_audit_batch(batch))
+                
+                if audit_tasks:
+                    batch_results = await asyncio.gather(*audit_tasks)
+                    for res_list in batch_results:
+                        if res_list:
+                            verified_items_results.extend(res_list)
+
+            # Parallelize across documents
+            doc_audit_tasks = [process_doc_audit(doc_id, items) for doc_id, items in items_by_doc.items()]
+            await asyncio.gather(*doc_audit_tasks)
+
+            # 2. Apply Verification Results
+            # Create map for fast lookup
+            results_map = {res.get("id"): res for res in verified_items_results if isinstance(res, dict)}
+
+            final_normalized_items = []
+            for item in normalized_items:
+                res = results_map.get(item.id)
+                if res:
+                    # Update category if AI suggests "perfect" one
+                    if res.get("perfect_category"):
+                        item.normalized_value = res["perfect_category"]
+
+                    # Update group
+                    if res.get("perfect_group"):
+                        try:
+                            from app.models.schemas import CategoryGroup
+                            item.category_group = CategoryGroup(res["perfect_group"])
+                        except: pass
+
+                    # Log reasoning
+                    if res.get("reasoning"):
+                        item.metadata["verification_reasoning"] = res["reasoning"]
+
+                    # Keep only if beneficial
+                    if res.get("beneficial", True):
+                        final_normalized_items.append(item)
+                    else:
+                        logger.info(f"Contextual Agent rejected non-beneficial item: {item.raw_text} ({item.normalized_value})")
+                        verification_audit_logs.append({
+                            "field_name": f"Excluded: {item.normalized_value}",
+                            "extracted_value": item.raw_text,
+                            "source": item.source_document,
+                            "confidence_score": 1.0,
+                            "method": "Contextual Verification Agent",
+                            "reasoning": res.get("reasoning", "Item marked as non-beneficial or garbage.")
+                        })
+                else:
+                    # Keep items that weren't verified (e.g. no doc context)
+                    final_normalized_items.append(item)
+
+            # Update the list for synthesis
+            normalized_items = final_normalized_items
+            logger.info(f"Contextual verification complete. Items remaining: {len(normalized_items)}")
+
+        except Exception as e:
+            logger.error(f"Error in global contextual verification: {e}")
+            # Continue with original items if agent fails
+
+    # Run Metadata Synthesizer
+    synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
     
     if package.underwriting_flow == "MULTI_SOURCE":
         try:

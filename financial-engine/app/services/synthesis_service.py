@@ -282,6 +282,107 @@ class SynthesisService:
             # Fallback to the highest priority logic already in place (caller handles this)
             return None
 
+    async def verify_items_contextual(
+        self,
+        items: List[Dict[str, Any]],
+        gemini_service: Any
+    ) -> List[Dict[str, Any]]:
+        """
+        Verify multiple data items contextually using an LLM agent.
+        Each item in 'items' should have:
+        - id: str
+        - raw_text: str
+        - current_category: str
+        - amount: float
+        - context: str (surrounding text)
+        - source: str
+        
+        Returns a list of dicts with:
+        - id: str
+        - perfect_category: str (possibly updated)
+        - perfect_group: str (possibly updated)
+        - beneficial: bool (whether to keep it)
+        - reasoning: str
+        """
+        if not items:
+            return []
+
+        prompt = """
+        You are a senior real estate underwriting auditor. Your task is to verify the accuracy and relevance of extracted financial data items.
+        
+        For each item, you are provided with:
+        1. The extracted Raw Text.
+        2. The Current assigned Category.
+        3. The surrounding Text Context from the document.
+        
+        YOUR MISSION:
+        1. VALIDATE CATEGORY: Based on the surrounding context, is the current category perfect? If not, re-assign the most accurate standard category.
+        2. DETERMINE BENEFIT: Is this value beneficial for a real estate underwriting report? 
+           - BENEFICIAL: Actual revenue items, actual operating expenses, property characteristics (units, year built, sqft), actual debt/loan info.
+           - NOT BENEFICIAL: Duplicate "Total" lines, assessed values (unless explicitly requested as tax), insurance limits (coverage amounts vs premiums), generic document headers, garbage extractions, personal/tenant info that isn't financial.
+        3. REJECT GARBAGE: If the item is clearly a hallucination or non-financial noise, mark beneficial: false.
+
+        Standard Categories:
+        - Gross Potential Rent, Other Income, Reimbursements
+        - Real Estate Taxes, Insurance, Repairs & Maintenance, General & Administrative, Payroll, Utilities, Management Fees, Contract Services, Advertising & Marketing, Leasing Fees
+        - Property Name, Property Address, Total Units, Year Built, Rentable Area
+        - Current Loan Balance, Capital Reserves, Accounts Receivable
+        - Uncategorized
+
+        Return a JSON array of objects:
+        [
+            {
+                "id": "match input id",
+                "perfect_category": "Exact Category Name",
+                "perfect_group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
+                "beneficial": true,
+                "reasoning": "Briefly explain why or why not beneficial/re-categorized"
+            }
+        ]
+        
+        ITEMS TO AUDIT:
+        """
+
+        for idx, item in enumerate(items):
+            prompt += f"""
+            --- Item {idx} (ID: {item.get('id')}) ---
+            Raw Text: {item.get('raw_text')}
+            Current Category: {item.get('current_category')}
+            Amount: {item.get('amount')}
+            Source: {item.get('source')}
+            Context:
+            {item.get('context', '')[:1500]}
+            --------------------------
+            """
+
+        try:
+            if hasattr(gemini_service, "generate_content_async"):
+                response = await gemini_service.generate_content_async(prompt)
+            else:
+                response = gemini_service.generate_content(prompt)
+            
+            import json
+            import re
+            
+            cleaned_text = response.strip()
+            match = re.search(r"```json\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            if match:
+                cleaned_text = match.group(1)
+            else:
+                match = re.search(r"```\s*(.*?)```", cleaned_text, re.DOTALL)
+                if match:
+                    cleaned_text = match.group(1)
+            
+            cleaned_text = cleaned_text.strip()
+            if cleaned_text.startswith("json"):
+                cleaned_text = cleaned_text[4:]
+            
+            return json.loads(cleaned_text)
+            
+        except Exception as e:
+            logger.error(f"Error in Contextual Data Verification Agent: {e}")
+            return []
+
     def _normalize_unit_id(self, unit_id: str) -> str:
         """
         Normalize unit ID for deduplication.
