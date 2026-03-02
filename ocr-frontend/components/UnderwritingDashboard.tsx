@@ -492,7 +492,18 @@ export default function UnderwritingDashboard({
 
       {/* Combined Rent Roll Table (Read-Only Aggregated View) - HIDDEN
       <CombinedRentRollTable
-        rentRoll={analysis.rent_roll || []}
+        rentRoll={(analysis.rent_roll || []).filter(item => {
+          const isNonOMFlow = !analysis.om_proforma || analysis.om_proforma.length === 0;
+          if (!isNonOMFlow) return true;
+          const sizeStr = String(item.unit_size).toLowerCase().trim();
+          return !(
+            !item.unit_size ||
+            item.unit_size === 0 ||
+            sizeStr === "-" ||
+            sizeStr === "unknown" ||
+            sizeStr === "unkown"
+          );
+        })}
         formatCurrency={formatCurrency}
       />
       */}

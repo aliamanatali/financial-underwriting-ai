@@ -229,6 +229,25 @@ export default function RentRollWidget({
   const hasComments = React.useMemo(() => items.some(i => i.comments && i.comments.trim() !== ""), [items]);
   const hasMoveInDate = React.useMemo(() => items.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-"), [items]);
 
+  const isNonOMFlow = !fullAnalysis?.om_proforma || fullAnalysis.om_proforma.length === 0;
+
+  // Filter items for display and calculations in Non-OM flows
+  const visibleItems = React.useMemo(() => {
+    if (!isNonOMFlow) return items;
+    
+    return items.filter(item => {
+      const sizeStr = String(item.unit_size).toLowerCase().trim();
+      // Filter out if size is 0, "-", "unknown"
+      return !(
+        !item.unit_size ||
+        item.unit_size === 0 ||
+        sizeStr === "-" ||
+        sizeStr === "unknown" ||
+        sizeStr === "unkown" // Handle common typo from prompt
+      );
+    });
+  }, [items, isNonOMFlow]);
+
   useEffect(() => {
     setItems(initializeItems(rentRoll, studentHousingConfig));
   }, [rentRoll, studentHousingConfig]);
@@ -552,7 +571,7 @@ export default function RentRollWidget({
     const exportData = {
         ...baseAnalysis,
         document_id: packageId,
-        rent_roll: items.map(({ id, ...rest }) => ({
+        rent_roll: visibleItems.map(({ id, ...rest }) => ({
             ...rest,
             unit_size: parseFloat(String(rest.unit_size)) || 0,
             current_rent: parseFloat(String(rest.current_rent)) || 0,
@@ -642,10 +661,10 @@ export default function RentRollWidget({
 
   // Calculate local summary for immediate feedback
   const localSummary = React.useMemo(() => {
-    const totalUnits = items.length;
+    const totalUnits = visibleItems.length;
     
     // Filter items that are actually paying rent (occupied)
-    const payingItems = items.filter(i =>
+    const payingItems = visibleItems.filter(i =>
       i.tenant_name &&
       i.tenant_name.toLowerCase() !== "vacant" &&
       (parseFloat(String(i.current_rent)) || 0) > 0
@@ -654,15 +673,15 @@ export default function RentRollWidget({
     const occupiedUnits = payingItems.length;
     const occupancyRate = totalUnits > 0 ? occupiedUnits / totalUnits : 0;
     
-    const totalUnitSize = items.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
+    const totalUnitSize = visibleItems.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
     const payingUnitSize = payingItems.reduce((sum, item) => sum + (parseFloat(String(item.unit_size)) || 0), 0);
     const avgUnitSize = totalUnits > 0 ? totalUnitSize / totalUnits : 0;
 
-    const totalMonthlyRent = items.reduce((sum, item) => sum + (parseFloat(String(item.current_rent)) || 0), 0);
+    const totalMonthlyRent = visibleItems.reduce((sum, item) => sum + (parseFloat(String(item.current_rent)) || 0), 0);
     const totalAnnualRent = totalMonthlyRent * 12;
     
-    const totalStabilizedRent = items.reduce((sum, item) => sum + (parseFloat(String(item.stabilized_rent)) || 0), 0);
-    const totalMarketRent = items.reduce((sum, item) => sum + (parseFloat(String(item.market_rent)) || 0), 0);
+    const totalStabilizedRent = visibleItems.reduce((sum, item) => sum + (parseFloat(String(item.stabilized_rent)) || 0), 0);
+    const totalMarketRent = visibleItems.reduce((sum, item) => sum + (parseFloat(String(item.market_rent)) || 0), 0);
 
     // Calculate averages based on paying units only (ignoring 0$ rent units)
     const avgRentPerUnit = occupiedUnits > 0 ? totalMonthlyRent / occupiedUnits : 0;
@@ -703,7 +722,7 @@ export default function RentRollWidget({
       totalSqFt: number;
     }> = {};
 
-    items.forEach(item => {
+    visibleItems.forEach(item => {
       const key = item.unit_type || "Unknown";
       
       if (!groups[key]) {
@@ -724,7 +743,7 @@ export default function RentRollWidget({
     return Object.entries(groups).map(([type, data]) => ({
       type,
       count: data.count,
-      percent: items.length > 0 ? data.count / items.length : 0,
+      percent: visibleItems.length > 0 ? data.count / visibleItems.length : 0,
       avgCurrentRent: data.payingCount > 0 ? data.totalCurrentRent / data.payingCount : 0,
       avgStabilizedRent: data.count > 0 ? data.totalStabilizedRent / data.count : 0,
       avgMarketRent: data.count > 0 ? data.totalMarketRent / data.count : 0,
@@ -884,10 +903,10 @@ export default function RentRollWidget({
                </thead>
                <tbody className="divide-y divide-neutral-100">
                  <SortableContext
-                   items={items.map((item) => item.id)}
+                   items={visibleItems.map((item) => item.id)}
                    strategy={verticalListSortingStrategy}
                  >
-                   {items.map((item, idx) => (
+                   {visibleItems.map((item, idx) => (
                      <SortableRow
                        key={item.id}
                        item={item}
@@ -904,7 +923,7 @@ export default function RentRollWidget({
                      />
                    ))}
                  </SortableContext>
-                 {items.length === 0 && (
+                 {visibleItems.length === 0 && (
                    <tr>
                      <td colSpan={isEditing.details ? 10 : 9} className="px-6 py-8 text-center text-neutral-500 text-sm">
                        No rent roll data available.
@@ -1039,7 +1058,7 @@ export default function RentRollWidget({
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100">
-                {items.map((item, idx) => {
+                {visibleItems.map((item, idx) => {
                   const config = studentHousingConfig?.unit_type_configs.find(c => c.unit_type === item.unit_type);
                   // Prioritize bed_count from the item, fall back to config, then to 1.
                   const bedCount = (item as any).bed_count || config?.bed_count || getBedCountFromUnitType(item.unit_type);
@@ -1115,7 +1134,7 @@ export default function RentRollWidget({
         )}
        {activeTab === 'unitBreakdown' && (
           <UnitBreakdownTable
-            rentRoll={items}
+            rentRoll={visibleItems}
             studentHousingConfig={studentHousingConfig}
             isEditing={isEditing.unitBreakdown}
             onItemChange={handleUnitBreakdownChange}
@@ -1124,8 +1143,8 @@ export default function RentRollWidget({
        )}
        {activeTab === 'unitBreakdownStabilized' && (
          <UnitBreakdownStabilizedTable
-            rentRoll={items}
-            studentHousingConfig={studentHousingConfig}
+           rentRoll={visibleItems}
+           studentHousingConfig={studentHousingConfig}
             isEditing={isEditing.unitBreakdownStabilized}
             onItemChange={handleUnitBreakdownChange}
           />
