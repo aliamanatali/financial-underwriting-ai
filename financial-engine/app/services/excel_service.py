@@ -6,6 +6,21 @@ import io
 from app.models.schemas import ProFormaEntry, UnderwritingAnalysis
 
 class ExcelService:
+    def _get_fiscal_year(self, analysis_data: UnderwritingAnalysis) -> str:
+        """
+        Extracts the most common fiscal year from historical expenses.
+        """
+        if not analysis_data or not analysis_data.historical_expenses:
+            return ""
+        
+        years = [exp.expense_year for exp in analysis_data.historical_expenses if exp.expense_year]
+        if not years:
+            return ""
+        
+        from collections import Counter
+        most_common_year = Counter(years).most_common(1)[0][0]
+        return str(most_common_year)
+
     def generate_side_by_side_view(self, analysis_data: UnderwritingAnalysis) -> List[ProFormaEntry]:
         """
         Generates a list of ProFormaEntry objects for the side-by-side view.
@@ -133,7 +148,11 @@ class ExcelService:
         
         # Headers
         sheet["A1"] = "Category"
-        sheet["B1"] = "T12 (Historical)"
+        # Get fiscal year
+        fiscal_year = self._get_fiscal_year(analysis_data)
+        fy_suffix = f" - {fiscal_year}" if fiscal_year else ""
+
+        sheet["B1"] = f"T12 (Historical{fy_suffix})"
         sheet["C1"] = "F12 (Pro Forma)"
         
         for col in ['A1', 'B1', 'C1']:
@@ -565,7 +584,9 @@ class ExcelService:
         
         # Header
         sheet.merge_cells(f"B{row}:G{row}")
-        sheet[f"B{row}"] = "Stabilized Expense Detail YR1"
+        fiscal_year = self._get_fiscal_year(analysis_data)
+        fy_suffix = f" ({fiscal_year})" if fiscal_year else ""
+        sheet[f"B{row}"] = f"Stabilized Expense Detail YR1{fy_suffix}"
         sheet[f"B{row}"].fill = header_fill
         sheet[f"B{row}"].font = header_font
         sheet[f"B{row}"].alignment = Alignment(horizontal='center')
@@ -1050,8 +1071,11 @@ class ExcelService:
 
         spacer1 = [{"field": "spacer1", "headerName": "", "width": 50, "cellStyle": {'backgroundColor': '#f5f5f5'}}]
         
+        fiscal_year = self._get_fiscal_year(analysis_data)
+        fy_suffix = f" ({fiscal_year})" if fiscal_year else ""
+
         summary_cols = [
-            {"headerName": "Unit Breakdown - Existing", "children": [
+            {"headerName": f"Unit Breakdown - Existing{fy_suffix}", "children": [
                 {"field": "sum_unit_type", "headerName": "Type", "width": 120},
                 {"field": "sum_avg_rent", "headerName": "Avg Rent", "width": 100, "type": "currency"},
                 {"field": "sum_avg_size", "headerName": "Avg Size", "width": 90},
@@ -1118,7 +1142,13 @@ class ExcelService:
         
         # --- Headers ---
         # Row 1: Top Headers
-        sheet["AA1"] = "Unit Breakdown - Existing"
+        # Get fiscal year
+        fiscal_year = self._get_fiscal_year(analysis_data)
+        fy_suffix = f" ({fiscal_year})" if fiscal_year else ""
+
+        # --- Headers ---
+        # Row 1: Top Headers
+        sheet["AA1"] = f"Unit Breakdown - Existing{fy_suffix}"
         sheet["AA1"].font = Font(bold=True)
         
         # Parent Categories (Merged Cells)
@@ -1885,7 +1915,9 @@ class ExcelService:
         default_sheet = workbook.active
         workbook.remove(default_sheet)
         
-        sheet = workbook.create_sheet("OM Proforma")
+        fiscal_year = self._get_fiscal_year(analysis_data)
+        fy_suffix = f" ({fiscal_year})" if fiscal_year else ""
+        sheet = workbook.create_sheet(f"OM Proforma{fy_suffix}")
         
         # --- Styles ---
         # Dark Blue: 002060 (Navy)

@@ -882,14 +882,26 @@ export default function RentRollWidget({
                  <th className="px-4 py-3 text-center">Unit Size</th>
                  <th className="px-4 py-3 text-center">Unit Type</th>
                  <th className="px-4 py-3 text-center">Current Rent</th>
-                 <th className="px-4 py-3 text-center">Stabilized Rent</th>
+                 <th className="px-4 py-3 text-center">
+                   <div className="flex items-center justify-center gap-1">
+                     Stabilized Rent
+                     {isNonOMFlow && (
+                       <WidgetTooltip
+                         title="Stabilized Rent Assumption"
+                         description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
+                       />
+                     )}
+                   </div>
+                 </th>
                  <th className="px-4 py-3 text-center">
                    <div className="flex items-center justify-center gap-1">
                      Market Rent
-                     <WidgetTooltip
-                       title="Market Rent Calculation"
-                       description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
-                     />
+                     {isNonOMFlow && (
+                       <WidgetTooltip
+                         title="Market Rent Calculation"
+                         description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                       />
+                     )}
                    </div>
                  </th>
                  {hasDeposits && <th className="px-4 py-3 text-center">Deposit</th>}
@@ -1167,14 +1179,26 @@ export default function RentRollWidget({
                     <th className="px-6 py-3 text-center">Unit Count</th>
                     <th className="px-6 py-3 text-center">%</th>
                     <th className="px-6 py-3 text-center">Avg. Current Rent</th>
-                    <th className="px-6 py-3 text-center">Stabilized Rent</th>
+                    <th className="px-6 py-3 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        Stabilized Rent
+                        {isNonOMFlow && (
+                          <WidgetTooltip
+                            title="Stabilized Rent Assumption"
+                            description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
+                          />
+                        )}
+                      </div>
+                    </th>
                     <th className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1">
                         Market Rent
-                        <WidgetTooltip
-                          title="Market Rent Calculation"
-                          description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
-                        />
+                        {isNonOMFlow && (
+                          <WidgetTooltip
+                            title="Market Rent Calculation"
+                            description="Since the Offering Memorandum (OM) is unavailable, Market Rent is calculated as the average rent of non-vacant units of the same unit type."
+                          />
+                        )}
                       </div>
                     </th>
                     <th className="px-6 py-3 text-center">Avg. Sq Ft</th>
