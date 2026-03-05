@@ -1311,10 +1311,10 @@ class MultiDocumentExtractionService:
         for table in proforma_tables:
             name = (table.scenario_name or "").lower()
             if any(k in name for k in priority_keywords) and "pro forma" not in name and "proforma" not in name:
-                 # "Current Pro Forma" is ambiguous, but usually means Current.
-                 # But "Pro Forma" alone usually means Year 1.
-                 selected_table = table
-                 break
+                # "Current Pro Forma" is ambiguous, but usually means Current.
+                # But "Pro Forma" alone usually means Year 1.
+                selected_table = table
+                break
         
         # If no "Current", try "Year 1" or "Pro Forma" (some OMs only have proforma)
         if not selected_table:
@@ -1540,7 +1540,7 @@ class MultiDocumentExtractionService:
         progress_end: int = 80,
         initial_completed_files: List[str] = None,
         total_files_override: Optional[int] = None
-    ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str]):
+    ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str], Optional[int], bool):
         """
         Process multiple financial documents and return normalized expense items and OM proforma data.
         
@@ -1557,6 +1557,8 @@ class MultiDocumentExtractionService:
             - List of NormalizedDataItem objects ready for user verification
             - List of OMProformaTable objects
             - List of completed filenames
+            - Verified Primary Fiscal Year (int or None)
+            - Is Partial Year (bool)
         """
         all_expenses = []
         om_proforma_results = []
@@ -1602,7 +1604,7 @@ class MultiDocumentExtractionService:
                     msg = f"Processing {filename}..."
                 else:
                     msg = f"Processed {cumulative_index}/{cumulative_total} documents"
-
+                
                 await progress_service.update_progress(
                     task_id,
                     current_pct,
@@ -1779,7 +1781,7 @@ class MultiDocumentExtractionService:
             # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
-            return [], om_proforma_results, list(completed_files)
+            return [], om_proforma_results, list(completed_files), None, False
         
         # Validate and fix expenses (filtering out totals, tuition, etc.) BEFORE batching
         # to ensure batch sizes align with normalization results.
@@ -1787,45 +1789,102 @@ class MultiDocumentExtractionService:
         all_expenses = self._validate_and_fix_extraction(all_expenses)
         logger.info(f"Total expenses after validation/filtering: {len(all_expenses)}")
 
-        # --- Filter for Latest Fiscal Year ---
+        # --- Filter for Primary Fiscal Year (AI Verified) ---
+        verified_primary_year = None
+        is_partial_year = False
+
         try:
-            # Group items by source document
-            doc_years = {}
+            # Group items by year and source to identify candidates
+            year_stats = {} # year -> {source -> count}
+            doc_contexts = {} # source -> sample text
+            
             for exp in all_expenses:
-                doc = exp.get("source_document")
                 year = exp.get("expense_year")
-                if doc and year and isinstance(year, int):
-                    if doc not in doc_years:
-                        doc_years[doc] = set()
-                    doc_years[doc].add(year)
-            
-            # Find max year per document
-            doc_max_years = {doc: max(years) for doc, years in doc_years.items() if years}
-            
-            if doc_max_years:
-                # Find global max year across all documents
-                global_max_year = max(doc_max_years.values())
-                logger.info(f"Global max fiscal year detected: {global_max_year}")
+                doc = exp.get("source_document")
+                if year and isinstance(year, int) and doc:
+                    if year not in year_stats:
+                        year_stats[year] = {}
+                    year_stats[year][doc] = year_stats[year].get(doc, 0) + 1
+                    
+                    if doc not in doc_contexts:
+                        doc_contexts[doc] = str(exp.get("raw_text", ""))[:200]
+
+            if year_stats and self.gemini_service:
+                # Prepare candidates for LLM verification
+                candidates = []
+                for year, docs in year_stats.items():
+                    total_items = sum(docs.values())
+                    # Pick the doc with most items for this year as primary source
+                    best_doc = max(docs.items(), key=lambda x: x[1])[0]
+                    candidates.append({
+                        "year": year,
+                        "source": best_doc,
+                        "item_count": total_items,
+                        "text_context": f"Year {year} found in {len(docs)} documents. Sample from primary: {doc_contexts.get(best_doc)}"
+                    })
                 
-                # Identify documents to drop (those with max year < global max year)
-                # Note: We keep documents with NO detected year (doc_max_years.get(doc) is None)
-                # to avoid dropping Excel files or docs where year wasn't extracted.
-                docs_to_drop = set()
-                for doc, max_year in doc_max_years.items():
-                    # If a document's latest data is older than the global latest data, drop it.
-                    # e.g. Doc A (2021) vs Doc B (2023) -> Drop Doc A.
-                    # e.g. Doc A (2023) vs Doc B (2024 T12) -> Drop Doc A (2023).
-                    if max_year < global_max_year:
-                        docs_to_drop.add(doc)
+                logger.info(f"Verifying primary fiscal year among candidates: {[c['year'] for c in candidates]}")
                 
-                if docs_to_drop:
-                    logger.info(f"Dropping historical documents older than {global_max_year}: {docs_to_drop}")
-                    original_count = len(all_expenses)
-                    all_expenses = [e for e in all_expenses if e.get("source_document") not in docs_to_drop]
-                    logger.info(f"Filtered out {original_count - len(all_expenses)} items from older fiscal years.")
+                prompt = f"""
+                You are a real estate underwriting verification agent. Determine the PRIMARY FISCAL YEAR for analysis.
+                
+                Candidates extracted from documents:
+                {json.dumps(candidates, indent=2)}
+                
+                LOGIC:
+                1. Identify the TRUE Primary Fiscal Year for underwriting.
+                2. PARTIAL YEAR HANDLING: 
+                   - If the most recent year (e.g. 2024) has significantly fewer items than the previous year (e.g. 2023), 
+                     it is likely a partial/YTD statement. 
+                   - Favor the most recent FULL year as the primary baseline.
+                   - If 2024 has only 2-10 items while 2023 has 40+, 2023 is clearly the primary full year.
+                3. Return the selected year as an integer.
+                
+                Return ONLY a JSON object: {{"selected_year": 2023, "is_partial": true, "reasoning": "..."}}
+                """
+                
+                response = await self.gemini_service.generate_content_async(prompt)
+                
+                import re
+                cleaned_res = response.strip()
+                match = re.search(r'\{.*\}', cleaned_res, re.DOTALL)
+                if match:
+                    res_json = json.loads(match.group(0))
+                    verified_primary_year = int(res_json.get("selected_year"))
+                    is_partial_year = bool(res_json.get("is_partial", False))
+                    logger.info(f"AI Selected Primary Fiscal Year: {verified_primary_year} (Partial: {is_partial_year}). Reasoning: {res_json.get('reasoning')}")
+                    
+                    # Filter: Drop documents that ONLY contain years OTHER than the selected one
+                    # AND ensure we don't drop documents with NO year info (like property info docs)
+                    
+                    doc_max_years = {}
+                    for year, docs in year_stats.items():
+                        for doc in docs:
+                            if doc not in doc_max_years or year > doc_max_years[doc]:
+                                doc_max_years[doc] = year
+                    
+                    docs_to_drop = set()
+                    for doc, max_year in doc_max_years.items():
+                        # If a document's latest data is older than the selected year, drop it.
+                        # If it's NEWER than the selected year (e.g. selected 2023 but doc has 2024 partial), 
+                        # we should also drop it to prevent mixing partial YTD with full years in the final sum.
+                        if max_year != verified_primary_year:
+                             docs_to_drop.add(doc)
+                    
+                    if docs_to_drop:
+                        logger.info(f"Dropping documents not matching primary fiscal year {verified_primary_year}: {docs_to_drop}")
+                        original_count = len(all_expenses)
+                        all_expenses = [e for e in all_expenses if e.get("source_document") not in docs_to_drop]
+                        logger.info(f"Filtered out {original_count - len(all_expenses)} items from non-primary years.")
+            
+            elif not self.gemini_service and year_stats:
+                # Fallback to old max year logic if Gemini unavailable
+                global_max_year = max(year_stats.keys())
+                verified_primary_year = global_max_year
+                all_expenses = [e for e in all_expenses if e.get("expense_year") is None or e.get("expense_year") == global_max_year]
+                
         except Exception as e:
-            logger.error(f"Error filtering for latest fiscal year: {e}")
-            # Continue without filtering on error
+            logger.error(f"Error filtering for primary fiscal year: {e}")
 
         # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
@@ -1954,4 +2013,4 @@ class MultiDocumentExtractionService:
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
         logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items and {len(om_proforma_results)} OM proforma tables.")
-        return normalized_items, om_proforma_results, list(completed_files)
+        return normalized_items, om_proforma_results, list(completed_files), verified_primary_year, is_partial_year

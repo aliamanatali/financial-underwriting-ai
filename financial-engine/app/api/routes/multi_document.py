@@ -563,7 +563,7 @@ async def normalize_package_documents(
     async def process_om_task():
         if not om_documents:
             await update_aggregate_progress("om", 100, "OM processing skipped")
-            return None, [], [], []
+            return None, [], [], [], None, False
         try:
             logger.info(f"Starting OM Extraction task ({len(om_documents)} docs)...")
             res = await extraction_service.process_financial_documents(
@@ -574,7 +574,7 @@ async def normalize_package_documents(
                 initial_completed_files=[], # Don't pass global list, we handle merging in adapter
                 total_files_override=documents_count
             )
-            extracted_expenses, extracted_proforma, completed_files = res
+            extracted_expenses, extracted_proforma, completed_files, verified_year, is_partial = res
             
             # Extract Address
             address = None
@@ -585,10 +585,10 @@ async def normalize_package_documents(
                         logger.info(f"Found Target Property Address from OM: {address}")
                         break
             
-            return address, extracted_expenses, extracted_proforma, completed_files
+            return address, extracted_expenses, extracted_proforma, completed_files, verified_year, is_partial
         except Exception as e:
             logger.error(f"Error in OM Task: {e}")
-            return None, [], [], []
+            return None, [], [], [], None, False
 
     # Task B: Process Rent Rolls (Dependent on OM)
     async def process_rent_rolls_task(om_task_future):
@@ -619,7 +619,7 @@ async def normalize_package_documents(
     async def process_financials_task():
         if not remaining_financial_docs:
             await update_aggregate_progress("fin", 100, "Financials processing skipped")
-            return [], [], []
+            return [], [], [], None, False
         
         logger.info("Starting Remaining Financials Processing immediately...")
         return await extraction_service.process_financial_documents(
@@ -641,10 +641,18 @@ async def normalize_package_documents(
         results = await asyncio.gather(om_task, rr_task, fin_task)
         
         # Unpack Results
-        (om_address, extracted_om_expenses, extracted_om_proforma, om_completed_files) = results[0]
+        (om_address, extracted_om_expenses, extracted_om_proforma, om_completed_files, om_verified_year, om_is_partial) = results[0]
         (extracted_rent_roll, rr_completed_files) = results[1]
-        (extracted_other_financials, other_om_proforma, other_fin_completed_files) = results[2]
+        (extracted_other_financials, other_om_proforma, other_fin_completed_files, other_verified_year, other_is_partial) = results[2]
         
+        # Determine Primary Fiscal Year
+        # Priority: OM Year > Other Financials Year
+        package.primary_fiscal_year = om_verified_year or other_verified_year
+        package.is_partial_year = om_is_partial if om_verified_year else other_is_partial
+        
+        if package.primary_fiscal_year:
+             logger.info(f"SYNTHESIZED FISCAL YEAR: {package.primary_fiscal_year} (Partial: {package.is_partial_year})")
+
         # Merge Financials
         all_financials = extracted_om_expenses + extracted_other_financials
         
@@ -1612,7 +1620,7 @@ async def _analyze_deal_package_logic(
                         try:
                             full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
                         except Exception as e:
-                            logger.warning(f"Backend text fetch failed for {doc_id}: {e}")
+                            logger.warning(f"Backend text fetch failed for {doc_id} in PP verify: {e}")
                         
                         # 2. Fallback to Storage Service (GCP/Local) if backend failed
                         # This handles cases where server restarted and cache is empty, or backend 404s
@@ -1636,9 +1644,9 @@ async def _analyze_deal_package_logic(
                                     for p_idx, page in enumerate(pdf_reader.pages[:20]):
                                         text_pages.append(page.extract_text())
                                     full_text = "\n".join(text_pages)
-                                    logger.info(f"Recovered text from storage for {source_filename} ({len(full_text)} chars)")
+                                    logger.info(f"Recovered text from storage for {source_filename} in PP verify ({len(full_text)} chars)")
                             except Exception as ex:
-                                logger.warning(f"Storage extraction failed for {doc_id}: {ex}")
+                                logger.warning(f"Storage extraction failed for {doc_id} in PP verify: {ex}")
 
                         if full_text:
                             # Extract relevant window (centered on raw_text match)
@@ -2136,6 +2144,8 @@ async def _analyze_deal_package_logic(
         pass_fail_status="PENDING",
         gating_reasons=[],
         property_meta=property_meta,
+        primary_fiscal_year=package.primary_fiscal_year,
+        is_partial_year=package.is_partial_year,
         rent_roll=rent_roll,
         rent_roll_summary=rent_roll_summary,
         historical_expenses=historical_expenses,
@@ -2228,7 +2238,7 @@ async def _analyze_deal_package_logic(
         
         # 1. Excel (Synchronous/Fast)
         pro_forma_entries = excel_service.generate_side_by_side_view(analysis)
-        await excel_service.create_side_by_side_excel(pro_forma_entries)
+        await excel_service.create_side_by_side_excel(pro_forma_entries, analysis_data=analysis)
         logger.info(f"Excel model generated for package: {package_id}")
         
         # 2. Parallel AI Tasks (Memo & Commentary) - ONLY IF MISSING

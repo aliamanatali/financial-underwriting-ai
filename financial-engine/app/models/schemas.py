@@ -327,13 +327,16 @@ class DealPackage(BaseModel):
     underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
     
     # Segmented Data Storage
-    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
-    
     rent_roll_data: List[RentRollItem] = []
     financials_data: List[NormalizedDataItem] = [] # Specifically for financials (T12, P&L, Tax Bills)
     om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
     
     manual_overrides: Dict[str, Any] = {} # User provided manual overrides
+    
+    # Fiscal Year Info
+    primary_fiscal_year: Optional[int] = None
+    is_partial_year: bool = False
+
 # --- 4. OM Proforma Models ---
 
 class OMProformaRow(BaseModel):
@@ -381,6 +384,9 @@ class UnderwritingAnalysis(BaseModel):
     underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
 
     property_meta: PropertyMeta
+    primary_fiscal_year: Optional[int] = None
+    is_partial_year: bool = False
+    
     rent_roll: List[RentRollItem]
     rent_roll_summary: RentRollSummary
     unit_mix_summary: List[UnitTypeSummary] = []
