@@ -763,6 +763,9 @@ class NormalizationService:
             
             if stabilized_rent_val <= 0 and current_rent_val > 0:
                 stabilized_rent_val = current_rent_val
+            elif current_rent_val <= 0:
+                # If current rent is zero, stabilized rent should also be zero
+                stabilized_rent_val = 0.0
 
             # Parse unit size robustly
             unit_size_val = self._parse_int_robust(item.get("unit_size"))
