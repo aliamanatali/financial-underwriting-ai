@@ -1031,11 +1031,16 @@ class IngestionService:
         - If the amount has a minus sign like -500, it is a positive expense.
         - Return the absolute value of the expense.
 
+        MULTI-PERIOD EXTRACTION:
+        - If the document contains columns for trailing periods (e.g. T3, T6, T9, T12), extract ALL of them.
+        - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
+        - If only a total/annual column exists, use it for "amount" (T12).
+        
         LATEST PERIOD ONLY:
         - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
         - Ignore columns for older years.
         
-        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00, "expense_year": 2023}, ...]
+        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00, "amount_t3": 100.0, "amount_t6": 200.0, "amount_t9": 400.0, "expense_year": 2023}, ...]
         """
 
         # Use async

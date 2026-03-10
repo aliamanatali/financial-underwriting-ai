@@ -258,6 +258,9 @@ class NormalizationService:
                     "original_text": desc,
                     "mapped_category": cached["mapped_category"],
                     "amount": expense.get("amount"), # Use current amount, not cached amount
+                    "amount_t3": expense.get("amount_t3"),
+                    "amount_t6": expense.get("amount_t6"),
+                    "amount_t9": expense.get("amount_t9"),
                     "confidence": cached.get("confidence", 0.95), # High confidence for cache
                     "reasoning": cached.get("reasoning"),
                     "page_number": expense.get("page_number"),
@@ -302,14 +305,19 @@ class NormalizationService:
             for i, res in enumerate(results):
                 if res:
                     for item in res:
-                        # Ensure original amount is preserved if LLM messed it up,
-                        # but usually map_expenses_to_categories returns what we sent plus fields.
-                        # We need to link back to the raw expense to get metadata if lost.
-                        # Assuming LLM returns 'original_text' matching input 'description'.
+                        # Ensure original amount is preserved if LLM messed it up
                         desc = item.get("original_text", "")
                         
-                        # Find original expense for this desc to get amount/metadata if needed
-                        # (Simple lookup assumes uniqueness in batch or sufficient context)
+                        # Link back to original raw expense to get amounts and metadata
+                        original_match = next((e for e in batch if e.get("description") == desc), {})
+                        
+                        # Merge amounts from original extraction
+                        item["amount"] = original_match.get("amount", item.get("amount"))
+                        item["amount_t3"] = original_match.get("amount_t3")
+                        item["amount_t6"] = original_match.get("amount_t6")
+                        item["amount_t9"] = original_match.get("amount_t9")
+                        item["page_number"] = original_match.get("page_number")
+                        item["bbox"] = original_match.get("bbox")
                         
                         final_mapped_data_dict[desc] = item
                         new_mappings_to_save.append(item)
@@ -528,6 +536,9 @@ class NormalizationService:
                         original_text=desc,
                         mapped_category=category_enum,
                         amount=parsed_amount,
+                        amount_t3=self._parse_amount(expense.get("amount_t3")) if expense.get("amount_t3") is not None else None,
+                        amount_t6=self._parse_amount(expense.get("amount_t6")) if expense.get("amount_t6") is not None else None,
+                        amount_t9=self._parse_amount(expense.get("amount_t9")) if expense.get("amount_t9") is not None else None,
                         confidence=mapped_item.get("confidence", 0.85),
                         audit_log=audit_log,
                         expense_year=expense.get("expense_year")

@@ -250,26 +250,29 @@ class MultiDocumentExtractionService:
                    - Permit fees for capital work → type: "capex"
                    - Permit fees for repairs → type: "expense"
                 
-                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
+                4. MULTI-PERIOD EXTRACTION:
+                   - If the document contains columns for trailing periods (e.g. T3, T6, T9, T12), extract ALL of them.
+                   - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
+                   - If only a total/annual column exists, use it for "amount" (T12).
                 
                 5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
                 
                 6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
                 
                 7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
-
+ 
                 8. IGNORE INSURANCE LIMITS:
                    - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
                    - These are coverage limits, NOT the premium amount.
                    - Only extract the "Premium" or "Total Premium" amount.
-
+ 
                 9. PROPERTY IDENTITY & DEAL TERMS:
                    - Extract the explicit "Property Name" if listed (e.g. "The Highland Apartments").
                    - Extract the "Property Address" if listed.
                    - Extract "Purchase Price" (or Sale Price, Contract Price) if listed. This is CRITICAL for Purchase Agreements (PSA).
                    - Extract "Year Built" if listed.
                    - type: "property_info"
-
+ 
                 10. LATEST PERIOD ONLY:
                    - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
                    - Ignore columns for older years.
@@ -277,17 +280,21 @@ class MultiDocumentExtractionService:
                 For each item, provide:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable
-                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
-                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
-                5. The expense year (if identifiable, e.g. 2022, 2023)
-                6. The page number where this item is found
-                7. The bounding box of the area containing this item
+                3. The amount for trailing periods: amount_t3, amount_t6, amount_t9 if available
+                4. The item type: "revenue", "expense", "property_info", "capex", "receivable"
+                5. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
+                6. The expense year (if identifiable, e.g. 2022, 2023)
+                7. The page number where this item is found
+                8. The bounding box of the area containing this item
                 
                 Return the data as a JSON array with this structure:
                 [
                     {
                         "raw_text": "Exact description",
-                        "amount": 12345.67, // or null
+                        "amount": 12345.67, // T12 or Annual
+                        "amount_t3": 3000.0, // optional
+                        "amount_t6": 6000.0, // optional
+                        "amount_t9": 9000.0, // optional
                         "period": "annual" or "monthly" or "one-time",
                         "type": "revenue", // or "expense", "property_info", "capex", "receivable"
                         "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
@@ -1937,6 +1944,9 @@ class MultiDocumentExtractionService:
                         
                         meta = {
                             "amount": amount,
+                            "amount_t3": expense.get("amount_t3"),
+                            "amount_t6": expense.get("amount_t6"),
+                            "amount_t9": expense.get("amount_t9"),
                             "text_value": raw_text,
                             "reasoning": normalization.get("reasoning", ""),
                             "row_count": expense.get("row_count"),

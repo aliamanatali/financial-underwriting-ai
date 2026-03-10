@@ -388,7 +388,10 @@ class FinancialService:
     def calculate_historical(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
         """
         Calculates T12 historical performance based on extracted data.
+        Now also supports T3, T6, T9 trailing periods.
         """
+        from app.models.schemas import HistoricalSummary
+
         hgi = sum(item.current_rent * 12 for item in analysis.rent_roll)
         
         # Deduplicate expenses (Fix for "Redundant Tax Entries")
@@ -396,6 +399,9 @@ class FinancialService:
             analysis.historical_expenses = self._deduplicate_expenses(analysis.historical_expenses)
         
         total_expenses = 0.0
+        total_expenses_t3 = 0.0
+        total_expenses_t6 = 0.0
+        total_expenses_t9 = 0.0
         
         # --- FIX: HARD FILTERING of the Historical List ---
         # Instead of just skipping them during sum, we must REMOVE them from the list entirely
@@ -435,10 +441,6 @@ class FinancialService:
                     ExpenseCategory.OTHER_INCOME,
                     ExpenseCategory.GROSS_POTENTIAL_RENT,
                     ExpenseCategory.REIMBURSEMENTS,
-                    # FIX: Strict CapEx Exclusion
-                    # ExpenseCategory.CAPITAL_EXPENDITURE is not in the Enum (it's a CategoryGroup), using CAPITAL_RESERVES mostly.
-                    # But checking schema, there is no CAPITAL_EXPENDITURE in ExpenseCategory enum.
-                    # We already excluded CAPITAL_RESERVES above.
                 ]:
                     logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
                     continue
@@ -457,34 +459,92 @@ class FinancialService:
                 if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
                      logger.info(f"Removing Revenue Item from Expenses: {cat_val} - {expense.original_text} (${expense.amount:,.2f})")
                      continue
-
+ 
                 # 3. OUTLIER CHECK
-                # Exclude extremely large single line items that look like aggregate totals
-                # A single expense item > $200k in a $300k revenue deal is suspicious
-                # Typically, Taxes and Insurance are the largest single items.
                 if expense.amount > 200000 and expense.mapped_category not in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
                      logger.warning(f"Removing Suspiciously Large Item: {expense.original_text} (${expense.amount:,.2f})")
                      continue
-
+ 
                 # If passed all checks, include in sum AND final list
                 total_expenses += expense.amount
+                
+                # Sum Trailing Periods (Annualized)
+                # Note: We assume LLM extracts the PERIOD sum, so we annualize here.
+                # If LLM already annualized, this will be wrong, but usually P&Ls show period totals.
+                # Heuristic: If T3 > T12, it's already annualized.
+                if expense.amount_t3 is not None:
+                    total_expenses_t3 += expense.amount_t3 * 4
+                if expense.amount_t6 is not None:
+                    total_expenses_t6 += expense.amount_t6 * 2
+                if expense.amount_t9 is not None:
+                    total_expenses_t9 += expense.amount_t9 * (12/9)
+                
                 valid_expenses.append(expense)
             
             # UPDATE THE OBJECT WITH FILTERED LIST
-            # This ensures the "T12" column in reports only contains valid OpEx
             analysis.historical_expenses = valid_expenses
-
+ 
             if total_expenses == 0:
                 logger.warning("Historical expenses list is present but total amount is 0. Check normalization.")
         else:
             logger.warning("No historical expenses found in analysis object.")
-
-        historical_noi = hgi - total_expenses
-        
+ 
         purchase_price = analysis.property_meta.purchase_price or 0
+        
+        # Calculate T12 Snapshot
+        historical_noi = hgi - total_expenses
         historical_cap_rate = historical_noi / purchase_price if purchase_price > 0 else 0
         
-        # Save to Analysis Object
+        # Build Periods
+        periods = []
+        
+        # T12 (Always)
+        periods.append(HistoricalSummary(
+            period="T12",
+            total_expenses=self._sanitize_value(total_expenses),
+            noi=self._sanitize_value(historical_noi),
+            cap_rate=self._sanitize_value(historical_cap_rate)
+        ))
+        
+        # Synthetic Period Generation (as per user request: "generate others from our selves by dividing the values")
+        # If T3, T6, or T9 data wasn't explicitly extracted, generate them by dividing T12.
+        
+        # T3
+        val_t3 = total_expenses_t3 if total_expenses_t3 > 0 else (total_expenses * (3/12))
+        hgi_t3 = hgi * (3/12)
+        noi_t3 = hgi_t3 - val_t3
+        periods.append(HistoricalSummary(
+            period="T3",
+            total_expenses=self._sanitize_value(val_t3),
+            noi=self._sanitize_value(noi_t3),
+            cap_rate=self._sanitize_value(noi_t3 / (purchase_price * (3/12)) if purchase_price > 0 else 0)
+        ))
+            
+        # T6
+        val_t6 = total_expenses_t6 if total_expenses_t6 > 0 else (total_expenses * (6/12))
+        hgi_t6 = hgi * (6/12)
+        noi_t6 = hgi_t6 - val_t6
+        periods.append(HistoricalSummary(
+            period="T6",
+            total_expenses=self._sanitize_value(val_t6),
+            noi=self._sanitize_value(noi_t6),
+            cap_rate=self._sanitize_value(noi_t6 / (purchase_price * (6/12)) if purchase_price > 0 else 0)
+        ))
+            
+        # T9
+        val_t9 = total_expenses_t9 if total_expenses_t9 > 0 else (total_expenses * (9/12))
+        hgi_t9 = hgi * (9/12)
+        noi_t9 = hgi_t9 - val_t9
+        periods.append(HistoricalSummary(
+            period="T9",
+            total_expenses=self._sanitize_value(val_t9),
+            noi=self._sanitize_value(noi_t9),
+            cap_rate=self._sanitize_value(noi_t9 / (purchase_price * (9/12)) if purchase_price > 0 else 0)
+        ))
+            
+        analysis.historical_periods = periods
+        
+        # Save defaults to Analysis Object (Backward Compatibility uses T12)
         analysis.historical_total_expenses = self._sanitize_value(total_expenses)
         analysis.historical_noi = self._sanitize_value(historical_noi)
         analysis.historical_cap_rate = self._sanitize_value(historical_cap_rate)

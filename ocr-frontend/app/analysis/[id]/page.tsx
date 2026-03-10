@@ -50,6 +50,12 @@ const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, s
     });
   }
 
+  // 3.5 Trailing Periods Summary
+  if (data.historical_periods && data.historical_periods.length > 0) {
+    console.log(`🕒 Trailing Periods Summary:`);
+    console.table(data.historical_periods);
+  }
+
   // 4. Financial Metrics
   console.log("📈 Financial Metrics:", {
     NOI: data.pro_forma_noi,

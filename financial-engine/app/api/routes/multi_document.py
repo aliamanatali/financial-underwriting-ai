@@ -2127,6 +2127,9 @@ async def _analyze_deal_package_logic(
                     original_text=item.raw_text,
                     mapped_category=category,
                     amount=amount,
+                    amount_t3=sanitize_float(item.metadata.get("amount_t3")) if item.metadata and item.metadata.get("amount_t3") is not None else None,
+                    amount_t6=sanitize_float(item.metadata.get("amount_t6")) if item.metadata and item.metadata.get("amount_t6") is not None else None,
+                    amount_t9=sanitize_float(item.metadata.get("amount_t9")) if item.metadata and item.metadata.get("amount_t9") is not None else None,
                     confidence=sanitize_float(item.confidence),
                     audit_log=AuditLog(
                         field_name="expense",

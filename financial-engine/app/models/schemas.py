@@ -237,7 +237,10 @@ class StandardizedExpense(BaseModel):
     id: Optional[str] = None # Original ID from NormalizedDataItem
     original_text: str
     mapped_category: Union[ExpenseCategory, str] # Allow string for flexibility
-    amount: float
+    amount: float # T12 amount
+    amount_t3: Optional[float] = None
+    amount_t6: Optional[float] = None
+    amount_t9: Optional[float] = None
     confidence: float
     audit_log: AuditLog
     user_verified: bool = False  # Track if user has manually verified/corrected this mapping
@@ -413,6 +416,12 @@ class StudentHousingConfig(BaseModel):
     unit_type_configs: List[UnitTypeConfig] = []
 
 # --- 3. Main Analysis Model ---
+class HistoricalSummary(BaseModel):
+    period: str  # T3, T6, T9, T12
+    total_expenses: float = 0.0
+    noi: float = 0.0
+    cap_rate: float = 0.0
+
 class UnderwritingAnalysis(BaseModel):
     document_id: str
     pass_fail_status: str
@@ -470,6 +479,7 @@ class UnderwritingAnalysis(BaseModel):
     historical_noi: Optional[float] = 0.0
     historical_total_expenses: float = 0.0
     historical_cap_rate: Optional[float] = 0.0
+    historical_periods: List[HistoricalSummary] = [] # T3, T6, T9, T12 snapshots
 
     # Sensitivity Analysis
     sensitivity_analysis: Optional[Dict[str, Any]] = None

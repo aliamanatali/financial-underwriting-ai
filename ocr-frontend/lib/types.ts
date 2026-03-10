@@ -170,6 +170,9 @@ export interface StandardizedExpense {
   original_text: string;
   mapped_category: string;
   amount: number;
+  amount_t3?: number;
+  amount_t6?: number;
+  amount_t9?: number;
   confidence: number;
   audit_log: AuditEntry;
   user_verified: boolean;
@@ -294,6 +297,13 @@ export interface Conclusion {
   investment_checklist?: InvestmentChecklist;
 }
 
+export interface HistoricalSummary {
+  period: string; // T3, T6, T9, T12
+  total_expenses: number;
+  noi: number;
+  cap_rate: number;
+}
+
 export interface UnderwritingAnalysis {
   document_id: string;
   pass_fail_status: string;
@@ -311,6 +321,7 @@ export interface UnderwritingAnalysis {
   historical_cap_rate?: number;
   historical_total_expenses?: number;
   pro_forma_expenses?: number;
+  historical_periods?: HistoricalSummary[];
   irr?: number;
   moic?: number;
   cash_on_cash_return?: number;
