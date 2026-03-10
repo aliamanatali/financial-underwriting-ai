@@ -117,11 +117,17 @@ class RentRollItem(BaseModel):
     source_file: Optional[str] = None
     floor: Optional[str] = None
     property_address: Optional[str] = None
+    is_vacant: bool = False
     
-    @validator('unit_number', 'tenant_name', pre=True)
-    def validate_required_string_fields(cls, v):
-        """Handle None/Empty strings for required display fields"""
-        if v is None:
+    @validator('unit_number', pre=True)
+    def validate_unit_number(cls, v):
+        if v is None or str(v).strip() == "":
+            return "N/A"
+        return str(v)
+
+    @validator('tenant_name', pre=True)
+    def validate_tenant_name(cls, v):
+        if v is None or str(v).strip() == "":
             return "Unknown"
         return str(v)
 
@@ -135,12 +141,41 @@ class RentRollItem(BaseModel):
     @validator('current_rent', 'stabilized_rent', 'market_rent', 'deposit', pre=True)
     def validate_rent_fields(cls, v):
         """Ensure rent fields are valid floats, default to 0.0 if None or invalid"""
-        if v is None or v == "":
+        if v is None or v == "" or str(v).strip() == "-":
             return 0.0
         try:
+            # Remove currency symbols and commas
+            if isinstance(v, str):
+                v = v.replace('$', '').replace(',', '').strip()
             return float(v)
         except (ValueError, TypeError):
             return 0.0
+
+    @validator('is_vacant', always=True)
+    def validate_vacancy_consistency(cls, v, values):
+        """Ensure vacancy status is consistent with tenant name, unit type and current rent"""
+        tenant_name = (values.get('tenant_name') or "").lower()
+        unit_type = (values.get('unit_type') or "").lower()
+        current_rent = values.get('current_rent') or 0.0
+        
+        # Keywords that indicate vacancy
+        vacancy_keywords = ["vacant", "vac", "empty", "model"]
+        
+        if v is True:
+            return True
+            
+        # Check if tenant name or unit type explicitly mentions vacancy
+        is_explicitly_vacant = any(kw in tenant_name for kw in vacancy_keywords) or \
+                              any(kw in unit_type for kw in vacancy_keywords)
+        
+        if is_explicitly_vacant:
+            return True
+            
+        # Fallback logic for rent being 0
+        if current_rent == 0 and (not tenant_name or tenant_name == "unknown" or any(kw in tenant_name for kw in vacancy_keywords)):
+            return True
+            
+        return v
 
 class RentRollSummary(BaseModel):
     total_units: int

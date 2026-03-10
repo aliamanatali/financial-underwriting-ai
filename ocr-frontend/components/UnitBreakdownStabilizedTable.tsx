@@ -70,8 +70,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
   }, [rentRoll, isEditing, studentHousingConfig]);
 
   const formatCurrency = (val: number, decimals = 0) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(val);
-  const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 1 }).format(val);
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(Math.round(val));
+  const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(val));
 
   const handleNumericChange = (unitType: string, field: keyof EditableRentRollItem, value: string) => {
     const numericValue = value.replace(/[^0-9.]/g, '');

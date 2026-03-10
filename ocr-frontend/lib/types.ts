@@ -146,6 +146,7 @@ export interface RentRollItem {
   parking?: string;
   comments?: string;
   source_file?: string;
+  is_vacant?: boolean;
 }
 
 export interface RentRollSummary {

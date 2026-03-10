@@ -535,6 +535,10 @@ class FinancialService:
         for item in analysis.rent_roll:
             u_type = item.unit_type or "Unknown"
             
+            # Update vacancy based on tenant name or current rent if not explicitly set
+            if getattr(item, 'is_vacant', None) is None:
+                item.is_vacant = ((item.tenant_name or "").lower() == "vacant" or (item.current_rent == 0 and (not item.tenant_name or (item.tenant_name or "").lower() == "vacant")))
+
             # Use current rent as fallback for market rent if 0 (Fix for Missing Market Rent)
             current = item.current_rent or 0
             market = item.market_rent or 0
@@ -550,7 +554,14 @@ class FinancialService:
             if u_type not in unit_groups:
                 unit_groups[u_type] = []
                 unit_market_rents[u_type] = []
-            unit_groups[u_type].append(current)
+            
+            # Use current if not vacant, else 0
+            is_vacant = getattr(item, 'is_vacant', False)
+            if is_vacant:
+                unit_groups[u_type].append(0.0)
+            else:
+                unit_groups[u_type].append(current)
+                
             unit_market_rents[u_type].append(market)
             
             # Update item in place just in case we need it later
@@ -585,7 +596,8 @@ class FinancialService:
             scaled_count = int(round(raw_count * scaling_factor))
             total_scaled_count += scaled_count
             
-            # Calculate average rent excluding 0s
+            # Calculate average rent excluding units marked as 0 (vacant)
+            # In unit_groups, we already appended 0.0 for vacant units.
             paying_rents = [r for r in rents if r > 0]
             avg_rent = sum(paying_rents) / len(paying_rents) if paying_rents else 0
             mkt_rents = unit_market_rents.get(u_type, [])

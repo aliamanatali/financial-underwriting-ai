@@ -49,11 +49,12 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
 
   // Determine if optional columns have data
   const hasDeposits = rentRoll.some(i => i.deposit && i.deposit > 0);
-  const hasParking = rentRoll.some(i => i.parking && i.parking.trim() !== "");
-  const hasComments = rentRoll.some(i => i.comments && i.comments.trim() !== "");
-  const hasMoveInDate = rentRoll.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-");
+  const hasParking = rentRoll.some(i => i.parking && i.parking.trim() !== "" && i.parking.trim() !== "-");
+  const hasComments = rentRoll.some(i => i.comments && i.comments.trim() !== "" && i.comments.trim() !== "-");
+  const hasMoveInDate = rentRoll.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-" && i.move_in_date.trim().toUpperCase() !== "V");
   // Using explicit type cast to access optional floor property
-  const hasFloor = rentRoll.some(i => (i as any).floor && (i as any).floor.trim() !== "");
+  const hasFloor = rentRoll.some(i => (i as any).floor && (i as any).floor.trim() !== "" && (i as any).floor.trim() !== "-");
+  const hasTenantName = rentRoll.some(i => i.tenant_name && i.tenant_name.trim() !== "" && i.tenant_name.toLowerCase() !== "unknown" && i.tenant_name.trim() !== "-");
 
   return (
     <div className="mt-8">
@@ -76,6 +77,9 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
                 <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_number")}>
                   Unit # {sortField === "unit_number" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
+                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("is_vacant" as any)}>
+                  Vacant {sortField === ("is_vacant" as any) && (sortDirection === "asc" ? "↑" : "↓")}
+                </th>
                 <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_type")}>
                   Type {sortField === "unit_type" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
@@ -89,9 +93,11 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
                 <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("unit_size")}>
                   Size (SF) {sortField === "unit_size" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("tenant_name")}>
-                  Tenant {sortField === "tenant_name" && (sortDirection === "asc" ? "↑" : "↓")}
-                </th>
+                {hasTenantName && (
+                    <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("tenant_name")}>
+                      Tenant {sortField === "tenant_name" && (sortDirection === "asc" ? "↑" : "↓")}
+                    </th>
+                )}
                 <th className="px-4 py-3 cursor-pointer hover:bg-neutral-100 text-center" onClick={() => handleSort("current_rent")}>
                   Current Rent {sortField === "current_rent" && (sortDirection === "asc" ? "↑" : "↓")}
                 </th>
@@ -143,6 +149,14 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
               {sortedRentRoll.map((item, idx) => (
                 <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                   <td className="px-4 py-2.5 font-medium text-neutral-900 text-center">{item.unit_number}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <input
+                        type="checkbox"
+                        checked={item.is_vacant || false}
+                        readOnly
+                        className="w-4 h-4 accent-neutral-900 border-neutral-300 rounded focus:ring-neutral-900"
+                    />
+                  </td>
                   <td className="px-4 py-2.5 text-neutral-600 text-center">{item.unit_type}</td>
                   
                   {hasFloor && (
@@ -150,25 +164,27 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
                   )}
 
                   <td className="px-4 py-2.5 text-center text-neutral-600">{item.unit_size || "-"}</td>
-                  <td className="px-4 py-2.5 text-neutral-900 text-center truncate max-w-[150px] mx-auto" title={item.tenant_name}>{item.tenant_name}</td>
-                  <td className="px-4 py-2.5 text-center font-medium text-neutral-900">{formatCurrency(item.current_rent)}</td>
-                  <td className="px-4 py-2.5 text-center text-neutral-600">{formatCurrency(item.market_rent)}</td>
+                  {hasTenantName && (
+                      <td className="px-4 py-2.5 text-neutral-900 text-center truncate max-w-[150px] mx-auto" title={item.tenant_name}>{item.tenant_name}</td>
+                  )}
+                  <td className="px-4 py-2.5 text-center font-medium text-neutral-900">{formatCurrency(Math.round(item.current_rent))}</td>
+                  <td className="px-4 py-2.5 text-center text-neutral-600">{formatCurrency(Math.round(item.market_rent))}</td>
                   
                   {hasDeposits && (
                     <td className="px-4 py-2.5 text-center text-neutral-600">{item.deposit ? formatCurrency(item.deposit) : "-"}</td>
                   )}
                   {hasParking && (
-                    <td className="px-4 py-2.5 text-neutral-600 text-center truncate max-w-[150px] mx-auto" title={item.parking}>{item.parking || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-center truncate max-w-[150px] mx-auto" title={item.parking}>{(item.parking && item.parking !== "-") ? item.parking : "-"}</td>
                   )}
                   {hasComments && (
-                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center truncate max-w-[200px] mx-auto" title={item.comments}>{item.comments || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center truncate max-w-[200px] mx-auto" title={item.comments}>{(item.comments && item.comments !== "-") ? item.comments : "-"}</td>
                   )}
                   {hasMoveInDate && (
-                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.move_in_date) || "-"}</td>
+                    <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{(formatDateOnly(item.move_in_date) && formatDateOnly(item.move_in_date).toUpperCase() !== "V") ? formatDateOnly(item.move_in_date) : "-"}</td>
                   )}
 
-                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.lease_start) || "-"}</td>
-                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{formatDateOnly(item.lease_end) || "-"}</td>
+                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{(formatDateOnly(item.lease_start) && formatDateOnly(item.lease_start).toUpperCase() !== "V") ? formatDateOnly(item.lease_start) : "-"}</td>
+                  <td className="px-4 py-2.5 text-neutral-600 text-xs text-center">{(formatDateOnly(item.lease_end) && formatDateOnly(item.lease_end).toUpperCase() !== "V") ? formatDateOnly(item.lease_end) : "-"}</td>
                   <td className="px-4 py-2.5 text-xs text-neutral-500 max-w-[200px] truncate text-center" title={item.source_file}>
                     {item.source_file ? (
                       <span className="inline-flex items-center justify-center gap-1.5 px-2 py-0.5 rounded-md bg-neutral-100 border border-neutral-200 text-neutral-600 mx-auto">

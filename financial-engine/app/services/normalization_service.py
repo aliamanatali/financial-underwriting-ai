@@ -780,6 +780,20 @@ class NormalizationService:
             #     elif u_type.lower().endswith("-vacant"):
             #         u_type = u_type[:-7].strip()
 
+            # Determine vacancy status explicitly during normalization
+            u_type_raw = str(item.get("unit_type", "")).lower()
+            t_name_raw = str(item.get("tenant_name", "")).lower()
+            vacancy_keywords = ["vacant", "vac", "empty", "model"]
+            
+            is_vacant_val = item.get("is_vacant", False)
+            if not is_vacant_val:
+                # If not already True, check keywords
+                if any(kw in u_type_raw for kw in vacancy_keywords) or \
+                   any(kw in t_name_raw for kw in vacancy_keywords):
+                    is_vacant_val = True
+                elif current_rent_val == 0 and (not t_name_raw or t_name_raw == "unknown"):
+                    is_vacant_val = True
+
             rent_roll_item_data = {
                 "unit_number": item.get("unit_number") or "N/A",
                 "unit_type": item.get("unit_type") or "Unknown",
@@ -791,6 +805,7 @@ class NormalizationService:
                 "move_in_date": item.get("move_in_date", ""),
                 "lease_start": item["lease_start"], # Already defaulted above
                 "lease_end": item.get("lease_end", ""),
+                "is_vacant": is_vacant_val
             }
             
             try:

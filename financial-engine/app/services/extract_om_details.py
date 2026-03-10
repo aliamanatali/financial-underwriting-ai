@@ -23,6 +23,7 @@ class OMScraperService:
         1. Identify the Proforma tables.
         2. Extract each scenario (column) as a separate object.
         3. For each scenario, extract all rows (Income items, Expense items, NOI, etc.).
+        4. CRITICAL: Be extremely thorough in finding all Operating Expenses (e.g., Real Estate Taxes, Insurance, Repairs & Maintenance, Utilities, Management Fees, Payroll, General & Administrative, Contract Services, Advertising, etc.).
         
         The structure should be:
         [
@@ -113,6 +114,7 @@ class OMScraperService:
         1. Identify the Proforma tables.
         2. Extract each scenario (column) as a separate object.
         3. For each scenario, extract all rows (Income items, Expense items, NOI, etc.).
+        4. CRITICAL: Be extremely thorough in finding all Operating Expenses. Common categories include: Taxes, Insurance, Utilities, Repairs/Maintenance, Management, Payroll, Marketing, etc.
         
         The structure should be:
         [
@@ -193,7 +195,8 @@ class OMScraperService:
            
            For each row in the DETAILED Rent Roll:
              - unit_number: The specific identifier (e.g. "101"). REQUIRED.
-             - unit_type: Extract the EXACT text from the document (e.g. "Studio", "1 Bed"). Do not normalize to "1BD/1BA" unless that is what is written. IF VACANT: Append " - Vacant" to the unit type.
+             - unit_type: Extract the EXACT text from the document (e.g. "Studio", "1 Bed"). Do not normalize to "1BD/1BA" unless that is what is written.
+             - is_vacant: (boolean) Set to true if the unit is vacant, false otherwise.
              - current_rent: Actual monthly rent. If VACANT, this might be 0 or empty.
              - market_rent: Market/Pro Forma monthly rent. Look for "Market", "Pro Forma", "Street Rent", "Potential Rent".
              - stabilized_rent: Stabilized/Post-Renovation monthly rent. Look for "Stabilized", "Year 2", "Post-Reno".
@@ -205,7 +208,7 @@ class OMScraperService:
              
            VACANCY HANDLING:
            - Check "Status", "Tenant Name", or "Notes" columns for "Vacant", "VAC", "Model", "Empty".
-           - If a unit is VACANT, ensure " - Vacant" is added to the 'unit_type' field (e.g. "1BD/1BA - Vacant").
+           - If a unit is VACANT, set "is_vacant" to true.
 
            ONLY if a detailed rent roll is completely missing from the document, fallback to the Unit Mix summary.
         
@@ -223,6 +226,7 @@ class OMScraperService:
                 {{
                     "unit_number": "101",
                     "unit_type": "1BD/1BA",
+                    "is_vacant": false,
                     "count": 1,
                     "current_rent": 1500,
                     "market_rent": 1800,

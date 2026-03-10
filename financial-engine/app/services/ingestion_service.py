@@ -849,6 +849,39 @@ class IngestionService:
         property_meta, raw_expenses, pnl_income, om_proforma, tax_assumptions = results_phase1
         logger.info(f"Phase 1 Complete. Extracted Property: {property_meta.address}, Expenses: {len(raw_expenses)}")
 
+        # OM EXPENSE INTEGRATION:
+        # If we have OM Proforma data, convert appropriate rows to raw expenses
+        # This ensures they are normalized and included in the historical_expenses list.
+        if om_proforma:
+            om_raw_expenses = []
+            for table in om_proforma:
+                # Prioritize "Current", "T12", "Historical", or "Actual" scenarios
+                scenario_name = str(table.get("scenario_name", "")).lower()
+                is_historical = any(kw in scenario_name for kw in ["current", "t12", "historical", "actual"])
+                
+                # If only one table exists, or it's historical, extract rows
+                if is_historical or len(om_proforma) == 1:
+                    for row in table.get("rows", []):
+                        name = str(row.get("row_name", ""))
+                        amount = row.get("annual", 0)
+                        
+                        # Filter for likely operating expenses
+                        name_lower = name.lower()
+                        exclude_keywords = ["income", "revenue", "noi", "operating income", "profit", "cap rate", "grm", "price", "occupancy", "vacancy", "rent"]
+                        
+                        if amount and amount > 0 and not any(kw in name_lower for kw in exclude_keywords):
+                            om_raw_expenses.append({
+                                "description": name, # Keep original name for normalization
+                                "amount": amount,
+                                "source_document": f"Offering Memorandum Proforma ({scenario_name})"
+                            })
+            
+            if om_raw_expenses:
+                logger.info(f"Adding {len(om_raw_expenses)} additional expenses from OM Proforma for normalization")
+                if not raw_expenses:
+                    raw_expenses = []
+                raw_expenses.extend(om_raw_expenses)
+
         # 6. Execute Phase 2 Parallel Tasks (Dependent on Property Meta)
         # Rent Roll extraction relies on total_units from property_meta for better context
         
