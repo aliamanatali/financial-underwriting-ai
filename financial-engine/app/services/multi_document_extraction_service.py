@@ -1776,8 +1776,8 @@ class MultiDocumentExtractionService:
         if errors:
             logger.warning(f"Encountered {len(errors)} errors during processing: {errors}")
         
-        if not all_expenses:
-            logger.warning("No expenses were extracted from any document")
+        if not all_expenses and not pre_normalized_items:
+            logger.warning("No expenses or key data were extracted from any document")
             # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")

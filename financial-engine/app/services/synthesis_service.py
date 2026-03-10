@@ -623,8 +623,14 @@ class SynthesisService:
             source_doc = item.source_document
             doc_score = self._get_document_score(source_doc)
             
+            # Priority Boost: User-Verified items always win over AI extractions
+            if item.user_verified:
+                doc_score += 2000
+            
             # Get normalized value and raw text for matching
-            normalized_val = item.normalized_value.lower() if item.normalized_value else ""
+            # Priority: User Correction > Normalized Value
+            val_to_use = item.user_correction or item.normalized_value
+            normalized_val = val_to_use.lower() if val_to_use else ""
             raw_text = item.raw_text.lower() if item.raw_text else ""
             
             # Extract amount from metadata if available
@@ -1034,10 +1040,17 @@ class SynthesisService:
         
         for item in normalized_items:
             # Check if this is a rent roll item
-            if item.field_type == "rent_roll_item" or (
+            # Support user re-categorization to/from rent roll
+            is_rent_roll = item.field_type == "rent_roll_item" or (
                 item.metadata and
                 item.metadata.get("is_rent_roll_item", False)
-            ):
+            )
+            
+            # If user corrected it to a Rent Roll category (though usually rent rolls are handled differently)
+            if item.user_correction == "Rent Roll":
+                is_rent_roll = True
+
+            if is_rent_roll:
                 try:
                     # Extract rent roll data from metadata
                     if item.metadata:

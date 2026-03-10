@@ -1021,7 +1021,7 @@ export default function RentRollWidget({
                  <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold whitespace-nowrap">
                  <th className="px-4 py-3 text-center min-w-[150px]">Unit #</th>
                  <th className="px-4 py-3 text-center">Vacant</th>
-                 {hasTenantName && !isEditing.details && !isNonOMFlow && <th className="px-4 py-3 text-center">Tenant</th>}
+                 {hasTenantName && !isEditing.details && isNonOMFlow && <th className="px-4 py-3 text-center">Tenant</th>}
                  <th className="px-4 py-3 text-center">Unit Size</th>
                  <th className="px-4 py-3 text-center">Unit Type</th>
                  <th className="px-4 py-3 text-center">Current Rent</th>
@@ -1078,7 +1078,7 @@ export default function RentRollWidget({
                        hasComments={hasComments}
                        hasMoveInDate={hasMoveInDate}
                        hasFloor={hasFloor}
-                       hasTenantName={hasTenantName && !isNonOMFlow}
+                       hasTenantName={hasTenantName && isNonOMFlow}
                      />
                    ))}
                  </SortableContext>
@@ -1094,7 +1094,7 @@ export default function RentRollWidget({
                 {/* Header Row */}
                 <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
                   <td className="px-4 py-3 text-center">Total Units</td>
-                  <td colSpan={(hasTenantName && !isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
+                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Avg Unit Size</td>
                   <td colSpan={1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Current Rent</td>
@@ -1107,7 +1107,7 @@ export default function RentRollWidget({
                   <td className="px-4 py-3 text-center">
                     <div className="font-bold text-lg">{displaySummary.total_units}</div>
                   </td>
-                  <td colSpan={(hasTenantName && !isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
+                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">
                      <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
                   </td>

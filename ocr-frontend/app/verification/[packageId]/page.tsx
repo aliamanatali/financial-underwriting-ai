@@ -2,10 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
+
+const ExpensesVerificationWidget = dynamic(() => import("@/components/ExpensesVerificationWidget"), {
+  ssr: false,
+});
+
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
 const AVAILABLE_CATEGORIES = [
@@ -229,6 +235,84 @@ export default function VerificationPage() {
     }
   };
 
+  // Handle updates from ExpensesVerificationWidget
+  const handleUpdateItems = async (updatedItems: NormalizedDataItem[]) => {
+    // For now, we update them one by one, but we could add a batch endpoint
+    for (const item of updatedItems) {
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${item.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              user_correction: item.user_correction || item.normalized_value,
+              payload: {
+                amount: item.metadata?.amount,
+                raw_text: item.raw_text,
+                category_group: item.category_group
+              }
+            }),
+          }
+        );
+
+        if (response.ok) {
+          // Update local state
+          setNormalizedItems((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
+          );
+        }
+      } catch (err) {
+        console.error("Error updating item:", err);
+      }
+    }
+  };
+
+  // Handle adding a manual expense
+  const handleAddManualExpense = async (newItem: Partial<NormalizedDataItem>) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/add-normalized-item`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(newItem),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        // Add to local state
+        setNormalizedItems((prev) => [...prev, data.item]);
+      }
+    } catch (err) {
+      console.error("Error adding manual expense:", err);
+    }
+  };
+
+  // Handle removing an item
+  const handleRemoveItem = async (itemId: string) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/remove-normalized-item/${itemId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.ok) {
+        // Remove from local state
+        setNormalizedItems((prev) => prev.filter((i) => i.id !== itemId));
+      }
+    } catch (err) {
+      console.error("Error removing item:", err);
+    }
+  };
+
   // Edit item category
   const handleEditItem = (itemId: string, currentCategory: string) => {
     setEditingItem(itemId);
@@ -328,8 +412,8 @@ export default function VerificationPage() {
         throw new Error("Failed to regenerate financial report");
       }
 
-      // Redirect to analysis page after successful regeneration
-      router.push(`/analysis/${packageId}`);
+      // Redirect to home page after successful regeneration as requested
+      router.push("/");
       
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report regeneration failed");
@@ -607,7 +691,17 @@ export default function VerificationPage() {
               </div>
             ) : (
               // Data Tables by Section
-              <div className="space-y-8">
+              <div className="space-y-12">
+                {/* New Expenses Verification Box */}
+                <ExpensesVerificationWidget
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
+                />
+
                 <DataVerificationTable
                   items={normalizedItems}
                   availableCategories={AVAILABLE_CATEGORIES}

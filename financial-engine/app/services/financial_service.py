@@ -50,8 +50,17 @@ class FinancialService:
         pnl_expenses = []
         raw_bill_expenses = []
         
+        manual_entries = []
+        verified_any_source = []
         for exp in expenses:
             src = (exp.source_document or "").upper()
+            is_verified = hasattr(exp, 'user_verified') and exp.user_verified
+            
+            if "MANUAL" in src:
+                manual_entries.append(exp)
+            elif is_verified:
+                verified_any_source.append(exp)
+            
             if "OM" in src or "OFFERING" in src or "MEMORANDUM" in src:
                 om_expenses.append(exp)
             elif any(kw in src for kw in ["P&L", "PL ", "T12", "STATEMENT", "OPERATING"]):
@@ -62,8 +71,12 @@ class FinancialService:
         # Priority 1: OM Primacy
         # If we have substantial data from OM, we use OM ONLY.
         if len(om_expenses) > 5:
-            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources.")
-            expenses = om_expenses
+            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources (except verified items).")
+            # Keep OM expenses + manual entries + any item verified by user from other sources
+            # Use a set of IDs to avoid duplicates if a verified item is also in om_expenses
+            seen_ids = {e.id for e in om_expenses if hasattr(e, 'id') and e.id}
+            others_to_keep = [e for e in (manual_entries + verified_any_source) if not (hasattr(e, 'id') and e.id in seen_ids)]
+            expenses = om_expenses + others_to_keep
         
         # Priority 2: T12/P&L Primacy over Raw Bills
         # If we have a P&L, we should ignore ALL raw bills for expenses.
@@ -96,7 +109,7 @@ class FinancialService:
                 else:
                     logger.debug(f"Hierarchy: Discarding raw expense item: {exp.original_text}")
             
-            expenses = pnl_expenses + filtered_raw_bills
+            expenses = pnl_expenses + filtered_raw_bills + manual_entries
         
         # --- Step 1: Year-Based Filtering ---
         # Collect years from all expenses
@@ -151,6 +164,13 @@ class FinancialService:
         for category, items in by_category.items():
             if len(items) <= 1:
                 final_expenses.extend(items)
+                continue
+            
+            # Priority 0: User-Verified Items always win
+            verified_items = [i for i in items if hasattr(i, 'user_verified') and i.user_verified]
+            if verified_items:
+                logger.info(f"Deduplicating {category}: Keeping {len(verified_items)} user-verified items.")
+                final_expenses.extend(verified_items)
                 continue
             
             # --- Strategy 0.5: Frequency-Based Deduplication (Duplicate Entries) ---

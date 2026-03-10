@@ -525,6 +525,7 @@ export default function AnalysisResultPage() {
                 onAnalysisUpdate={(newAnalysis) => {
                     console.log("Updating analysis state from verification", newAnalysis);
                     setAnalysis(newAnalysis);
+                    setActiveTab("dashboard");
                 }}
               />
             )}

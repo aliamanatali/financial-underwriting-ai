@@ -741,8 +741,14 @@ async def normalize_package_documents(
         
         logger.info(f"Financial report generated successfully for package {package_id}")
         
-        # Return the analysis result instead of normalization result
-        return analysis_result
+        # Return a combined result so frontend gets both the analysis AND the normalized items for verification
+        return {
+            "analysis": analysis_result.model_dump(),
+            "normalized_items": package.financials_data,
+            "total_items": len(package.financials_data),
+            "verified_items": 0,
+            "confidence_average": 0.0
+        }
         
     except Exception as e:
         logger.error(f"Error generating financial report: {str(e)}", exc_info=True)
@@ -776,13 +782,35 @@ async def verify_normalized_item(
         raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
     package = DealPackage(**package_data)
     
-    # Find and update the item in normalized_data
+    # Find and update the item in both lists to ensure consistency
     item_found = False
-    for item in package.normalized_data:
+    
+    # Target lists to update
+    lists_to_update = [package.normalized_data]
+    if hasattr(package, 'financials_data') and package.financials_data:
+        lists_to_update.append(package.financials_data)
+        
+    for data_list in lists_to_update:
+      for item in data_list:
         if item.id == item_id:
             item.user_verified = True
             if user_correction is not None:
                 item.user_correction = user_correction
+            
+            # Handle additional fields from payload
+            if payload:
+                if "amount" in payload:
+                    if item.metadata is None:
+                        item.metadata = {}
+                    item.metadata["amount"] = payload["amount"]
+                if "raw_text" in payload:
+                    item.raw_text = payload["raw_text"]
+                if "category_group" in payload:
+                    try:
+                        from app.models.schemas import CategoryGroup
+                        item.category_group = CategoryGroup(payload["category_group"])
+                    except: pass
+            
             item_found = True
             break
             
@@ -813,6 +841,7 @@ async def verify_items_batch(
 ):
     """
     Batch verify multiple normalized items at once.
+    Supports updating amounts and raw text as well.
     """
     # Load from storage
     package_data = await storage_service.get_deal_package(package_id)
@@ -825,15 +854,39 @@ async def verify_items_batch(
     not_found_ids = []
     
     # Create a map of item_id to verification data for quick lookup
-    verification_map = {item.get("item_id"): item.get("user_correction") for item in items if item.get("item_id")}
+    verification_map = {item.get("item_id"): item for item in items if item.get("item_id")}
     
-    # Update all items in a single pass
-    for item in package.normalized_data:
+    # Update all items in both lists to ensure consistency
+    # Target lists to update
+    lists_to_update = [package.normalized_data]
+    if hasattr(package, 'financials_data') and package.financials_data:
+        lists_to_update.append(package.financials_data)
+
+    for data_list in lists_to_update:
+      for item in data_list:
         if item.id in verification_map:
+            item_data = verification_map[item.id]
             item.user_verified = True
-            user_correction = verification_map[item.id]
+            
+            user_correction = item_data.get("user_correction")
             if user_correction is not None:
                 item.user_correction = user_correction
+            
+            # Handle payload/additional fields
+            payload = item_data.get("payload")
+            if payload:
+                if "amount" in payload:
+                    if item.metadata is None:
+                        item.metadata = {}
+                    item.metadata["amount"] = payload["amount"]
+                if "raw_text" in payload:
+                    item.raw_text = payload["raw_text"]
+                if "category_group" in payload:
+                    try:
+                        from app.models.schemas import CategoryGroup
+                        item.category_group = CategoryGroup(payload["category_group"])
+                    except: pass
+                    
             verified_count += 1
     
     # Check for items that weren't found
@@ -858,6 +911,85 @@ async def verify_items_batch(
         "verification_progress": package.verification_progress,
         "not_found_ids": not_found_ids,
         "message": f"Successfully verified {verified_count} items"
+    }
+
+
+@router.post("/packages/{package_id}/add-normalized-item")
+async def add_normalized_item(
+    package_id: str,
+    item: Dict[str, Any]
+):
+    """
+    Add a new normalized item to a package manually.
+    """
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
+    
+    # Create new item
+    import uuid
+    from app.models.schemas import NormalizedDataItem, CategoryGroup, DataClassification
+    
+    new_item = NormalizedDataItem(
+        id=str(uuid.uuid4()),
+        raw_text=item.get("raw_text", "Manual Entry"),
+        normalized_value=item.get("normalized_value", "Uncategorized"),
+        field_type=item.get("field_type", "expense_category"),
+        category_group=CategoryGroup(item.get("category_group", "Operating Expense")),
+        data_classification=DataClassification.SOURCED,
+        confidence=1.0,
+        user_verified=True,
+        source_document=item.get("source_document", "Manual Entry"),
+        metadata=item.get("metadata", {})
+    )
+    
+    # Add to package
+    package.normalized_data.append(new_item)
+    
+    # If it's a financial item, also add to financials_data
+    if new_item.category_group in ["Operating Expense", "Tax & Insurance", "Revenue"]:
+        if not hasattr(package, 'financials_data') or package.financials_data is None:
+            package.financials_data = []
+        package.financials_data.append(new_item)
+
+    # Save changes
+    await storage_service.save_deal_package(package.model_dump())
+    
+    return {
+        "message": "Item added successfully",
+        "item": new_item.model_dump()
+    }
+
+
+@router.delete("/packages/{package_id}/remove-normalized-item/{item_id}")
+async def remove_normalized_item(
+    package_id: str,
+    item_id: str
+):
+    """
+    Remove a normalized item from a package.
+    """
+    # Load from storage
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+    package = DealPackage(**package_data)
+    
+    # Remove from normalized_data
+    package.normalized_data = [i for i in package.normalized_data if i.id != item_id]
+    
+    # Remove from financials_data if present
+    if hasattr(package, 'financials_data') and package.financials_data:
+        package.financials_data = [i for i in package.financials_data if i.id != item_id]
+
+    # Save changes
+    await storage_service.save_deal_package(package.model_dump())
+    
+    return {
+        "message": "Item removed successfully",
+        "item_id": item_id
     }
 
 
@@ -1394,7 +1526,8 @@ async def _analyze_deal_package_logic(
     await update_progress(20, "Aggregating package data...")
     
     # Financials (Expenses)
-    normalized_items = package.financials_data if package.financials_data else package.normalized_data
+    # Prefer normalized_data as it is the source of truth for user verifications/corrections
+    normalized_items = package.normalized_data if package.normalized_data else package.financials_data
     
     # Rent Roll
     rent_roll_items = package.rent_roll_data
@@ -1468,6 +1601,10 @@ async def _analyze_deal_package_logic(
                 # Prepare candidates with context
                 candidates_to_verify = []
                 for item in items:
+                    # NEW: Skip items already verified by user. User is ALWAYS right.
+                    if item.user_verified:
+                        continue
+
                     # OPTIMIZATION: Skip very small/zero items that are already "Other"
                     # We want to verify High Stakes values (Price, Units, Large Expenses)
                     amount = item.metadata.get("amount", 0.0)
@@ -1681,12 +1818,13 @@ async def _analyze_deal_package_logic(
                     
                     logger.info(f"Verified Purchase Price: ${v_val:,.2f} (Conf: {v_conf})")
                     
-                    # Update synthesized metadata
-                    synthesized_metadata["purchase_price"] = {
-                        "value": v_val,
-                        "source": f"Verified: {v_source}",
-                        "score": 999 # Highest priority
-                    }
+                    # Update synthesized metadata - Only if user hasn't manually verified a price already
+                    if synthesized_metadata.get("purchase_price", {}).get("score", 0) < 2000:
+                        synthesized_metadata["purchase_price"] = {
+                            "value": v_val,
+                            "source": f"Verified: {v_source}",
+                            "score": 999 # High priority for AI-verified
+                        }
 
                     verification_audit_logs.append({
                         "field_name": "Purchase Price (Verified)",
@@ -1781,11 +1919,13 @@ async def _analyze_deal_package_logic(
                     
                     logger.info(f"Verified Year Built: {v_val} (Conf: {v_conf})")
                     
-                    synthesized_metadata["year_built"] = {
-                        "value": v_val,
-                        "source": f"Verified: {v_source}",
-                        "score": 999
-                    }
+                    # Update synthesized metadata - Only if user hasn't manually verified a year built already
+                    if synthesized_metadata.get("year_built", {}).get("score", 0) < 2000:
+                        synthesized_metadata["year_built"] = {
+                            "value": v_val,
+                            "source": f"Verified: {v_source}",
+                            "score": 999
+                        }
                     
                     verification_audit_logs.append({
                         "field_name": "Year Built (Verified)",
@@ -1922,17 +2062,19 @@ async def _analyze_deal_package_logic(
     # Parse normalized items for expenses only (property metadata already synthesized)
     for item in normalized_items:
         # Check if this is an expense item
-        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group == "Operating Expense"):
+        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group in ["Operating Expense", "Tax & Insurance"]):
             try:
                 # Parse the category
                 # Fallback to Other OpEx if unknown
                 try:
-                    category = ExpenseCategory(item.normalized_value)
+                    # Priority: User Correction > Normalized Value
+                    category_to_use = item.user_correction or item.normalized_value
+                    category = ExpenseCategory(category_to_use)
                 except ValueError:
                     category = ExpenseCategory.OTHER_OPERATING_EXPENSES
                 
                 # If the normalized_value is MARKETING or ADVERTISING (legacy), remap it to ADVERTISING_MARKETING
-                if item.normalized_value in ["Marketing", "Advertising"]:
+                if (item.user_correction or item.normalized_value) in ["Marketing", "Advertising"]:
                     category = ExpenseCategory.ADVERTISING_MARKETING
                 
                 # Use amount from metadata if available, otherwise parse from text
@@ -1942,7 +2084,8 @@ async def _analyze_deal_package_logic(
                     if val is not None:
                         amount = sanitize_float(val)
                 
-                if amount == 0.0 and "$" in item.raw_text:
+                # Parser Fallback (Only if not verified by user)
+                if amount == 0.0 and not item.user_verified and "$" in item.raw_text:
                     amount_str = item.raw_text.split("$")[-1].replace(",", "").strip()
                     amount = sanitize_float(amount_str)
                     if amount == 0.0:
@@ -1959,6 +2102,7 @@ async def _analyze_deal_package_logic(
                 expense_year = item.metadata.get("expense_year") if item.metadata else None
 
                 expense = StandardizedExpense(
+                    id=item.id,
                     original_text=item.raw_text,
                     mapped_category=category,
                     amount=amount,
@@ -2129,13 +2273,9 @@ async def _analyze_deal_package_logic(
             except Exception as e:
                 logger.warning(f"Failed to restore student housing config from analysis: {e}")
         
-        # Restore Commentary & Memo (Avoid regeneration)
-        existing_commentary = existing_analysis_dict.get("analyst_commentary")
-        existing_memo = existing_analysis_dict.get("investment_memo")
-        if existing_commentary:
-            logger.info("Preserving existing analyst commentary.")
-        if existing_memo:
-            logger.info("Preserving existing investment memo.")
+        # We want to regenerate commentary and memo to reflect updated values
+        existing_commentary = None
+        existing_memo = None
 
     # Create analysis object
     analysis = UnderwritingAnalysis(
@@ -2272,16 +2412,16 @@ async def _analyze_deal_package_logic(
     if analysis.pass_fail_status != "FAIL":
         analysis.pass_fail_status = "PASS"
     
-    package.normalization_status = "completed"
-    package.updated_at = datetime.utcnow().isoformat()
-    
     # Save the analysis result separately so it can be retrieved later
     analysis_dict = analysis.model_dump()
     await storage_service.save_analysis_result(package_id, analysis_dict)
     
-    # Update and persist package
-    package_dict = package.model_dump()
-    await storage_service.save_deal_package(package_dict)
+    # Only update package status if it wasn't already completed
+    # This avoids overwriting user verifications that might have happened during analysis
+    # Always set status to completed and update timestamp
+    # Use a targeted update to avoid overwriting user verifications (race condition)
+    # We implement update_deal_package_status in storage_service to handle this
+    await storage_service.update_deal_package_status(package_id, "completed")
     
     logger.info(f"Multi-document analysis complete for package {package_id}")
     logger.info(f"Final status: {analysis.pass_fail_status}")

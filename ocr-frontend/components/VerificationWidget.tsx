@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
+
+const ExpensesVerificationWidget = dynamic(() => import("@/components/ExpensesVerificationWidget"), {
+  ssr: false,
+});
+
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
 const AVAILABLE_CATEGORIES = [
@@ -223,6 +229,84 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
       setEditingItem(null);
     } catch (err) {
       console.error("Error verifying item:", err);
+    }
+  };
+
+  // Handle updates from ExpensesVerificationWidget
+  const handleUpdateItems = async (updatedItems: NormalizedDataItem[]) => {
+    // For now, we update them one by one, but we could add a batch endpoint
+    for (const item of updatedItems) {
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${item.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              user_correction: item.user_correction || item.normalized_value,
+              payload: {
+                amount: item.metadata?.amount,
+                raw_text: item.raw_text,
+                category_group: item.category_group
+              }
+            }),
+          }
+        );
+
+        if (response.ok) {
+          // Update local state
+          setNormalizedItems((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
+          );
+        }
+      } catch (err) {
+        console.error("Error updating item:", err);
+      }
+    }
+  };
+
+  // Handle adding a manual expense
+  const handleAddManualExpense = async (newItem: Partial<NormalizedDataItem>) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/add-normalized-item`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(newItem),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        // Add to local state
+        setNormalizedItems((prev) => [...prev, data.item]);
+      }
+    } catch (err) {
+      console.error("Error adding manual expense:", err);
+    }
+  };
+
+  // Handle removing an item
+  const handleRemoveItem = async (itemId: string) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/remove-normalized-item/${itemId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.ok) {
+        // Remove from local state
+        setNormalizedItems((prev) => prev.filter((i) => i.id !== itemId));
+      }
+    } catch (err) {
+      console.error("Error removing item:", err);
     }
   };
 
@@ -468,7 +552,17 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
         </div>
       ) : (
         // Data Tables by Section
-        <div className="space-y-8">
+        <div className="space-y-12">
+          {/* New Expenses Verification Box */}
+          <ExpensesVerificationWidget
+            items={normalizedItems}
+            availableCategories={AVAILABLE_CATEGORIES}
+            onUpdateExpenses={handleUpdateItems}
+            onAddExpense={handleAddManualExpense}
+            onRemoveExpense={handleRemoveItem}
+            onRegenerate={handleRegenerateReport}
+          />
+
           <DataVerificationTable
             items={normalizedItems}
             availableCategories={AVAILABLE_CATEGORIES}

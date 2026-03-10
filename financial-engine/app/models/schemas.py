@@ -234,6 +234,7 @@ class DealParameters(BaseModel):
     max_build_year: int = 1970
 
 class StandardizedExpense(BaseModel):
+    id: Optional[str] = None # Original ID from NormalizedDataItem
     original_text: str
     mapped_category: Union[ExpenseCategory, str] # Allow string for flexibility
     amount: float
