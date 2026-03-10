@@ -344,7 +344,10 @@ export default function VerificationPage() {
           body: JSON.stringify(
             unverifiedItems.map(item => ({
               item_id: item.id,
-              user_correction: null
+              user_correction: null,
+              payload: {
+                category_group: item.category_group
+              }
             }))
           ),
         }

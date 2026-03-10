@@ -166,12 +166,36 @@ class FinancialService:
                 final_expenses.extend(items)
                 continue
             
-            # Priority 0: User-Verified Items always win
+            # Priority 0: Separate User-Verified Items
             verified_items = [i for i in items if hasattr(i, 'user_verified') and i.user_verified]
+            unverified_items = [i for i in items if not (hasattr(i, 'user_verified') and i.user_verified)]
+            
+            # If we have verified items, we still want to keep other non-duplicate items
+            # but for certain categories like Tax/Insurance, verified items should indeed be the only ones.
             if verified_items:
-                logger.info(f"Deduplicating {category}: Keeping {len(verified_items)} user-verified items.")
-                final_expenses.extend(verified_items)
-                continue
+                # Handle potential string or enum category comparison
+                is_fixed_category = any(
+                    (category == c or str(category) == str(c) or str(category) == c.value)
+                    for c in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE, ExpenseCategory.MANAGEMENT_FEES]
+                )
+                
+                if is_fixed_category:
+                    logger.info(f"Deduplicating {category}: Keeping {len(verified_items)} user-verified items and discarding others.")
+                    # If multiple verified items exist for these fixed categories, we take the LATEST one (highest index)
+                    # as it's likely the most recent user edit.
+                    final_expenses.append(verified_items[-1])
+                    continue
+                else:
+                    # For variable categories, we keep verified items
+                    # and then process unverified ones, but we should deduplicate against verified items too.
+                    final_expenses.extend(verified_items)
+                    
+                    # Deduplicate unverified items against verified ones (by amount)
+                    verified_amounts = {round(i.amount, 2) for i in verified_items}
+                    items = [i for i in unverified_items if round(i.amount, 2) not in verified_amounts]
+                    
+                    if not items:
+                        continue
             
             # --- Strategy 0.5: Frequency-Based Deduplication (Duplicate Entries) ---
             # Fix for "Fire alarm monitoring extracted 30 times" and "Duplicate Property Tax entries"
@@ -249,7 +273,8 @@ class FinancialService:
                  # Max plausible insurance is ~$2,500/unit/year.
                  # We don't have unit count here easily, but we can check absolute outliers.
                  # $100k for insurance on a single building is suspicious unless it's huge.
-                 if category == ExpenseCategory.INSURANCE and largest.amount > 100000:
+                 # CRITICAL: Never ignore user-verified values, even if they seem high.
+                 if category == ExpenseCategory.INSURANCE and largest.amount > 100000 and not getattr(largest, 'user_verified', False):
                      # Check if we have a smaller, more reasonable item?
                      reasonable_items = [i for i in items if 1000 < i.amount < 50000]
                      if reasonable_items:
@@ -791,19 +816,24 @@ class FinancialService:
 
         if analysis.historical_expenses:
             has_t12_data = True
-            for expense in analysis.historical_expenses:
-                # Skip if it's Taxes or Mgmt Fee - we use the calculated values above
-                # Also skip Debt/Loan Balance items that shouldn't be in OpEx
+            
+            # Group items by category to prioritize verified ones
+            from collections import defaultdict
+            items_by_cat = defaultdict(list)
+            for exp in analysis.historical_expenses:
+                cat_val = exp.mapped_category.value if hasattr(exp.mapped_category, 'value') else str(exp.mapped_category)
+                items_by_cat[cat_val].append(exp)
+            
+            for cat_name, items in items_by_cat.items():
+                # Identify first item to check category type (for exclusions)
+                first_item = items[0]
                 
-                # Handle Enum or String category
-                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
-
                 # --- FIX: Strict Exclusion Logic ---
                 # Exclude Taxes/Mgmt (calculated separately)
                 # Exclude Non-OpEx categories (Debt, Reserves, Uncategorized, Property Info)
                 
                 # Check Enum exclusions
-                if expense.mapped_category in [
+                if first_item.mapped_category in [
                     ExpenseCategory.REAL_ESTATE_TAXES,
                     ExpenseCategory.MANAGEMENT_FEES,
                     ExpenseCategory.CURRENT_LOAN_BALANCE,
@@ -824,7 +854,7 @@ class FinancialService:
                     continue
                 
                 # Additional String Checks (Case-insensitive for safety)
-                cat_val_lower = cat_val.lower()
+                cat_val_lower = cat_name.lower()
                 if any(x in cat_val_lower for x in [
                     "debt", "mortgage", "non-operating", "capital expenditure",
                     "depreciation", "amortization", "uncategorized",
@@ -832,25 +862,35 @@ class FinancialService:
                 ]):
                     continue
                 
+                # Exclude Revenue keywords
+                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
+                    continue
+
                 # Check for critical categories
-                if expense.mapped_category == ExpenseCategory.PAYROLL:
-                    has_payroll = True
+                verified_in_cat = [i for i in items if getattr(i, 'user_verified', False)]
                 
-                # Exclude Revenue keywords
-                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
-                    continue
-
-                # Exclude Revenue keywords
-                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
-                    continue
-
-                # Check for marketing (flexible match)
-                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
-                if cat_val == ExpenseCategory.ADVERTISING_MARKETING.value or "Marketing" in cat_val or "Advertising" in cat_val:
-                    has_marketing = True
+                if verified_in_cat:
+                    # PRIORITY: If user verified/edited items in this category, use ONLY those.
+                    # This ensures that edited values completely replace unverified ones.
+                    cat_total = sum(i.amount for i in verified_in_cat)
+                    logger.info(f"Priority: Using {len(verified_in_cat)} user-verified items for category '{cat_name}' (Total: ${cat_total})")
                     
-                cat_name = cat_val # Use the safely extracted string value
-                other_expenses_map[cat_name] = other_expenses_map.get(cat_name, 0.0) + expense.amount
+                    # Update trackers
+                    if any(i.mapped_category == ExpenseCategory.PAYROLL for i in verified_in_cat):
+                        has_payroll = True
+                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in verified_in_cat):
+                        has_marketing = True
+                else:
+                    # No verified items, sum up unverified ones
+                    cat_total = sum(i.amount for i in items)
+                    
+                    # Update trackers
+                    if any(i.mapped_category == ExpenseCategory.PAYROLL for i in items):
+                        has_payroll = True
+                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in items):
+                        has_marketing = True
+
+                other_expenses_map[cat_name] = cat_total
         else:
              self.audit_log_service.add_log(analysis, "Data Warning", "No T12 Expenses Found", "Extraction", "Using only calculated Taxes & Mgmt Fee")
              analysis.gating_reasons.append("CRITICAL: No T12 Expense Data extracted. Pro Forma expenses may be understated.")

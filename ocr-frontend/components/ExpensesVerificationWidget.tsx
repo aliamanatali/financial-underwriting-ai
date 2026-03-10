@@ -34,10 +34,19 @@ export default function ExpensesVerificationWidget({
   const [isSaving, setIsSaving] = useState(false);
 
   const [newItem, setNewItem] = useState<Partial<ExpenseItem>>({
-    name: "",
-    amount: 0,
-    category: "Other Operating Expenses",
-  });
+  name: "",
+  amount: 0,
+  category: "Other Operating Expenses",
+});
+
+const getCategoryGroup = (category: string): CategoryGroup => {
+  const revenueCategories = ["Gross Potential Rent", "Other Income", "Reimbursements"];
+  const taxInsuranceCategories = ["Real Estate Taxes", "Insurance"];
+  
+  if (revenueCategories.includes(category)) return "Revenue" as CategoryGroup;
+  if (taxInsuranceCategories.includes(category)) return "Tax & Insurance" as CategoryGroup;
+  return "Operating Expense" as CategoryGroup;
+};
 
   // Filter and deduplicate expenses
   const expenseItems = useMemo(() => {
@@ -118,27 +127,33 @@ export default function ExpensesVerificationWidget({
     setEditValues({});
   };
 
-  const handleSaveEdit = async (id: string) => {
-    setIsSaving(true);
+  const handleSaveEdit = async (id: string, skipLoading: boolean = false) => {
+    if (!skipLoading) setIsSaving(true);
     try {
         const originalItem = items.find((i) => i.id === id);
         if (originalItem && editValues) {
+            // Ensure amount is a number and handle potential undefined
+            const newAmount = typeof editValues.amount === 'number' ? editValues.amount : 0;
+            
             const updatedItem = {
                 ...originalItem,
                 raw_text: editValues.name || originalItem.raw_text,
                 user_correction: editValues.category,
+                category_group: editValues.category ? getCategoryGroup(editValues.category) : originalItem.category_group,
                 user_verified: true,
                 metadata: {
-                    ...originalItem.metadata,
-                    amount: editValues.amount || 0,
+                    ...(originalItem.metadata || {}),
+                    amount: newAmount,
                 }
-            };
+            } as NormalizedDataItem;
+            
+            console.log("Saving edited expense:", updatedItem);
             await onUpdateExpenses([updatedItem]);
         }
         setEditingId(null);
         setEditValues({});
     } finally {
-        setIsSaving(false);
+        if (!skipLoading) setIsSaving(false);
     }
   };
 
@@ -152,11 +167,12 @@ export default function ExpensesVerificationWidget({
     if (!newItem.name) return;
     setIsSaving(true);
     try {
+        const category = newItem.category || "Other Operating Expenses";
         const newNormalizedItem: Partial<NormalizedDataItem> = {
             raw_text: newItem.name,
-            normalized_value: newItem.category || "Other Operating Expenses",
+            normalized_value: category,
             field_type: "expense_category",
-            category_group: "Operating Expense" as CategoryGroup,
+            category_group: getCategoryGroup(category),
             confidence: 1.0,
             user_verified: true,
             source_document: "Manual Entry",
@@ -194,10 +210,16 @@ export default function ExpensesVerificationWidget({
             </button>
             <button
                 onClick={async () => {
-                    if (editingId) {
-                        await handleSaveEdit(editingId);
+                    if (isSaving) return;
+                    setIsSaving(true);
+                    try {
+                        if (editingId) {
+                            await handleSaveEdit(editingId, true);
+                        }
+                        await onRegenerate();
+                    } finally {
+                        setIsSaving(false);
                     }
-                    await onRegenerate();
                 }}
                 disabled={isSaving}
                 className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50"
@@ -260,7 +282,11 @@ export default function ExpensesVerificationWidget({
                         <input
                             type="text"
                             value={editValues.amount}
-                            onChange={(e) => setEditValues({ ...editValues, amount: parseFloat(e.target.value) || 0 })}
+                            onChange={(e) => {
+                                // Strip commas and other non-numeric chars except decimal point
+                                const val = e.target.value.replace(/[^0-9.]/g, '');
+                                setEditValues({ ...editValues, amount: parseFloat(val) || 0 });
+                            }}
                             className="w-24 bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-right"
                         />
                     </div>

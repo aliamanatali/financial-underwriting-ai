@@ -1120,11 +1120,15 @@ class SynthesisService:
             
         logger.info(f"Deduplicating {len(expenses)} expenses...")
         
+        # Sort expenses so that user-verified ones come first.
+        # This ensures that if a duplicate exists, we keep the one the user verified/edited.
+        sorted_expenses = sorted(expenses, key=lambda x: x.user_verified, reverse=True)
+        
         unique_expenses = []
         seen_hashes = set()
         duplicates_removed = 0
         
-        for exp in expenses:
+        for exp in sorted_expenses:
             # Create a hash based on key attributes to identify duplicates
             # 1. Amount (rounded to 2 decimals)
             # 2. Category
@@ -1132,7 +1136,7 @@ class SynthesisService:
             # 4. Normalized Text (alphanumeric only, first 30 chars)
             
             amount_key = round(exp.amount, 2)
-            cat_key = exp.mapped_category
+            cat_key = str(exp.mapped_category) # Ensure it's a string for the hash
             year_key = exp.expense_year or 0
             
             # Simple text normalization for fuzzy matching
@@ -1144,6 +1148,7 @@ class SynthesisService:
             if dedup_key in seen_hashes:
                 # This is a duplicate
                 duplicates_removed += 1
+                logger.info(f"Removing duplicate expense: {exp.original_text} (${exp.amount}) - Category: {cat_key} (Verified: {exp.user_verified})")
                 continue
                 
             seen_hashes.add(dedup_key)

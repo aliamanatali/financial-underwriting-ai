@@ -4,6 +4,7 @@ Handles the ingestion of ZIP files containing 8 folders of documents for a deal 
 """
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Body, Request
+from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
@@ -766,16 +767,22 @@ async def normalize_package_documents(
         return result
 
 
+class VerifyItemRequest(BaseModel):
+    user_correction: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+
 @router.put("/packages/{package_id}/verify-item/{item_id}")
 async def verify_normalized_item(
     package_id: str,
     item_id: str,
-    user_correction: Optional[str] = None,
-    payload: Optional[Dict[str, Any]] = None,
+    request_data: VerifyItemRequest
 ):
     """
     Mark a normalized item as verified by the user.
     """
+    user_correction = request_data.user_correction
+    payload = request_data.payload
+    
     # Load from storage
     package_data = await storage_service.get_deal_package(package_id)
     if not package_data:
@@ -790,9 +797,11 @@ async def verify_normalized_item(
     if hasattr(package, 'financials_data') and package.financials_data:
         lists_to_update.append(package.financials_data)
         
+    logger.info(f"Updating item {item_id} in package {package_id}. Correction: {user_correction}, Payload: {payload}")
     for data_list in lists_to_update:
       for item in data_list:
         if item.id == item_id:
+            logger.info(f"Found item {item_id}. Original amount: {item.metadata.get('amount') if item.metadata else 'N/A'}")
             item.user_verified = True
             if user_correction is not None:
                 item.user_correction = user_correction
@@ -802,7 +811,12 @@ async def verify_normalized_item(
                 if "amount" in payload:
                     if item.metadata is None:
                         item.metadata = {}
-                    item.metadata["amount"] = payload["amount"]
+                    # Force amount to float if possible
+                    try:
+                        item.metadata["amount"] = float(payload["amount"])
+                    except:
+                        item.metadata["amount"] = payload["amount"]
+                    logger.info(f"Updated amount to: {item.metadata['amount']}")
                 if "raw_text" in payload:
                     item.raw_text = payload["raw_text"]
                 if "category_group" in payload:
@@ -878,7 +892,10 @@ async def verify_items_batch(
                 if "amount" in payload:
                     if item.metadata is None:
                         item.metadata = {}
-                    item.metadata["amount"] = payload["amount"]
+                    try:
+                        item.metadata["amount"] = float(payload["amount"])
+                    except:
+                        item.metadata["amount"] = payload["amount"]
                 if "raw_text" in payload:
                     item.raw_text = payload["raw_text"]
                 if "category_group" in payload:
@@ -1529,6 +1546,10 @@ async def _analyze_deal_package_logic(
     # Prefer normalized_data as it is the source of truth for user verifications/corrections
     normalized_items = package.normalized_data if package.normalized_data else package.financials_data
     
+    # Sort items to prioritize user-verified ones
+    if normalized_items:
+        normalized_items = sorted(normalized_items, key=lambda x: x.user_verified, reverse=True)
+
     # Rent Roll
     rent_roll_items = package.rent_roll_data
     
@@ -2118,9 +2139,16 @@ async def _analyze_deal_package_logic(
                         bbox=bbox
                     ),
                     user_verified=item.user_verified,
-                    user_corrected_category=ExpenseCategory(item.user_correction) if item.user_correction else None,
+                    user_corrected_category=None,
                     expense_year=expense_year
                 )
+                
+                # Safely attempt to set user_corrected_category if it matches enum
+                if item.user_correction:
+                    try:
+                        expense.user_corrected_category = ExpenseCategory(item.user_correction)
+                    except ValueError:
+                        logger.warning(f"User correction '{item.user_correction}' is not a valid ExpenseCategory enum value")
                 historical_expenses.append(expense)
             except Exception as e:
                 logger.warning(f"Could not parse expense item: {item.raw_text}, error: {str(e)}")
@@ -2373,7 +2401,6 @@ async def _analyze_deal_package_logic(
 
     # ===== STEP 5: GENERATE OUTPUTS (Excel, Memo & Commentary) =====
     try:
-        import asyncio
         await update_progress(90, "Generating output models and AI commentary...")
         
         # 1. Excel (Synchronous/Fast)
