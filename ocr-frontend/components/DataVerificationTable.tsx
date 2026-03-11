@@ -25,6 +25,8 @@ export default function DataVerificationTable({
   onVerify,
   onVerifyAll,
 }: DataVerificationTableProps) {
+  type TextTypeFilter = "All" | "Computerized" | "Human Written";
+  const [groupFilters, setGroupFilters] = useState<Record<string, TextTypeFilter>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [editRawTextValue, setEditRawTextValue] = useState<string>("");
@@ -193,14 +195,45 @@ export default function DataVerificationTable({
       {/* Grouped Tables */}
       <div className="space-y-8">
         {groupOrder.map((group) => {
-            const groupItems = processedGroupedItems[group];
-            if (!groupItems || groupItems.length === 0) return null;
+            const rawGroupItems = processedGroupedItems[group];
+            if (!rawGroupItems || rawGroupItems.length === 0) return null;
+
+            const currentFilter = groupFilters[group] || "All";
+            const groupItems = rawGroupItems.map(field => {
+               const filteredOccurrences = field.occurrences.filter(o =>
+                   currentFilter === "All" || (o.text_type || "Computerized") === currentFilter
+               );
+               return { ...field, occurrences: filteredOccurrences };
+            }).filter(field => field.occurrences.length > 0);
+
+            if (groupItems.length === 0 && rawGroupItems.length > 0) {
+                 // We still might want to render the header and an empty state, or just hide it. Let's show it so they can unfilter.
+            } else if (groupItems.length === 0) {
+                 return null;
+            }
 
             return (
                 <div key={group} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
-                        <h3 className="text-lg font-semibold text-slate-900">{group}</h3>
-                        <span className="text-sm text-slate-500">{groupItems.length} items</span>
+                    <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center flex-wrap gap-4">
+                        <div className="flex items-center gap-4">
+                            <h3 className="text-lg font-semibold text-slate-900">{group}</h3>
+                            <span className="text-sm text-slate-500">{groupItems.length} items</span>
+                        </div>
+                        <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                            {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
+                                <button
+                                    key={tab}
+                                    onClick={() => setGroupFilters(prev => ({ ...prev, [group]: tab }))}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                                        currentFilter === tab
+                                            ? "bg-slate-100 text-slate-900"
+                                            : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                                    }`}
+                                >
+                                    {tab}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                     <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-slate-200">
@@ -295,6 +328,12 @@ export default function DataVerificationTable({
                                     <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
                                         {item.raw_text}
                                     </span>
+                                    {item.text_type === "Human Written" && (
+                                        <span className="inline-flex items-center ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 mr-1"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                            Human Written
+                                        </span>
+                                    )}
                                     </div>
                                 )}
                             </td>

@@ -388,6 +388,7 @@ export interface NormalizedDataItem {
   user_verified: boolean;
   user_correction?: string | null;
   source_document: string;
+  text_type?: "Computerized" | "Human Written";
   metadata?: Record<string, any>;
 }
 

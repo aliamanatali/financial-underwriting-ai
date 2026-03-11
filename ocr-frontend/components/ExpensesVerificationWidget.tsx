@@ -48,6 +48,9 @@ export default function ExpensesVerificationWidget({
   documents,
   packageId,
 }: ExpensesVerificationWidgetProps) {
+  type TextTypeFilter = "All" | "Computerized" | "Human Written";
+  const [textTypeFilter, setTextTypeFilter] = useState<TextTypeFilter>("All");
+
   const [isAdding, setIsAdding] = useState(false);
   const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -72,11 +75,12 @@ const getCategoryGroup = (category: string): CategoryGroup => {
   // Filter and deduplicate expenses
   const expenseItems = useMemo(() => {
     try {
-      // 1. Filter for expenses
+      // 1. Filter for expenses and text type
       let list = items.filter(
         (item) =>
           item && (item.category_group === "Operating Expense" ||
-          item.category_group === "Tax & Insurance")
+          item.category_group === "Tax & Insurance") &&
+          (textTypeFilter === "All" || (item.text_type || "Computerized") === textTypeFilter)
       );
 
       // 2. Intelligent Deduplication
@@ -112,7 +116,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
       console.error("Error filtering expenses:", e);
       return [];
     }
-  }, [items]);
+  }, [items, textTypeFilter]);
 
   const [localExpenses, setLocalExpenses] = useState<GroupedExpense[]>([]);
 
@@ -270,12 +274,27 @@ const getCategoryGroup = (category: string): CategoryGroup => {
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-8">
-      <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+      <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h3 className="text-lg font-semibold text-slate-900">Expenses Verification</h3>
           <p className="text-xs text-slate-500">Review and correct property expenses. Descriptive entries are prioritized over raw OCR amounts.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex space-x-1 mr-2 bg-slate-100 p-1 rounded-lg">
+                {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
+                    <button
+                        key={tab}
+                        onClick={() => setTextTypeFilter(tab)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                            textTypeFilter === tab
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                        }`}
+                    >
+                        {tab}
+                    </button>
+                ))}
+            </div>
             <button
                 onClick={() => setIsAdding(true)}
                 className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 text-xs font-medium rounded-lg transition-colors shadow-sm"
@@ -335,6 +354,12 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                   ) : (
                     <div className="flex items-center gap-2">
                         <span className="text-slate-900 font-medium">{expense.name}</span>
+                        {expense.occurrences[0]?.text_type === "Human Written" && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 mr-1"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                Human Written
+                            </span>
+                        )}
                     </div>
                   )}
                 </td>

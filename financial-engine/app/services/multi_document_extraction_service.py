@@ -290,8 +290,9 @@ class MultiDocumentExtractionService:
                 4. The item type: "revenue", "expense", "property_info", "capex", "receivable", "pending_expense"
                 5. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
                 6. The expense year (if identifiable, e.g. 2022, 2023)
-                7. The page number where this item is found
-                8. The bounding box of the area containing this item
+                7. The text type: Determine if the text is "Human Written" (handwritten notes, scribbles) or "Computerized" (standard typed text).
+                8. The page number where this item is found
+                9. The bounding box of the area containing this item
                 
                 Return the data as a JSON array with this structure:
                 [
@@ -305,6 +306,7 @@ class MultiDocumentExtractionService:
                         "type": "revenue", // or "expense", "property_info", "capex", "receivable", "pending_expense"
                         "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
                         "expense_year": 2023, // Integer year if found, null otherwise
+                        "text_type": "Computerized", // or "Human Written"
                         "page_number": 1, // Integer, 1-based page number
                         "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
                     }
@@ -2037,6 +2039,7 @@ class MultiDocumentExtractionService:
                             confidence=normalization.get("confidence", 0.5),
                             user_verified=False,
                             source_document=expense.get("source_document", "Unknown"),
+                            text_type=expense.get("text_type", "Computerized"),
                             metadata=meta
                         )
                         local_items.append(item)

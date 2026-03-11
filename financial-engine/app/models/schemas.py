@@ -248,6 +248,7 @@ class StandardizedExpense(BaseModel):
     user_corrected_category: Optional[ExpenseCategory] = None  # If user changed the mapping
     expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
     source_document: Optional[str] = None # Source file name for traceability and deduplication
+    text_type: Optional[str] = "Computerized"
 
 # --- 2.2 Explainability Models ---
 
@@ -337,6 +338,7 @@ class NormalizedDataItem(BaseModel):
     user_verified: bool = False
     user_correction: Optional[str] = None
     source_document: str  # Which document this came from
+    text_type: Optional[str] = "Computerized"
     metadata: Optional[Dict[str, Any]] = {}
     
 class DocumentNormalizationResult(BaseModel):
