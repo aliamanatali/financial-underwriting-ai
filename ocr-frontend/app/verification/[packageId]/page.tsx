@@ -8,9 +8,10 @@ import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
 import ExpensesVerificationWidget from "@/components/ExpensesVerificationWidget";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
-
-const AVAILABLE_CATEGORIES = [
-  // Revenue
+import PendingExpensesWidget from "@/components/PendingExpensesWidget";
+ 
+ const AVAILABLE_CATEGORIES = [
+   // Revenue
   "Gross Potential Rent",
   "Other Income",
   "Reimbursements",
@@ -663,6 +664,19 @@ export default function VerificationPage() {
                   onAddExpense={handleAddManualExpense}
                   onRemoveExpense={handleRemoveItem}
                   onRegenerate={handleRegenerateReport}
+                  documents={documents}
+                  packageId={packageId}
+                />
+
+                <PendingExpensesWidget
+                 items={normalizedItems}
+                 availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
+                 onUpdateExpenses={handleUpdateItems}
+                 onAddExpense={handleAddManualExpense}
+                 onRemoveExpense={handleRemoveItem}
+                 onRegenerate={handleRegenerateReport}
+                 documents={documents}
+                 packageId={packageId}
                 />
 
                 <DataVerificationTable

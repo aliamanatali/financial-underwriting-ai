@@ -229,6 +229,7 @@ class MultiDocumentExtractionService:
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 5. Property Identity & Deal Terms (e.g., "Property Name", "Property Address", "Purchase Price", "Year Built")
+                6. Pending Expenses (e.g., "Proposals", "Quotes", "Unpaid Bills")
                 
                 CRITICAL RULES TO AVOID ERRORS:
                 
@@ -255,25 +256,30 @@ class MultiDocumentExtractionService:
                    - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
                    - If only a total/annual column exists, use it for "amount" (T12).
                 
-                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
+                5. PENDING EXPENSES (PROPOSALS / UNPAID BILLS):
+                   - If an item is a "Proposal", "Quote", "Estimate", or an "Unpaid" bill with a "Balance Due", it is NOT a historical expense.
+                   - These should be type: "pending_expense"
+                   - This is for items that are not yet paid and need user approval.
                 
-                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                6. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
                 
-                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
+                7. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                
+                8. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
  
-                8. IGNORE INSURANCE LIMITS:
+                9. IGNORE INSURANCE LIMITS:
                    - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
                    - These are coverage limits, NOT the premium amount.
                    - Only extract the "Premium" or "Total Premium" amount.
  
-                9. PROPERTY IDENTITY & DEAL TERMS:
+                10. PROPERTY IDENTITY & DEAL TERMS:
                    - Extract the explicit "Property Name" if listed (e.g. "The Highland Apartments").
                    - Extract the "Property Address" if listed.
                    - Extract "Purchase Price" (or Sale Price, Contract Price) if listed. This is CRITICAL for Purchase Agreements (PSA).
                    - Extract "Year Built" if listed.
                    - type: "property_info"
  
-                10. LATEST PERIOD ONLY:
+                11. LATEST PERIOD ONLY:
                    - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
                    - Ignore columns for older years.
                 
@@ -281,7 +287,7 @@ class MultiDocumentExtractionService:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable
                 3. The amount for trailing periods: amount_t3, amount_t6, amount_t9 if available
-                4. The item type: "revenue", "expense", "property_info", "capex", "receivable"
+                4. The item type: "revenue", "expense", "property_info", "capex", "receivable", "pending_expense"
                 5. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
                 6. The expense year (if identifiable, e.g. 2022, 2023)
                 7. The page number where this item is found
@@ -296,7 +302,7 @@ class MultiDocumentExtractionService:
                         "amount_t6": 6000.0, // optional
                         "amount_t9": 9000.0, // optional
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
+                        "type": "revenue", // or "expense", "property_info", "capex", "receivable", "pending_expense"
                         "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
                         "expense_year": 2023, // Integer year if found, null otherwise
                         "page_number": 1, // Integer, 1-based page number
@@ -1131,7 +1137,7 @@ class MultiDocumentExtractionService:
                 {{
                     "id": 0,  // Must match input ID
                     "category": "Exact category name from the list above",
-                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
+                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other" | "Pending Expense",
                     "confidence": 0.95,
                     "reasoning": "Brief explanation"
                 }}
@@ -1141,6 +1147,7 @@ class MultiDocumentExtractionService:
             - If text describes the Property Name, map to Group: "Property Info" and Category: "Property Name"
             - If text describes the Property Address, map to Group: "Property Info" and Category: "Property Address"
             - If type is "receivable", map to Group: "Other" and Category: "Accounts Receivable" (NOT revenue - these are uncollected amounts)
+            - If type is "pending_expense", map to Group: "Pending Expense" and Category: "Miscellaneous Expense"
             - If type is "revenue" and subtype is "rent", map to Group: "Revenue" and Category: "Gross Potential Rent"
             - If type is "revenue" and subtype is "late_fee", map to Group: "Revenue" and Category: "Other Income"
             - If type is "revenue" and subtype is "other_income", map to Group: "Revenue" and Category: "Other Income"
@@ -1165,6 +1172,7 @@ class MultiDocumentExtractionService:
             - Debt
             - Tax & Insurance
             - Other
+            - Pending Expense
             """
             
             response_text = await self.gemini_service.generate_content_async(prompt)
@@ -1241,6 +1249,15 @@ class MultiDocumentExtractionService:
                 "category_group": "Other",
                 "confidence": 0.95,
                 "reasoning": "Receivable/Past Due amount - not revenue"
+            }
+        
+        # Handle pending expenses
+        if item_type == "pending_expense" or any(keyword in text_lower for keyword in ["proposal", "quote", "estimate", "unpaid", "due"]):
+            return {
+                "normalized_value": "Miscellaneous Expense",
+                "category_group": "Pending Expense",
+                "confidence": 0.95,
+                "reasoning": "Pending expense - requires approval"
             }
         
         # Handle revenue subtypes
@@ -1981,6 +1998,8 @@ class MultiDocumentExtractionService:
                                     group_enum = CategoryGroup.PROPERTY_INFO
                                 elif "Debt" in category_group:
                                     group_enum = CategoryGroup.DEBT
+                                elif "Pending" in category_group:
+                                    group_enum = CategoryGroup.PENDING_EXPENSE
                                 else:
                                     group_enum = CategoryGroup.OTHER
                             except:

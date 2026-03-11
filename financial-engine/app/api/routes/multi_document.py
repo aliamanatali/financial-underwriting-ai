@@ -657,10 +657,24 @@ async def normalize_package_documents(
         # Merge Financials
         all_financials = extracted_om_expenses + extracted_other_financials
         
-        # Assign unique IDs
+        # Create a mapping of filename to document_id for quick lookup
+        filename_to_id_map = {}
+        for doc_list in package.documents.values():
+            for doc_meta in doc_list:
+                filename_to_id_map[doc_meta.filename] = doc_meta.document_id
+
+        # Assign unique IDs and ensure document_id is in metadata
         for idx, item in enumerate(all_financials):
             item.id = str(uuid.uuid4())
+            # Ensure metadata exists
+            if item.metadata is None:
+                item.metadata = {}
             
+            # Check if document_id is already present
+            if "document_id" not in item.metadata or not item.metadata["document_id"]:
+                if item.source_document in filename_to_id_map:
+                    item.metadata["document_id"] = filename_to_id_map[item.source_document]
+
         package.financials_data = all_financials
         
         # Merge OM Proforma

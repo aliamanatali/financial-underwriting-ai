@@ -32,6 +32,7 @@ class CategoryGroup(str, Enum):
     PROPERTY_INFO = "Property Info" # Characteristics, Year Built, etc.
     DEBT = "Debt"
     TAX_INSURANCE = "Tax & Insurance"
+    PENDING_EXPENSE = "Pending Expense"
     OTHER = "Other"
 
 class ExpenseCategory(str, Enum):

@@ -374,6 +374,7 @@ export type CategoryGroup =
   | "Property Info"
   | "Debt"
   | "Tax & Insurance"
+  | "Pending Expense"
   | "Other";
 
 export interface NormalizedDataItem {

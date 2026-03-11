@@ -18,7 +18,7 @@ interface ExpenseItem {
   metadata?: any;
 }
 
-interface ExpensesVerificationWidgetProps {
+interface PendingExpensesWidgetProps {
   items: NormalizedDataItem[];
   availableCategories: string[];
   onUpdateExpenses: (updatedItems: NormalizedDataItem[]) => Promise<void>;
@@ -29,7 +29,7 @@ interface ExpensesVerificationWidgetProps {
   packageId?: string;
 }
 
-export default function ExpensesVerificationWidget({
+export default function PendingExpensesWidget({
   items = [],
   availableCategories = [],
   onUpdateExpenses,
@@ -38,7 +38,7 @@ export default function ExpensesVerificationWidget({
   onRegenerate,
   documents,
   packageId,
-}: ExpensesVerificationWidgetProps) {
+}: PendingExpensesWidgetProps) {
   const [isAdding, setIsAdding] = useState(false);
   const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -46,61 +46,29 @@ export default function ExpensesVerificationWidget({
   const [isSaving, setIsSaving] = useState(false);
 
   const [newItem, setNewItem] = useState<Partial<ExpenseItem>>({
-  name: "",
-  amount: 0,
-  category: "Other Operating Expenses",
-});
+    name: "",
+    amount: 0,
+    category: "Other Operating Expenses",
+  });
 
-const getCategoryGroup = (category: string): CategoryGroup => {
-  const revenueCategories = ["Gross Potential Rent", "Other Income", "Reimbursements"];
-  const taxInsuranceCategories = ["Real Estate Taxes", "Insurance"];
-  
-  if (revenueCategories.includes(category)) return "Revenue" as CategoryGroup;
-  if (taxInsuranceCategories.includes(category)) return "Tax & Insurance" as CategoryGroup;
-  return "Operating Expense" as CategoryGroup;
-};
+  const getCategoryGroup = (category: string): CategoryGroup => {
+    const revenueCategories = ["Gross Potential Rent", "Other Income", "Reimbursements"];
+    const taxInsuranceCategories = ["Real Estate Taxes", "Insurance"];
+    const capexCategories = ["Capital Reserves"];
+    
+    if (revenueCategories.includes(category)) return "Revenue" as CategoryGroup;
+    if (taxInsuranceCategories.includes(category)) return "Tax & Insurance" as CategoryGroup;
+    if (capexCategories.includes(category)) return "Capital Expenditure" as CategoryGroup;
+    return "Operating Expense" as CategoryGroup;
+  };
 
-  // Filter and deduplicate expenses
   const expenseItems = useMemo(() => {
     try {
-      // 1. Filter for expenses
-      let list = items.filter(
-        (item) =>
-          item && (item.category_group === "Operating Expense" ||
-          item.category_group === "Tax & Insurance")
+      return items.filter(
+        (item) => item && item.category_group === "Pending Expense"
       );
-
-      // 2. Intelligent Deduplication
-      const cleanedList: NormalizedDataItem[] = [];
-      const seenAmounts = new Map<number, NormalizedDataItem>();
-
-      list.forEach(item => {
-        const amount = item.metadata?.amount || 0;
-        const text = (item.raw_text || "").trim();
-        const isJustNumber = /^\$?[0-9,.]+(?:\.00)?$/.test(text.replace(/\s/g, ''));
-        
-        if (!isJustNumber && text.length > 1) {
-            cleanedList.push(item);
-            if (amount > 0) seenAmounts.set(amount, item);
-        }
-      });
-
-      list.forEach(item => {
-        const amount = item.metadata?.amount || 0;
-        const text = (item.raw_text || "").trim();
-        const isJustNumber = /^\$?[0-9,.]+(?:\.00)?$/.test(text.replace(/\s/g, ''));
-        
-        if (isJustNumber) {
-            if (!seenAmounts.has(amount)) {
-                cleanedList.push(item);
-                seenAmounts.set(amount, item);
-            }
-        }
-      });
-
-      return cleanedList;
     } catch (e) {
-      console.error("Error filtering expenses:", e);
+      console.error("Error filtering pending expenses:", e);
       return [];
     }
   }, [items]);
@@ -109,19 +77,23 @@ const getCategoryGroup = (category: string): CategoryGroup => {
 
   useEffect(() => {
     setLocalExpenses(
-      expenseItems.map((item) => {
-        console.log(`[ExpensesVerificationWidget] Item ID: ${item.id}, Metadata:`, item.metadata);
-        return {
-          id: item.id,
-          name: item.raw_text || "",
+      expenseItems.map((item) => ({
+        id: item.id,
+        name: item.raw_text || "",
         amount: typeof item.metadata?.amount === 'number' ? item.metadata.amount : 0,
         category: item.user_correction || item.normalized_value || "Uncategorized",
         source_document: item.source_document,
         metadata: item.metadata
-        };
-      })
+      }))
     );
   }, [expenseItems]);
+
+  const getDocumentId = (sourceDocument?: string): string | undefined => {
+    if (!documents || !sourceDocument) return undefined;
+    const allDocs = Array.isArray(documents) ? documents : Object.values(documents).flat();
+    const doc = allDocs.find(d => d.filename === sourceDocument);
+    return doc?.document_id;
+  };
 
   const startEditing = (expense: ExpenseItem) => {
     setEditingId(expense.id);
@@ -162,7 +134,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to remove this expense?")) {
+    if (confirm("Are you sure you want to remove this item?")) {
         await onRemoveExpense(id);
     }
   };
@@ -176,7 +148,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
             raw_text: newItem.name,
             normalized_value: category,
             field_type: "expense_category",
-            category_group: getCategoryGroup(category),
+            category_group: "Pending Expense" as CategoryGroup,
             confidence: 1.0,
             user_verified: true,
             source_document: "Manual Entry",
@@ -198,8 +170,8 @@ const getCategoryGroup = (category: string): CategoryGroup => {
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-8">
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
         <div>
-          <h3 className="text-lg font-semibold text-slate-900">Expenses Verification</h3>
-          <p className="text-xs text-slate-500">Review and correct property expenses. Descriptive entries are prioritized over raw OCR amounts.</p>
+          <h3 className="text-lg font-semibold text-slate-900">Proposals & Unpaid Bills</h3>
+          <p className="text-xs text-slate-500">Review and categorize potential expenses. These will be included in the report upon saving.</p>
         </div>
         <div className="flex items-center gap-3">
             <button
@@ -210,29 +182,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                     <path d="M5 12h14"></path>
                     <path d="M12 5v14"></path>
                 </svg>
-                Add Expense
-            </button>
-            <button
-                onClick={async () => {
-                    if (isSaving) return;
-                    setIsSaving(true);
-                    try {
-                        if (editingId) {
-                            await handleSaveEdit(editingId, true);
-                        }
-                        await onRegenerate();
-                    } finally {
-                        setIsSaving(false);
-                    }
-                }}
-                disabled={isSaving}
-                className="flex items-center gap-2 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-medium rounded-lg transition-colors shadow-sm disabled:opacity-50"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 12a9 9 0 1 1-2.5-6.2"></path>
-                    <path d="M21 6v6h-6"></path>
-                </svg>
-                Save & Update Report
+                Add Item
             </button>
         </div>
       </div>
@@ -241,7 +191,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-white">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Expense Name</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Description</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Category</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Amount</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider w-24">Actions</th>
@@ -326,7 +276,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         </>
                     ) : (
                         <>
-                            {expense.metadata?.page_number && (
+                            {expense.metadata?.page_number && getDocumentId(expense.source_document) && (
                                 <button
                                   onClick={() => {
                                     const originalItem = items.find(i => i.id === expense.id);
@@ -373,7 +323,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                 <td className="px-6 py-3 text-sm">
                   <input
                     type="text"
-                    placeholder="New Expense Name"
+                    placeholder="New Item Name"
                     value={newItem.name}
                     onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
                     className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none font-medium"
@@ -440,14 +390,14 @@ const getCategoryGroup = (category: string): CategoryGroup => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <h3 className="text-sm font-medium text-slate-900">No expenses found</h3>
-          <p className="text-xs text-slate-500 mt-1">No expenses were extracted from the documents. You can add them manually.</p>
+          <h3 className="text-sm font-medium text-slate-900">No Pending Items Found</h3>
+          <p className="text-xs text-slate-500 mt-1">No proposals or unpaid bills were detected. You can add them manually.</p>
         </div>
       )}
 
-      {viewingItem && (
+      {viewingItem && getDocumentId(viewingItem.source_document) && (
         <SourceDocumentViewer
-          documentId={viewingItem.metadata?.document_id || ""}
+          documentId={getDocumentId(viewingItem.source_document)!}
           packageId={packageId}
           filename={viewingItem.source_document}
           pageNumber={viewingItem.metadata?.page_number}

@@ -143,7 +143,7 @@ export default function DataVerificationTable({
                                       </svg>
                                       <span className="truncate max-w-[120px]">{item.source_document}</span>
                                   </div>
-                                  {item.metadata?.page_number && getDocumentId(item) && (
+                                  {item.metadata?.page_number && item.metadata?.document_id && (
                                     <button
                                       onClick={() => setViewingItem(item)}
                                       className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
