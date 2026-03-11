@@ -822,6 +822,8 @@ async def verify_normalized_item(
             
             # Handle additional fields from payload
             if payload:
+                if "raw_text" in payload:
+                    item.raw_text = payload["raw_text"]
                 if "amount" in payload:
                     if item.metadata is None:
                         item.metadata = {}
@@ -831,8 +833,21 @@ async def verify_normalized_item(
                     except:
                         item.metadata["amount"] = payload["amount"]
                     logger.info(f"Updated amount to: {item.metadata['amount']}")
-                if "raw_text" in payload:
-                    item.raw_text = payload["raw_text"]
+                elif "raw_text" in payload and payload["raw_text"]:
+                    # Auto-extract amount from raw_text if user updated raw_text but didn't explicitly pass amount
+                    import re
+                    # Look for $ followed by digits, commas, dots OR just digits, commas, dots
+                    amounts = re.findall(r'\$?([\d,]+\.?\d*)', payload["raw_text"])
+                    if amounts:
+                        try:
+                            # Use the last amount found in the string (typical for "Expense Name $100.00")
+                            parsed_amount = float(amounts[-1].replace(',', ''))
+                            if item.metadata is None:
+                                item.metadata = {}
+                            item.metadata["amount"] = parsed_amount
+                            logger.info(f"Auto-extracted updated amount to: {item.metadata['amount']} from raw_text")
+                        except ValueError:
+                            pass
                 if "category_group" in payload:
                     try:
                         from app.models.schemas import CategoryGroup
@@ -903,6 +918,8 @@ async def verify_items_batch(
             # Handle payload/additional fields
             payload = item_data.get("payload")
             if payload:
+                if "raw_text" in payload:
+                    item.raw_text = payload["raw_text"]
                 if "amount" in payload:
                     if item.metadata is None:
                         item.metadata = {}
@@ -910,8 +927,18 @@ async def verify_items_batch(
                         item.metadata["amount"] = float(payload["amount"])
                     except:
                         item.metadata["amount"] = payload["amount"]
-                if "raw_text" in payload:
-                    item.raw_text = payload["raw_text"]
+                elif "raw_text" in payload and payload["raw_text"]:
+                    # Auto-extract amount from raw_text if user updated raw_text but didn't explicitly pass amount
+                    import re
+                    amounts = re.findall(r'\$?([\d,]+\.?\d*)', payload["raw_text"])
+                    if amounts:
+                        try:
+                            parsed_amount = float(amounts[-1].replace(',', ''))
+                            if item.metadata is None:
+                                item.metadata = {}
+                            item.metadata["amount"] = parsed_amount
+                        except ValueError:
+                            pass
                 if "category_group" in payload:
                     try:
                         from app.models.schemas import CategoryGroup

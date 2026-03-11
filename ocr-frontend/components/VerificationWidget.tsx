@@ -197,8 +197,13 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
   };
 
   // Verify a single item
-  const handleVerifyItem = async (itemId: string, userCorrection?: string) => {
+  const handleVerifyItem = async (itemId: string, userCorrection?: string, userRawText?: string) => {
     try {
+      const payload: any = {};
+      if (userRawText !== undefined) {
+        payload.raw_text = userRawText;
+      }
+      
       const response = await fetch(
         `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${itemId}`,
         {
@@ -206,7 +211,10 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ user_correction: userCorrection }),
+          body: JSON.stringify({
+            user_correction: userCorrection,
+            payload: Object.keys(payload).length > 0 ? payload : undefined
+          }),
         }
       );
 
@@ -216,15 +224,28 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
 
       // Update local state
       setNormalizedItems((prev) =>
-        prev.map((item) =>
-          item.id === itemId
-            ? {
-                ...item,
-                user_verified: true,
-                user_correction: userCorrection || null,
+        prev.map((item) => {
+          if (item.id === itemId) {
+            const updatedItem = {
+              ...item,
+              user_verified: true,
+              user_correction: userCorrection !== undefined ? userCorrection : item.user_correction,
+            };
+            if (userRawText !== undefined) {
+              updatedItem.raw_text = userRawText;
+              // Extract numeric amount locally for immediate UI update
+              const amounts = userRawText.match(/\$?([\d,]+\.?\d*)/g);
+              if (amounts) {
+                const parsed = parseFloat(amounts[amounts.length - 1].replace(/,/g, '').replace('$', ''));
+                if (!isNaN(parsed)) {
+                  updatedItem.metadata = { ...updatedItem.metadata, amount: parsed };
+                }
               }
-            : item
-        )
+            }
+            return updatedItem;
+          }
+          return item;
+        })
       );
       setEditingItem(null);
     } catch (err) {

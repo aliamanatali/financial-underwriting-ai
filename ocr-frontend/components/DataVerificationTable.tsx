@@ -13,7 +13,7 @@ interface DataVerificationTableProps {
   availableCategories: string[];
   documents: Record<string, DocumentMetadata[]>;
   packageId?: string;
-  onVerify: (itemId: string, userCorrection?: string) => void;
+  onVerify: (itemId: string, userCorrection?: string, userRawText?: string) => void;
   onVerifyAll: () => void;
 }
 
@@ -27,11 +27,13 @@ export default function DataVerificationTable({
 }: DataVerificationTableProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
+  const [editRawTextValue, setEditRawTextValue] = useState<string>("");
   const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
 
   const handleEdit = (item: NormalizedDataItem) => {
     setEditingId(item.id);
     setEditValue(item.user_correction || item.normalized_value);
+    setEditRawTextValue(item.raw_text || "");
   };
 
   // Group items by category_group
@@ -57,18 +59,29 @@ export default function DataVerificationTable({
 
   const handleSave = (itemId: string) => {
     const originalItem = items.find((i) => i.id === itemId);
-    if (originalItem && editValue !== originalItem.normalized_value) {
-      onVerify(itemId, editValue);
-    } else {
-      onVerify(itemId);
+    if (originalItem) {
+      const correctionChanged = editValue !== originalItem.normalized_value;
+      const rawTextChanged = editRawTextValue !== originalItem.raw_text;
+      
+      if (correctionChanged || rawTextChanged) {
+        onVerify(
+          itemId,
+          correctionChanged ? editValue : undefined,
+          rawTextChanged ? editRawTextValue : undefined
+        );
+      } else {
+        onVerify(itemId);
+      }
     }
     setEditingId(null);
     setEditValue("");
+    setEditRawTextValue("");
   };
 
   const handleCancel = () => {
     setEditingId(null);
     setEditValue("");
+    setEditRawTextValue("");
   };
 
   const getConfidenceColor = (confidence: number) => {
@@ -160,11 +173,20 @@ export default function DataVerificationTable({
 
                             {/* Raw Text */}
                             <td className="px-6 py-4 text-sm text-slate-900">
-                                <div className="max-w-xs" title={item.raw_text}>
-                                <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
-                                    {item.raw_text}
-                                </span>
-                                </div>
+                                {editingId === item.id ? (
+                                    <input
+                                        type="text"
+                                        value={editRawTextValue}
+                                        onChange={(e) => setEditRawTextValue(e.target.value)}
+                                        className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
+                                    />
+                                ) : (
+                                    <div className="max-w-xs" title={item.raw_text}>
+                                    <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
+                                        {item.raw_text}
+                                    </span>
+                                    </div>
+                                )}
                             </td>
 
                             {/* Mapped Category */}
