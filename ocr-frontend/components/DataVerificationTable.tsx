@@ -36,15 +36,91 @@ export default function DataVerificationTable({
     setEditRawTextValue(item.raw_text || "");
   };
 
-  // Group items by category_group
+  const DEDUPLICATE_FIELDS = [
+    "Property Name",
+    "Property Address",
+    "Total Units",
+    "Year Built",
+    "Purchase Price",
+    "Price per Unit",
+    "Rentable Area"
+  ];
+
+  interface GroupedDataField {
+    id: string; // The ID of the currently selected occurrence
+    occurrences: NormalizedDataItem[];
+    category_group: string;
+  }
+
+  // Group items by category_group, handling deduplication
   const groupedItems = items.reduce((acc, item) => {
     const group = item.category_group || "Other";
     if (!acc[group]) {
       acc[group] = [];
     }
+    
+    // Check if this is a field that needs deduplication
+    const isDeduplicatedField = DEDUPLICATE_FIELDS.includes(item.normalized_value);
+    
+    if (isDeduplicatedField) {
+      // Find if we already have this field in the group
+      const existingFieldIndex = acc[group].findIndex(
+        (existing) => existing.normalized_value === item.normalized_value
+      );
+      
+      if (existingFieldIndex !== -1) {
+        // We already have this field, so we need to store it as an occurrence
+        // But the current groupedItems structure doesn't easily support nested occurrences
+        // Let's modify the structure slightly below by mapping over it before render
+        // For now, just add it to the array. We will post-process.
+      }
+    }
+    
     acc[group].push(item);
     return acc;
   }, {} as Record<string, NormalizedDataItem[]>);
+
+  // Post-process grouped items to handle deduplication
+  const processedGroupedItems = Object.keys(groupedItems).reduce((acc, group) => {
+    const itemsInGroup = groupedItems[group];
+    const processedItems: GroupedDataField[] = [];
+    const dedupMap = new Map<string, GroupedDataField>();
+
+    itemsInGroup.forEach(item => {
+      const isDeduplicatedField = DEDUPLICATE_FIELDS.includes(item.normalized_value);
+
+      if (isDeduplicatedField) {
+        if (!dedupMap.has(item.normalized_value)) {
+          const newGroup: GroupedDataField = {
+            id: item.id,
+            occurrences: [item],
+            category_group: group
+          };
+          dedupMap.set(item.normalized_value, newGroup);
+          processedItems.push(newGroup);
+        } else {
+          const existing = dedupMap.get(item.normalized_value)!;
+          existing.occurrences.push(item);
+          // Auto-select verified or higher confidence
+          const currentSelected = existing.occurrences.find(o => o.id === existing.id);
+          if (item.user_verified && (!currentSelected || !currentSelected.user_verified)) {
+              existing.id = item.id;
+          } else if (!currentSelected?.user_verified && item.confidence > (currentSelected?.confidence || 0)) {
+              existing.id = item.id;
+          }
+        }
+      } else {
+        processedItems.push({
+          id: item.id,
+          occurrences: [item],
+          category_group: group
+        });
+      }
+    });
+
+    acc[group] = processedItems;
+    return acc;
+  }, {} as Record<string, GroupedDataField[]>);
 
   // Define group order
   const groupOrder: CategoryGroup[] = [
@@ -103,13 +179,21 @@ export default function DataVerificationTable({
     return doc?.document_id;
   };
 
+  const handleOccurrenceChange = (groupField: GroupedDataField, newOccurrenceId: string) => {
+    const newOccurrence = groupField.occurrences.find(o => o.id === newOccurrenceId);
+    if (newOccurrence) {
+      // Trigger a verify on the newly selected occurrence to mark it as the verified one
+      onVerify(newOccurrenceId);
+    }
+  };
+
   return (
     <div className="space-y-6">
 
       {/* Grouped Tables */}
       <div className="space-y-8">
         {groupOrder.map((group) => {
-            const groupItems = groupedItems[group];
+            const groupItems = processedGroupedItems[group];
             if (!groupItems || groupItems.length === 0) return null;
 
             return (
@@ -140,9 +224,13 @@ export default function DataVerificationTable({
                         </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-200">
-                        {groupItems.map((item) => (
+                        {groupItems.map((groupField) => {
+                            const item = groupField.occurrences.find(o => o.id === groupField.id) || groupField.occurrences[0];
+                            const hasDuplicates = groupField.occurrences.length > 1;
+
+                            return (
                             <tr
-                            key={item.id}
+                            key={groupField.id}
                             className={`transition-colors duration-150 ${
                                 item.user_verified ? "bg-emerald-50/30" : "hover:bg-slate-50"
                             }`}
@@ -180,6 +268,28 @@ export default function DataVerificationTable({
                                         onChange={(e) => setEditRawTextValue(e.target.value)}
                                         className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                                     />
+                                ) : hasDuplicates ? (
+                                    <div className="flex flex-col gap-1">
+                                        <div className="flex items-center gap-1.5 mb-1">
+                                            <span className="flex items-center text-[10px] font-bold text-amber-600 uppercase bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                                <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                </svg>
+                                                Duplicates Found ({groupField.occurrences.length})
+                                            </span>
+                                        </div>
+                                        <select
+                                            value={groupField.id}
+                                            onChange={(e) => handleOccurrenceChange(groupField, e.target.value)}
+                                            className="bg-amber-50/30 border border-amber-300 rounded px-2 py-1.5 text-xs font-mono text-slate-700 focus:ring-1 focus:ring-amber-500 outline-none max-w-[250px] shadow-sm"
+                                        >
+                                            {groupField.occurrences.map((occ) => (
+                                                <option key={occ.id} value={occ.id}>
+                                                    {occ.raw_text} - from {occ.source_document || 'Unknown'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
                                 ) : (
                                     <div className="max-w-xs" title={item.raw_text}>
                                     <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
@@ -255,21 +365,19 @@ export default function DataVerificationTable({
                                 </div>
                                 ) : (
                                 <div className="flex items-center space-x-4">
-                                    {!item.user_verified ? (
-                                    <>
-                                        <button
+                                    <button
                                         onClick={() => handleEdit(item)}
                                         className="text-slate-500 hover:text-[#FF5E00] font-medium transition-colors"
-                                        >
+                                    >
                                         Edit
-                                        </button>
+                                    </button>
+                                    {!item.user_verified ? (
                                         <button
                                         onClick={() => onVerify(item.id)}
                                         className="text-[#FF5E00] hover:text-blue-800 font-semibold transition-colors flex items-center"
                                         >
                                         Verify
                                         </button>
-                                    </>
                                     ) : (
                                        <span className="inline-flex items-center text-emerald-700 font-medium text-sm">
                                             <svg className="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
@@ -282,7 +390,8 @@ export default function DataVerificationTable({
                                 )}
                             </td>
                             </tr>
-                        ))}
+                            );
+                        })}
                         </tbody>
                     </table>
                     </div>

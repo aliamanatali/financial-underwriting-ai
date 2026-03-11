@@ -29,6 +29,15 @@ interface ExpensesVerificationWidgetProps {
   packageId?: string;
 }
 
+interface GroupedExpense {
+  id: string;
+  name: string;
+  category: string;
+  amount: number;
+  occurrences: NormalizedDataItem[];
+  selectedOccurrenceId: string;
+}
+
 export default function ExpensesVerificationWidget({
   items = [],
   availableCategories = [],
@@ -105,27 +114,65 @@ const getCategoryGroup = (category: string): CategoryGroup => {
     }
   }, [items]);
 
-  const [localExpenses, setLocalExpenses] = useState<ExpenseItem[]>([]);
+  const [localExpenses, setLocalExpenses] = useState<GroupedExpense[]>([]);
 
   useEffect(() => {
-    setLocalExpenses(
-      expenseItems.map((item) => {
-        console.log(`[ExpensesVerificationWidget] Item ID: ${item.id}, Metadata:`, item.metadata);
-        return {
-          id: item.id,
-          name: item.raw_text || "",
-        amount: typeof item.metadata?.amount === 'number' ? item.metadata.amount : 0,
-        category: item.user_correction || item.normalized_value || "Uncategorized",
-        source_document: item.source_document,
-        metadata: item.metadata
-        };
-      })
-    );
+    // Group expenses by category and name
+    const grouped = new Map<string, GroupedExpense>();
+    
+    expenseItems.forEach(item => {
+      const name = item.raw_text?.trim() || "Unnamed Expense";
+      const category = item.user_correction || item.normalized_value || "Uncategorized";
+      // Create a composite key for grouping
+      const key = `${category.toLowerCase()}-${name.toLowerCase()}`;
+      
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          id: item.id, // Use the first item's ID as the main ID for the row
+          name,
+          category,
+          amount: typeof item.metadata?.amount === 'number' ? item.metadata.amount : 0,
+          occurrences: [item],
+          selectedOccurrenceId: item.id
+        });
+      } else {
+        const existing = grouped.get(key)!;
+        existing.occurrences.push(item);
+        
+        // If this item is verified or has a higher amount and current isn't verified, make it selected
+        const currentSelected = existing.occurrences.find(o => o.id === existing.selectedOccurrenceId);
+        if (item.user_verified && (!currentSelected || !currentSelected.user_verified)) {
+            existing.selectedOccurrenceId = item.id;
+            existing.amount = typeof item.metadata?.amount === 'number' ? item.metadata.amount : 0;
+            existing.id = item.id;
+        } else if (!currentSelected?.user_verified && typeof item.metadata?.amount === 'number' && typeof currentSelected?.metadata?.amount === 'number' && item.metadata.amount > currentSelected.metadata.amount) {
+            // Optional: pick highest if neither verified
+            existing.selectedOccurrenceId = item.id;
+            existing.amount = item.metadata.amount;
+            existing.id = item.id;
+        }
+      }
+    });
+    
+    // Sort by category then name
+    const sortedExpenses = Array.from(grouped.values()).sort((a, b) => {
+      if (a.category !== b.category) {
+        return a.category.localeCompare(b.category);
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    setLocalExpenses(sortedExpenses);
   }, [expenseItems]);
 
-  const startEditing = (expense: ExpenseItem) => {
+  const startEditing = (expense: GroupedExpense) => {
     setEditingId(expense.id);
-    setEditValues({ ...expense });
+    setEditValues({
+      id: expense.id,
+      name: expense.name,
+      amount: expense.amount,
+      category: expense.category,
+    });
   };
 
   const cancelEditing = () => {
@@ -136,7 +183,11 @@ const getCategoryGroup = (category: string): CategoryGroup => {
   const handleSaveEdit = async (id: string, skipLoading: boolean = false) => {
     if (!skipLoading) setIsSaving(true);
     try {
-        const originalItem = items.find((i) => i.id === id);
+        const expenseGroup = localExpenses.find(e => e.id === id);
+        if (!expenseGroup) return;
+
+        const originalItem = items.find((i) => i.id === expenseGroup.selectedOccurrenceId);
+        
         if (originalItem && editValues) {
             const newAmount = typeof editValues.amount === 'number' ? editValues.amount : 0;
             
@@ -152,12 +203,35 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                 }
             } as NormalizedDataItem;
             
+            // Note: If they changed category or name, we should probably update ALL occurrences in that group
+            // but for now, updating the selected one is safest and marks it verified.
             await onUpdateExpenses([updatedItem]);
         }
         setEditingId(null);
         setEditValues({});
     } finally {
         if (!skipLoading) setIsSaving(false);
+    }
+  };
+
+  const handleOccurrenceChange = async (expenseId: string, occurrenceId: string) => {
+    const expenseGroup = localExpenses.find(e => e.id === expenseId);
+    if (!expenseGroup) return;
+
+    const newOccurrence = expenseGroup.occurrences.find(o => o.id === occurrenceId);
+    if (!newOccurrence) return;
+
+    setIsSaving(true);
+    try {
+        // Mark the selected occurrence as user verified to ensure it's picked next time
+        const updatedItem = {
+            ...newOccurrence,
+            user_verified: true
+        } as NormalizedDataItem;
+
+        await onUpdateExpenses([updatedItem]);
+    } finally {
+        setIsSaving(false);
     }
   };
 
@@ -295,6 +369,26 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                             className="w-24 bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-right"
                         />
                     </div>
+                  ) : expense.occurrences.length > 1 ? (
+                    <div className="flex flex-col items-end gap-1">
+                        <span className="flex items-center text-[10px] font-bold text-amber-600 uppercase bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mb-1">
+                            <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            Duplicates
+                        </span>
+                        <select
+                            value={expense.selectedOccurrenceId}
+                            onChange={(e) => handleOccurrenceChange(expense.id, e.target.value)}
+                            className="bg-amber-50/30 border border-amber-300 rounded px-2 py-1 text-right font-semibold text-slate-800 text-sm focus:ring-1 focus:ring-amber-500 outline-none shadow-sm"
+                        >
+                            {expense.occurrences.map((occ) => (
+                                <option key={occ.id} value={occ.id}>
+                                    ${typeof occ.metadata?.amount === 'number' ? occ.metadata.amount.toLocaleString() : 0} ({occ.source_document || 'Unknown Source'})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                   ) : (
                     <span className="text-slate-900 font-semibold">${expense.amount.toLocaleString()}</span>
                   )}
@@ -326,21 +420,21 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         </>
                     ) : (
                         <>
-                            {expense.metadata?.page_number && (
-                                <button
-                                  onClick={() => {
-                                    const originalItem = items.find(i => i.id === expense.id);
-                                    if (originalItem) setViewingItem(originalItem);
-                                  }}
-                                  className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                                  title={`View ${expense.source_document} (Page ${expense.metadata.page_number})`}
-                                >
-                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                                    <circle cx="12" cy="12" r="3"/>
-                                  </svg>
-                                </button>
-                            )}
+                            {(() => {
+                                const selectedItem = expense.occurrences.find(o => o.id === expense.selectedOccurrenceId) || expense.occurrences[0];
+                                return selectedItem?.metadata?.page_number ? (
+                                    <button
+                                      onClick={() => setViewingItem(selectedItem)}
+                                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                      title={`View ${selectedItem.source_document} (Page ${selectedItem.metadata.page_number})`}
+                                    >
+                                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                      </svg>
+                                    </button>
+                                ) : null;
+                            })()}
                             <button
                                 onClick={() => startEditing(expense)}
                                 className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
