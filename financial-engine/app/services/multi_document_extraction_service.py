@@ -324,21 +324,49 @@ class MultiDocumentExtractionService:
         try:
             prompt = self._get_financial_extraction_prompt()
             
-            # Using generate_content_async (text-only)
-            # Truncate content to avoid token limits if extremely large, though T12s usually fit.
-            response = await self.gemini_service.generate_content_async(f"{prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
+            expenses_data = []
+            max_retries = 3
+            current_prompt = prompt
             
-            # Clean and parse JSON
-            cleaned_text = self._extract_json_from_response(response)
-            
-            try:
-                expenses_data = json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
-                return []
+            for attempt in range(max_retries):
+                # Using generate_content_async (text-only)
+                # Truncate content to avoid token limits if extremely large, though T12s usually fit.
+                response = await self.gemini_service.generate_content_async(f"{current_prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
                 
-            if not isinstance(expenses_data, list):
-                return []
+                # Clean and parse JSON
+                cleaned_text = self._extract_json_from_response(response)
+                
+                try:
+                    expenses_data = json.loads(cleaned_text)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return []
+                    
+                if not isinstance(expenses_data, list):
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return []
+                    
+                # Validation: Check if items have page_number and bbox
+                missing_source = False
+                if expenses_data:
+                    for item in expenses_data:
+                        if not item.get("page_number") or not item.get("bbox"):
+                            missing_source = True
+                            break
+                            
+                if missing_source and attempt < max_retries - 1:
+                    logger.warning(f"Extracted data missing page_number or bbox in text extraction. Retrying attempt {attempt + 1}/{max_retries}...")
+                    current_prompt = prompt + "\n\nCRITICAL: You MUST include 'page_number' and 'bbox' (bounding box coordinates [ymin, xmin, ymax, xmax] 0-1000) for EVERY item. Do not omit them."
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                    
+                # If we got here with valid data or on last attempt
+                break
                 
             # Add metadata
             for expense in expenses_data:
@@ -602,7 +630,9 @@ class MultiDocumentExtractionService:
                             "raw_text": row_category,
                             "amount": abs(row_amount),
                             "source_document": filename,
-                            "type": row_type
+                            "type": row_type,
+                            "page_number": 1,
+                            "bbox": None
                         })
                 
                 if line_items:
@@ -619,7 +649,9 @@ class MultiDocumentExtractionService:
                 "amount": total_amount,
                 "source_document": filename,
                 "row_count": row_count,
-                "type": entry_type
+                "type": entry_type,
+                "page_number": 1,
+                "bbox": None
             }
             
             logger.info(f"Extracted aggregated data from {filename}: {row_count} rows, total amount: ${total_amount:,.2f}")
@@ -720,57 +752,64 @@ class MultiDocumentExtractionService:
                 client = self.gemini_service.client
                 model_name = self.gemini_service.model_name
                 
-                try:
-                    # Retry logic for 500 errors and timeouts
-                    async for attempt in AsyncRetrying(
-                        stop=stop_after_attempt(3),
-                        wait=wait_exponential(multiplier=1, min=2, max=10),
-                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError, asyncio.TimeoutError)),
-                        reraise=True
-                    ):
-                        with attempt:
-                            response = await asyncio.wait_for(
-                                client.aio.models.generate_content(
-                                    model=model_name,
-                                    contents=parts,
-                                    config=types.GenerateContentConfig(temperature=0.0)
-                                ),
-                                timeout=120.0
-                            )
-                except asyncio.TimeoutError:
-                    logger.error(f"Gemini visual extraction timed out for {filename}")
-                    return [{
-                        "raw_text": f"Document - {filename} (Extraction timed out)",
-                        "amount": 0.0,
-                        "source_document": filename,
-                        "error": "Timeout"
-                    }]
-                except (genai_errors.ServerError, genai_errors.APIError) as e:
-                    logger.error(f"Gemini visual extraction failed after retries for {filename}: {e}")
-                    return [{
-                        "raw_text": f"Document - {filename} (Gemini Error: {str(e)})",
-                        "amount": 0.0,
-                        "source_document": filename,
-                        "error": str(e)
-                    }]
+                expenses_data = []
+                max_retries = 3
                 
-                # Parse JSON response
-                if not response.text:
-                    logger.warning(f"Gemini returned empty response for {filename}")
-                    return []
-                    
-                response_text = response.text.strip()
-                logger.info(f"Gemini response for {filename}: {response_text[:200]}...")
-                
-                # Clean and parse JSON
-                cleaned_text = self._extract_json_from_response(response_text)
-                
-                expenses_data = json.loads(cleaned_text)
-                
-                # Validate that we got a list
-                if not isinstance(expenses_data, list):
-                    logger.error(f"Expected list from Gemini, got {type(expenses_data)}")
-                    return []
+                for attempt in range(max_retries):
+                    try:
+                        response = await asyncio.wait_for(
+                            client.aio.models.generate_content(
+                                model=model_name,
+                                contents=parts,
+                                config=types.GenerateContentConfig(temperature=0.0)
+                            ),
+                            timeout=120.0
+                        )
+                        
+                        if not response.text:
+                            logger.warning(f"Gemini returned empty response for {filename}")
+                            if attempt < max_retries - 1:
+                                continue
+                            return []
+                            
+                        response_text = response.text.strip()
+                        cleaned_text = self._extract_json_from_response(response_text)
+                        expenses_data = json.loads(cleaned_text)
+                        
+                        if not isinstance(expenses_data, list):
+                            logger.error(f"Expected list from Gemini, got {type(expenses_data)}")
+                            if attempt < max_retries - 1:
+                                continue
+                            return []
+                            
+                        # Validation: Check if items have page_number and bbox
+                        missing_source = False
+                        if expenses_data:
+                            for item in expenses_data:
+                                if not item.get("page_number") or not item.get("bbox"):
+                                    missing_source = True
+                                    break
+                                    
+                        if missing_source and attempt < max_retries - 1:
+                            logger.warning(f"Extracted data missing page_number or bbox. Retrying attempt {attempt + 1}/{max_retries}...")
+                            # Append a strict reminder to the prompt
+                            parts[1] = types.Part.from_text(text=prompt + "\n\nCRITICAL: You MUST include 'page_number' and 'bbox' (bounding box coordinates [ymin, xmin, ymax, xmax] 0-1000) for EVERY item. Do not omit them.")
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                            
+                        # If we got here with valid data or we're on the last attempt
+                        break
+                        
+                    except (json.JSONDecodeError, asyncio.TimeoutError, genai_errors.ServerError, genai_errors.APIError) as e:
+                        logger.error(f"Attempt {attempt + 1} failed for {filename}: {e}")
+                        if attempt == max_retries - 1:
+                            if isinstance(e, asyncio.TimeoutError):
+                                return [{"raw_text": f"Document - {filename} (Extraction timed out)", "amount": 0.0, "source_document": filename, "error": "Timeout"}]
+                            elif isinstance(e, (genai_errors.ServerError, genai_errors.APIError)):
+                                return [{"raw_text": f"Document - {filename} (Gemini Error: {str(e)})", "amount": 0.0, "source_document": filename, "error": str(e)}]
+                            else:
+                                raise e
+                        await asyncio.sleep(2 ** attempt) # Exponential backoff
                 
                 # Add source document to each item
                 for expense in expenses_data:
@@ -846,8 +885,8 @@ class MultiDocumentExtractionService:
                 {
                     "scenario_name": "Proforma at Stabilized Rent",
                     "rows": [
-                        {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750},
-                        {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05},
+                        {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "page_number": 1, "bbox": [100, 100, 200, 200]},
+                        {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05, "page_number": 1, "bbox": [200, 100, 300, 200]},
                         ...
                     ],
                     "purchase_price": 9440000,
@@ -859,6 +898,7 @@ class MultiDocumentExtractionService:
 
             CRITICAL:
             - Preserve the exact row names.
+            - You MUST include 'page_number' (1-based integer) and 'bbox' ([ymin, xmin, ymax, xmax] 0-1000) for EVERY row to track its exact location. Do not omit them.
             - Return ONLY the JSON array.
             """
 
@@ -1387,7 +1427,9 @@ class MultiDocumentExtractionService:
                 "source_document": filename,
                 "document_id": document_id,
                 "source_type": "OM_Proforma", # Marker for priority logic
-                "expense_year": None # OM usually implies current/forward, not specific year unless stated
+                "expense_year": None, # OM usually implies current/forward, not specific year unless stated
+                "page_number": row.page_number,
+                "bbox": row.bbox
             })
             
         logger.info(f"Converted {len(expenses)} rows from OM Proforma to Expense Items")
@@ -1402,6 +1444,9 @@ class MultiDocumentExtractionService:
         # 1. Property Meta
         meta = om_data.get("property_meta", {})
         if meta:
+            page_number = meta.get("page_number")
+            bbox = meta.get("bbox")
+            
             # Property Name
             if meta.get("property_name"):
                 items.append(NormalizedDataItem(
@@ -1412,7 +1457,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"text_value": meta["property_name"], "document_id": document_id}
+                    metadata={"text_value": meta["property_name"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
             # Property Address
@@ -1425,7 +1470,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"text_value": meta["address"], "document_id": document_id}
+                    metadata={"text_value": meta["address"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
             # Purchase Price
@@ -1438,7 +1483,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["purchase_price"], "document_id": document_id}
+                    metadata={"amount": meta["purchase_price"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
             
             # Total Units
@@ -1451,7 +1496,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["total_units"], "document_id": document_id}
+                    metadata={"amount": meta["total_units"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
             
             # Year Built
@@ -1464,7 +1509,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["year_built"], "document_id": document_id}
+                    metadata={"amount": meta["year_built"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
                 
             # Rentable Area
@@ -1477,7 +1522,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["rentable_sqft"], "document_id": document_id}
+                    metadata={"amount": meta["rentable_sqft"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
         # 2. Rent Roll Items
@@ -1499,7 +1544,9 @@ class MultiDocumentExtractionService:
                     "lease_end": item.get("lease_end", ""),
                     "move_in_date": item.get("move_in_date", ""),
                     "is_rent_roll_item": True,
-                    "document_id": document_id
+                    "document_id": document_id,
+                    "page_number": item.get("page_number"),
+                    "bbox": item.get("bbox")
                 }
                 
                 # If we have an explicit unit number, use it (usually count=1)

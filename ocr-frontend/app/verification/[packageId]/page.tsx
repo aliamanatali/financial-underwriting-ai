@@ -2,16 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
-
-const ExpensesVerificationWidget = dynamic(() => import("@/components/ExpensesVerificationWidget"), {
-  ssr: false,
-});
-
+import ExpensesVerificationWidget from "@/components/ExpensesVerificationWidget";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
 const AVAILABLE_CATEGORIES = [
@@ -84,20 +79,17 @@ export default function VerificationPage() {
       Object.entries(auditGroups).forEach(([group, items]) => {
         console.groupCollapsed(`📂 Category Group: ${group} (${items.length} items)`);
         
-        // Create a tabular view for high-level scan
         const tableData = items.map(item => ({
           "Mapped Category": item.normalized_value,
           "Raw Text": item.raw_text,
           "Source": item.source_document,
           "Confidence": `${(item.confidence * 100).toFixed(1)}%`,
           "Classification": item.data_classification,
-          // Cast to any to check for direct properties that might be sent by backend but not in type definition
           "Extracted Amount": (item as any).amount || item.metadata?.amount || "N/A",
           "Period": (item as any).period || item.metadata?.period || "N/A"
         }));
         console.table(tableData);
 
-        // Detailed view for "Maths" and specific metadata
         console.log("📝 Detailed Item Breakdown (Maths & Metadata):");
         items.forEach(item => {
             console.groupCollapsed(`Item: ${item.normalized_value || "Unknown"} (from ${item.source_document})`);
@@ -138,11 +130,9 @@ export default function VerificationPage() {
         const data = await response.json();
         setDealPackage(data);
         
-        // If normalized data is persisted in package, load it
         if (data.normalized_data && data.normalized_data.length > 0) {
           setNormalizedItems(data.normalized_data);
         } else {
-          // Auto-start normalization if no normalized data exists
           handleNormalize();
         }
         
@@ -164,7 +154,6 @@ export default function VerificationPage() {
     setError(null);
     setProgress({ percentage: 0, message: "Starting normalization..." });
 
-    // Start progress stream
     const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
       setProgress(progressUpdate);
     });
@@ -184,7 +173,6 @@ export default function VerificationPage() {
       const data = await response.json();
       setNormalizedItems(data.normalized_items);
       
-      // Also refresh deal package to get updated status
       const pkgResponse = await fetch(`${baseUrl}/api/v1/multi-document/packages/${packageId}`);
       if (pkgResponse.ok) {
         const pkgData = await pkgResponse.json();
@@ -217,7 +205,6 @@ export default function VerificationPage() {
         throw new Error("Failed to verify item");
       }
 
-      // Update local state
       setNormalizedItems((prev) =>
         prev.map((item) =>
           item.id === itemId
@@ -237,7 +224,6 @@ export default function VerificationPage() {
 
   // Handle updates from ExpensesVerificationWidget
   const handleUpdateItems = async (updatedItems: NormalizedDataItem[]) => {
-    // For now, we update them one by one, but we could add a batch endpoint
     for (const item of updatedItems) {
       try {
         const response = await fetch(
@@ -259,7 +245,6 @@ export default function VerificationPage() {
         );
 
         if (response.ok) {
-          // Update local state
           setNormalizedItems((prev) =>
             prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
           );
@@ -286,7 +271,6 @@ export default function VerificationPage() {
 
       if (response.ok) {
         const data = await response.json();
-        // Add to local state
         setNormalizedItems((prev) => [...prev, data.item]);
       }
     } catch (err) {
@@ -305,7 +289,6 @@ export default function VerificationPage() {
       );
 
       if (response.ok) {
-        // Remove from local state
         setNormalizedItems((prev) => prev.filter((i) => i.id !== itemId));
       }
     } catch (err) {
@@ -333,7 +316,6 @@ export default function VerificationPage() {
     }
     
     try {
-      // Use the new batch verification endpoint
       const response = await fetch(
         `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-items-batch`,
         {
@@ -357,7 +339,6 @@ export default function VerificationPage() {
         throw new Error("Failed to verify items");
       }
       
-      // Update all items in local state at once
       setNormalizedItems((prev) =>
         prev.map((item) =>
           unverifiedItems.some(unverified => unverified.id === item.id)
@@ -376,13 +357,11 @@ export default function VerificationPage() {
     setError(null);
     setProgress({ percentage: 0, message: "Regenerating financial report..." });
 
-    // Start progress stream
     const eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
       setProgress(progressUpdate);
     });
 
     try {
-      // Use default deal parameters for regeneration
       const defaultParams = {
         growth_rate: 0.03,
         exit_cap_rate: 0.06,
@@ -415,7 +394,6 @@ export default function VerificationPage() {
         throw new Error("Failed to regenerate financial report");
       }
 
-      // Redirect to home page after successful regeneration as requested
       router.push("/");
       
     } catch (err) {
@@ -431,9 +409,7 @@ export default function VerificationPage() {
     router.push(`/analysis/${packageId}`);
   };
 
-  // Group items by category_group
   const groupedItems = normalizedItems.reduce((acc, item) => {
-    // Use the category_group enum value for grouping
     const section = item.category_group || "Other";
     
     if (!acc[section]) {
@@ -444,7 +420,6 @@ export default function VerificationPage() {
   }, {} as Record<string, NormalizedDataItem[]>);
 
   const getConfidenceColor = (confidence: number) => {
-    // Convert to percentage if needed (0-1 range to 0-100)
     const percentage = confidence <= 1 ? confidence * 100 : confidence;
     if (percentage >= 95) return "bg-green-500";
     if (percentage >= 85) return "bg-amber-500";
@@ -452,7 +427,6 @@ export default function VerificationPage() {
   };
 
   const getConfidenceTextColor = (confidence: number) => {
-    // Convert to percentage if needed (0-1 range to 0-100)
     const percentage = confidence <= 1 ? confidence * 100 : confidence;
     if (percentage >= 95) return "text-green-700";
     if (percentage >= 85) return "text-amber-700";
@@ -460,7 +434,6 @@ export default function VerificationPage() {
   };
 
   const formatConfidence = (confidence: number) => {
-    // Convert to percentage if needed (0-1 range to 0-100)
     const percentage = confidence <= 1 ? confidence * 100 : confidence;
     return Math.round(percentage);
   };
@@ -469,7 +442,6 @@ export default function VerificationPage() {
   const totalCount = normalizedItems.length;
   const verificationPercentage = totalCount > 0 ? Math.round((verifiedCount / totalCount) * 100) : 0;
 
-  // Pass the full documents object to the verification table
   const documents = dealPackage?.documents ?? {};
 
   if (loading) {
@@ -499,22 +471,18 @@ export default function VerificationPage() {
 
   return (
     <div className="min-h-screen overflow-hidden bg-white text-neutral-900 flex">
-      {/* Sidebar */}
       <Sidebar
         sidebarExpanded={sidebarExpanded}
         toggleSidebar={() => setSidebarExpanded(!sidebarExpanded)}
       />
 
-      {/* Content Wrapper */}
       <div
         className={`flex flex-col flex-1 transition-all duration-300 h-screen relative z-10 bg-neutral-50/50 ${
           sidebarExpanded ? "pl-64" : "pl-[72px]"
         }`}
       >
-        {/* Top Bar */}
         <header className="bg-white/80 backdrop-blur-md border-b border-neutral-200 shrink-0 sticky top-0 z-40">
           <div className="flex lg:px-8 shrink-0 bg-white/80 h-16 border-neutral-100 border-b pr-6 pl-6 top-0 backdrop-blur-md items-center justify-between">
-            {/* Breadcrumbs / Context */}
             <div className="flex items-center gap-4">
               <button
                 onClick={() => router.push(`/analysis/${packageId}`)}
@@ -538,7 +506,6 @@ export default function VerificationPage() {
               </div>
             </div>
 
-            {/* Right Actions */}
             <div className="flex items-center gap-3">
               {normalizedItems.length > 0 && verifiedCount < totalCount && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-100/50">
@@ -552,10 +519,8 @@ export default function VerificationPage() {
           </div>
         </header>
 
-        {/* Main Workspace */}
         <main className="flex-1 overflow-y-auto relative">
           {normalizedItems.length === 0 && !normalizing ? (
-            // Loading state while auto-normalizing
             <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
               <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
                 <div className="flex items-end justify-between mb-1">
@@ -569,7 +534,6 @@ export default function VerificationPage() {
               </div>
             </div>
           ) : normalizing ? (
-            // Normalization in progress
             <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
               <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
                 <div className="flex items-end justify-between mb-1">
@@ -583,7 +547,6 @@ export default function VerificationPage() {
               </div>
             </div>
           ) : (
-            // Header & Sticky Progress
             <div className="bg-white border-b border-neutral-200 pt-8 pb-0 sticky top-0 z-30 shadow-sm">
               <div className="max-w-7xl mx-auto px-6 lg:px-10 pb-6">
                 <div className="flex items-end justify-between mb-1">
@@ -639,7 +602,6 @@ export default function VerificationPage() {
 
           <div className="max-w-7xl mx-auto p-6 lg:p-10 flex flex-col gap-10 pb-24">
             {(normalizing || regenerating) ? (
-              // Normalization Progress
               <div className="bg-white rounded-lg shadow p-12 text-center">
                 <div className="max-w-md mx-auto">
                   <div className="w-full max-w-md mx-auto mt-6">
@@ -693,9 +655,7 @@ export default function VerificationPage() {
                 </div>
               </div>
             ) : (
-              // Data Tables by Section
               <div className="space-y-12">
-                {/* New Expenses Verification Box */}
                 <ExpensesVerificationWidget
                   items={normalizedItems}
                   availableCategories={AVAILABLE_CATEGORIES}
@@ -717,7 +677,6 @@ export default function VerificationPage() {
             )}
           </div>
 
-          {/* Footer Legend */}
           {normalizedItems.length > 0 && (
             <div className="bg-white border-t border-neutral-200 py-3 px-10 flex items-center gap-6 mt-8">
               <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Confidence Score Legend</span>

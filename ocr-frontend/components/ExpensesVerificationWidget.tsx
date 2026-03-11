@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { NormalizedDataItem, CategoryGroup } from "@/lib/types";
+import { NormalizedDataItem, CategoryGroup, DocumentMetadata } from "@/lib/types";
+import dynamic from "next/dynamic";
+
+const SourceDocumentViewer = dynamic(() => import("@/components/SourceDocumentViewer"), {
+  ssr: false,
+});
 
 interface ExpenseItem {
   id: string;
@@ -9,6 +14,8 @@ interface ExpenseItem {
   amount: number;
   category: string;
   isNew?: boolean;
+  source_document?: string;
+  metadata?: any;
 }
 
 interface ExpensesVerificationWidgetProps {
@@ -18,6 +25,8 @@ interface ExpensesVerificationWidgetProps {
   onAddExpense: (newItem: Partial<NormalizedDataItem>) => Promise<void>;
   onRemoveExpense: (itemId: string) => Promise<void>;
   onRegenerate: () => Promise<void>;
+  documents?: Record<string, DocumentMetadata[]> | DocumentMetadata[];
+  packageId?: string;
 }
 
 export default function ExpensesVerificationWidget({
@@ -27,8 +36,11 @@ export default function ExpensesVerificationWidget({
   onAddExpense,
   onRemoveExpense,
   onRegenerate,
+  documents,
+  packageId,
 }: ExpensesVerificationWidgetProps) {
   const [isAdding, setIsAdding] = useState(false);
+  const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Partial<ExpenseItem>>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -59,40 +71,29 @@ const getCategoryGroup = (category: string): CategoryGroup => {
       );
 
       // 2. Intelligent Deduplication
-      // Remove items where raw_text is just the amount (OCR artifacts) if a proper descriptive version exists
       const cleanedList: NormalizedDataItem[] = [];
       const seenAmounts = new Map<number, NormalizedDataItem>();
 
-      // First pass: find descriptive items
       list.forEach(item => {
         const amount = item.metadata?.amount || 0;
         const text = (item.raw_text || "").trim();
-        
-        // Is it just a number?
         const isJustNumber = /^\$?[0-9,.]+(?:\.00)?$/.test(text.replace(/\s/g, ''));
         
         if (!isJustNumber && text.length > 1) {
             cleanedList.push(item);
-            // Track the descriptive item for this amount
             if (amount > 0) seenAmounts.set(amount, item);
         }
       });
 
-      // Second pass: handle the "number-only" items
       list.forEach(item => {
         const amount = item.metadata?.amount || 0;
         const text = (item.raw_text || "").trim();
         const isJustNumber = /^\$?[0-9,.]+(?:\.00)?$/.test(text.replace(/\s/g, ''));
         
         if (isJustNumber) {
-            // Only add if we haven't seen a descriptive version for this amount
             if (!seenAmounts.has(amount)) {
                 cleanedList.push(item);
                 seenAmounts.set(amount, item);
-            } else {
-                // We skip this duplicate, but if it was verified and the descriptive one wasn't, 
-                // we might want to carry over that verification status? 
-                // For now, just skip to avoid clutter.
             }
         }
       });
@@ -113,9 +114,18 @@ const getCategoryGroup = (category: string): CategoryGroup => {
         name: item.raw_text || "",
         amount: typeof item.metadata?.amount === 'number' ? item.metadata.amount : 0,
         category: item.user_correction || item.normalized_value || "Uncategorized",
+        source_document: item.source_document,
+        metadata: item.metadata
       }))
     );
   }, [expenseItems]);
+
+  const getDocumentId = (sourceDocument?: string): string | undefined => {
+    if (!documents || !sourceDocument) return undefined;
+    const allDocs = Array.isArray(documents) ? documents : Object.values(documents).flat();
+    const doc = allDocs.find(d => d.filename === sourceDocument);
+    return doc?.document_id;
+  };
 
   const startEditing = (expense: ExpenseItem) => {
     setEditingId(expense.id);
@@ -132,7 +142,6 @@ const getCategoryGroup = (category: string): CategoryGroup => {
     try {
         const originalItem = items.find((i) => i.id === id);
         if (originalItem && editValues) {
-            // Ensure amount is a number and handle potential undefined
             const newAmount = typeof editValues.amount === 'number' ? editValues.amount : 0;
             
             const updatedItem = {
@@ -147,7 +156,6 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                 }
             } as NormalizedDataItem;
             
-            console.log("Saving edited expense:", updatedItem);
             await onUpdateExpenses([updatedItem]);
         }
         setEditingId(null);
@@ -255,7 +263,9 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none font-medium"
                     />
                   ) : (
-                    <span className="text-slate-900 font-medium">{expense.name}</span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-slate-900 font-medium">{expense.name}</span>
+                    </div>
                   )}
                 </td>
                 <td className="px-6 py-3 text-sm">
@@ -283,7 +293,6 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                             type="text"
                             value={editValues.amount}
                             onChange={(e) => {
-                                // Strip commas and other non-numeric chars except decimal point
                                 const val = e.target.value.replace(/[^0-9.]/g, '');
                                 setEditValues({ ...editValues, amount: parseFloat(val) || 0 });
                             }}
@@ -321,6 +330,21 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         </>
                     ) : (
                         <>
+                            {expense.metadata?.page_number && getDocumentId(expense.source_document) && (
+                                <button
+                                  onClick={() => {
+                                    const originalItem = items.find(i => i.id === expense.id);
+                                    if (originalItem) setViewingItem(originalItem);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                  title={`View ${expense.source_document} (Page ${expense.metadata.page_number})`}
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                  </svg>
+                                </button>
+                            )}
                             <button
                                 onClick={() => startEditing(expense)}
                                 className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
@@ -423,6 +447,17 @@ const getCategoryGroup = (category: string): CategoryGroup => {
           <h3 className="text-sm font-medium text-slate-900">No expenses found</h3>
           <p className="text-xs text-slate-500 mt-1">No expenses were extracted from the documents. You can add them manually.</p>
         </div>
+      )}
+
+      {viewingItem && getDocumentId(viewingItem.source_document) && (
+        <SourceDocumentViewer
+          documentId={getDocumentId(viewingItem.source_document)!}
+          packageId={packageId}
+          filename={viewingItem.source_document}
+          pageNumber={viewingItem.metadata?.page_number}
+          bbox={viewingItem.metadata?.bbox}
+          onClose={() => setViewingItem(null)}
+        />
       )}
     </div>
   );

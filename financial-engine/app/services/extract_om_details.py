@@ -121,7 +121,7 @@ class OMScraperService:
             {
                 "scenario_name": "Proforma at Stabilized Rent",
                 "rows": [
-                    {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "percentage": null},
+                    {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "percentage": null, "page_number": 1, "bbox": [100, 100, 200, 200]},
                     ...
                 ],
                 "purchase_price": 9440000,
@@ -133,6 +133,7 @@ class OMScraperService:
         CRITICAL RULES:
         - Extract "Annual", "Monthly", and "Per Unit" values.
         - Preserve the EXACT row names.
+        - You MUST include 'page_number' (1-based integer) and 'bbox' ([ymin, xmin, ymax, xmax] 0-1000) for EVERY row to track its exact location. Do not omit them.
         - Extract all rows found in the table.
         - Look for "Asking Price", "Purchase Price", "CAP Rate", "GRM" usually at the bottom.
 
@@ -220,7 +221,9 @@ class OMScraperService:
                 "total_units": 20,
                 "address": "123 Main St, City, State",
                 "year_built": 1980,
-                "rentable_sqft": 15000
+                "rentable_sqft": 15000,
+                "page_number": 1,
+                "bbox": [100, 100, 200, 200]
             }},
             "rent_roll_items": [
                 {{
@@ -234,7 +237,9 @@ class OMScraperService:
                     "unit_size": 750,
                     "lease_start": "2023-01-01",
                     "lease_end": "2024-01-01",
-                    "move_in_date": "2022-05-15"
+                    "move_in_date": "2022-05-15",
+                    "page_number": 1,
+                    "bbox": [100, 100, 200, 200]
                 }}
             ]
         }}
@@ -244,6 +249,7 @@ class OMScraperService:
         2. DO NOT hallucinate unit numbers.
         3. If the document spans multiple pages, extract data from ALL pages of the rent roll.
         4. "count" should be 1 if "unit_number" is present.
+        5. You MUST include 'page_number' and 'bbox' (bounding box coordinates [ymin, xmin, ymax, xmax] 0-1000) for property_meta and EVERY rent_roll_item to track their exact location. Do not omit them.
         """
         
         try:

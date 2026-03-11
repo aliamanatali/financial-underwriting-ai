@@ -384,6 +384,8 @@ class OMProformaRow(BaseModel):
     monthly: Optional[float] = 0.0
     per_unit: Optional[float] = 0.0
     percentage: Optional[float] = None # e.g. 0.05 for 5%
+    page_number: Optional[int] = None
+    bbox: Optional[List[float]] = None
 
 class OMProformaTable(BaseModel):
     scenario_name: str
