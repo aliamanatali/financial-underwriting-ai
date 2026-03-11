@@ -262,7 +262,7 @@ export default function RentRollWidget({
   const hasParking = React.useMemo(() => items.some(i => i.parking && i.parking.trim() !== "" && i.parking.trim() !== "-"), [items]);
   const hasComments = React.useMemo(() => items.some(i => i.comments && i.comments.trim() !== "" && i.comments.trim() !== "-"), [items]);
   const hasMoveInDate = React.useMemo(() => items.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-" && i.move_in_date.trim().toUpperCase() !== "V"), [items]);
-  const hasTenantName = React.useMemo(() => items.some(i => i.tenant_name && i.tenant_name.trim() !== "" && i.tenant_name.toLowerCase() !== "unknown" && i.tenant_name.trim() !== "-"), [items]);
+  const hasTenantName = false;
   const hasFloor = React.useMemo(() => items.some(i => (i as any).floor && (i as any).floor.trim() !== "" && (i as any).floor.trim() !== "-"), [items]);
 
   const isNonOMFlow = !fullAnalysis?.om_proforma || fullAnalysis.om_proforma.length === 0;

@@ -54,7 +54,7 @@ export default function CombinedRentRollTable({ rentRoll, formatCurrency }: Comb
   const hasMoveInDate = rentRoll.some(i => i.move_in_date && i.move_in_date.trim() !== "" && i.move_in_date.trim() !== "-" && i.move_in_date.trim().toUpperCase() !== "V");
   // Using explicit type cast to access optional floor property
   const hasFloor = rentRoll.some(i => (i as any).floor && (i as any).floor.trim() !== "" && (i as any).floor.trim() !== "-");
-  const hasTenantName = rentRoll.some(i => i.tenant_name && i.tenant_name.trim() !== "" && i.tenant_name.toLowerCase() !== "unknown" && i.tenant_name.trim() !== "-");
+  const hasTenantName = false;
 
   return (
     <div className="mt-8">
