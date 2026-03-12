@@ -246,6 +246,12 @@ export default function PendingExpensesWidget({
                         <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
                             {expense.name}
                         </span>
+                        {originalItem?.text_type === "Human Written" && (
+                            <span className="inline-flex items-center ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 mr-1"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                                Human Written
+                            </span>
+                        )}
                     </div>
                   )}
                 </td>
