@@ -79,12 +79,8 @@ export default function SourceDocumentViewer({
         // 1. Get Download URL
         let url = "";
         if (packageId) {
-          const { signed_url } = await apiClient.getDocumentContentUrl(packageId, documentId);
-          if (!signed_url) {
-            throw new Error("Could not retrieve document URL");
-          }
-          // Use local proxy to bypass CORS issues with GCS
-          url = `/api/proxy-pdf?url=${encodeURIComponent(signed_url)}`;
+          const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
+          url = `${baseUrl}/api/v1/multi-document/packages/${packageId}/documents/${documentId}/download`;
         } else {
           // Fallback or direct URL construction for non-packaged documents
           const baseUrl = process.env.NEXT_PUBLIC_OCR_API_URL;
