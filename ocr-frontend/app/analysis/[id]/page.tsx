@@ -86,7 +86,7 @@ export default function AnalysisResultPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
-  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export" | "verification">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export" | "verification" | "verify-expenses">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
@@ -473,13 +473,27 @@ export default function AnalysisResultPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setActiveTab('verification')}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
+              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border border-transparent hover:border-neutral-200 ${
+                activeTab === 'verification' ? 'text-neutral-900 bg-neutral-100' : 'text-neutral-600 hover:bg-neutral-100'
+              }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 11l3 3L22 4"></path>
                 <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
               </svg>
               Verify Data
+            </button>
+            <button
+              onClick={() => setActiveTab('verify-expenses')}
+              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border border-transparent hover:border-neutral-200 ${
+                activeTab === 'verify-expenses' ? 'text-neutral-900 bg-neutral-100' : 'text-neutral-600 hover:bg-neutral-100'
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="1" x2="12" y2="23"></line>
+                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+              </svg>
+              Verify Expenses
             </button>
             <button
               onClick={() => setActiveTab('audit')}
@@ -528,6 +542,19 @@ export default function AnalysisResultPage() {
             {activeTab === "verification" && (
               <VerificationWidget
                 packageId={id}
+                view="data"
+                onAnalysisUpdate={(newAnalysis) => {
+                    console.log("Updating analysis state from verification", newAnalysis);
+                    setAnalysis(newAnalysis);
+                    setActiveTab("dashboard");
+                }}
+              />
+            )}
+
+            {activeTab === "verify-expenses" && (
+              <VerificationWidget
+                packageId={id}
+                view="expenses"
                 onAnalysisUpdate={(newAnalysis) => {
                     console.log("Updating analysis state from verification", newAnalysis);
                     setAnalysis(newAnalysis);

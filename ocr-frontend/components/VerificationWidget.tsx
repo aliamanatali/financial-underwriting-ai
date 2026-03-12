@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
+import PendingExpensesWidget from "@/components/PendingExpensesWidget";
 
 const ExpensesVerificationWidget = dynamic(() => import("@/components/ExpensesVerificationWidget"), {
   ssr: false,
@@ -46,10 +47,11 @@ const AVAILABLE_CATEGORIES = [
 
 interface VerificationWidgetProps {
   packageId: string;
+  view?: "data" | "expenses" | "both";
   onAnalysisUpdate?: (analysis: any) => void;
 }
 
-export default function VerificationWidget({ packageId, onAnalysisUpdate }: VerificationWidgetProps) {
+export default function VerificationWidget({ packageId, view = "both", onAnalysisUpdate }: VerificationWidgetProps) {
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [normalizedItems, setNormalizedItems] = useState<NormalizedDataItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -465,14 +467,21 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
         <div className="flex items-end justify-between mb-1">
           <div>
             <h2 className="text-lg font-semibold text-neutral-900 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-                <path d="M9 11l3 3L22 4"></path>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-              </svg>
-              Data Verification
+              {view === "expenses" ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                  <path d="M9 11l3 3L22 4"></path>
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                </svg>
+              )}
+              {view === "expenses" ? "Verify Expenses" : "Data Verification"}
             </h2>
             <p className="text-sm text-neutral-500 mt-1">
-              Review and correct AI-mapped categories from your documents.
+              {view === "expenses" ? "Review and correct expense verifications." : "Review and correct AI-mapped categories from your documents."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -574,24 +583,41 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
       ) : (
         // Data Tables by Section
         <div className="space-y-12">
-          {/* New Expenses Verification Box */}
-          <ExpensesVerificationWidget
-            items={normalizedItems}
-            availableCategories={AVAILABLE_CATEGORIES}
-            onUpdateExpenses={handleUpdateItems}
-            onAddExpense={handleAddManualExpense}
-            onRemoveExpense={handleRemoveItem}
-            onRegenerate={handleRegenerateReport}
-          />
+          {(view === "expenses" || view === "both") && (
+            <>
+              <ExpensesVerificationWidget
+                items={normalizedItems}
+                availableCategories={AVAILABLE_CATEGORIES}
+                onUpdateExpenses={handleUpdateItems}
+                onAddExpense={handleAddManualExpense}
+                onRemoveExpense={handleRemoveItem}
+                onRegenerate={handleRegenerateReport}
+                documents={documents}
+                packageId={packageId}
+              />
+              <PendingExpensesWidget
+                items={normalizedItems}
+                availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
+                onUpdateExpenses={handleUpdateItems}
+                onAddExpense={handleAddManualExpense}
+                onRemoveExpense={handleRemoveItem}
+                onRegenerate={handleRegenerateReport}
+                documents={documents}
+                packageId={packageId}
+              />
+            </>
+          )}
 
-          <DataVerificationTable
-            items={normalizedItems}
-            availableCategories={AVAILABLE_CATEGORIES}
-            documents={documents}
-            packageId={packageId}
-            onVerify={handleVerifyItem}
-            onVerifyAll={handleVerifyAll}
-          />
+          {(view === "data" || view === "both") && (
+            <DataVerificationTable
+              items={normalizedItems}
+              availableCategories={AVAILABLE_CATEGORIES}
+              documents={documents}
+              packageId={packageId}
+              onVerify={handleVerifyItem}
+              onVerifyAll={handleVerifyAll}
+            />
+          )}
         </div>
       )}
 

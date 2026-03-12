@@ -275,19 +275,19 @@ const getCategoryGroup = (category: string): CategoryGroup => {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-8">
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
+        <div className="flex items-center gap-4">
           <h3 className="text-lg font-semibold text-slate-900">Expenses Verification</h3>
-          <p className="text-xs text-slate-500">Review and correct property expenses. Descriptive entries are prioritized over raw OCR amounts.</p>
+          <span className="text-sm text-slate-500">{localExpenses.length} items</span>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex space-x-1 mr-2 bg-slate-100 p-1 rounded-lg">
+            <div className="flex space-x-1 mr-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
                 {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
                     <button
                         key={tab}
                         onClick={() => setTextTypeFilter(tab)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
                             textTypeFilter === tab
-                                ? "bg-white text-slate-900 shadow-sm"
+                                ? "bg-slate-100 text-slate-900"
                                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
                         }`}
                     >
@@ -334,28 +334,56 @@ const getCategoryGroup = (category: string): CategoryGroup => {
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-white">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Expense Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Category</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Source Document</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Raw Text</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Mapped Category</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Amount</th>
+              <th className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">Confidence</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider w-24">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-200">
-            {localExpenses.map((expense) => (
-              <tr key={expense.id} className={`${editingId === expense.id ? 'bg-blue-50/30' : 'hover:bg-slate-50'} transition-colors`}>
-                <td className="px-6 py-3 text-sm">
+            {localExpenses.map((expense) => {
+              const selectedItem = expense.occurrences.find(o => o.id === expense.selectedOccurrenceId) || expense.occurrences[0];
+              return (
+              <tr key={expense.id} className={`${selectedItem?.user_verified ? 'bg-emerald-50/30' : 'hover:bg-slate-50'} transition-colors duration-150`}>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center flex-1 min-w-0" title={selectedItem?.source_document}>
+                        <svg className="w-4 h-4 mr-2 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span className="truncate max-w-[120px]">{selectedItem?.source_document || 'Manual Entry'}</span>
+                    </div>
+                    {selectedItem?.metadata?.page_number && (
+                      <button
+                        onClick={() => setViewingItem(selectedItem)}
+                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                        title="View Source Document"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-900">
                   {editingId === expense.id ? (
                     <input
                         type="text"
                         value={editValues.name}
                         onChange={(e) => setEditValues({ ...editValues, name: e.target.value })}
-                        className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none font-medium"
+                        className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                     />
                   ) : (
-                    <div className="flex items-center gap-2">
-                        <span className="text-slate-900 font-medium">{expense.name}</span>
-                        {expense.occurrences[0]?.text_type === "Human Written" && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
+                    <div className="max-w-xs" title={expense.name}>
+                        <span className="font-mono text-xs bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-block truncate max-w-[200px]">
+                            {expense.name}
+                        </span>
+                        {selectedItem?.text_type === "Human Written" && (
+                            <span className="inline-flex items-center ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 mr-1"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                                 Human Written
                             </span>
@@ -363,24 +391,37 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                     </div>
                   )}
                 </td>
-                <td className="px-6 py-3 text-sm">
+                <td className="px-6 py-4 text-sm">
                   {editingId === expense.id ? (
                     <select
                         value={editValues.category}
                         onChange={(e) => setEditValues({ ...editValues, category: e.target.value })}
-                        className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                        className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                     >
                         {availableCategories.map((cat) => (
                             <option key={cat} value={cat}>{cat}</option>
                         ))}
                     </select>
                   ) : (
-                    <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-medium border border-slate-200">
+                    <div className="flex flex-col">
+                        <span
+                        className={`font-medium ${
+                            selectedItem?.user_correction
+                            ? "text-[#E65400]"
+                            : "text-slate-900"
+                        }`}
+                        >
                         {expense.category}
-                    </span>
+                        </span>
+                        {selectedItem?.user_correction && (
+                        <span className="text-[10px] uppercase font-bold text-[#FF5E00] mt-1">
+                            Edited
+                        </span>
+                        )}
+                    </div>
                   )}
                 </td>
-                <td className="px-6 py-3 text-sm text-right font-mono">
+                <td className="px-6 py-4 text-sm text-right font-mono">
                   {editingId === expense.id ? (
                     <div className="flex items-center justify-end">
                         <span className="text-slate-400 mr-1">$</span>
@@ -391,7 +432,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                                 const val = e.target.value.replace(/[^0-9.]/g, '');
                                 setEditValues({ ...editValues, amount: parseFloat(val) || 0 });
                             }}
-                            className="w-24 bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-right"
+                            className="w-24 bg-white border border-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-[#FF5E00] outline-none text-right"
                         />
                     </div>
                   ) : expense.occurrences.length > 1 ? (
@@ -405,7 +446,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         <select
                             value={expense.selectedOccurrenceId}
                             onChange={(e) => handleOccurrenceChange(expense.id, e.target.value)}
-                            className="bg-amber-50/30 border border-amber-300 rounded px-2 py-1 text-right font-semibold text-slate-800 text-sm focus:ring-1 focus:ring-amber-500 outline-none shadow-sm"
+                            className="bg-amber-50/30 border border-amber-300 rounded px-2 py-1.5 text-right font-semibold text-slate-800 text-sm focus:ring-1 focus:ring-amber-500 outline-none shadow-sm"
                         >
                             {expense.occurrences.map((occ) => (
                                 <option key={occ.id} value={occ.id}>
@@ -418,131 +459,133 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                     <span className="text-slate-900 font-semibold">${expense.amount.toLocaleString()}</span>
                   )}
                 </td>
-                <td className="px-6 py-3 text-sm text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    {editingId === expense.id ? (
-                        <>
-                            <button
-                                onClick={() => handleSaveEdit(expense.id)}
-                                disabled={isSaving}
-                                className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                                title="Save"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="20 6 9 17 4 12"></polyline>
-                                </svg>
-                            </button>
-                            <button
-                                onClick={cancelEditing}
-                                className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-colors"
-                                title="Cancel"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                                </svg>
-                            </button>
-                        </>
+                <td className="px-6 py-4 whitespace-nowrap text-center">
+                    {selectedItem?.confidence !== undefined ? (
+                        <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            selectedItem.confidence >= 0.95 ? "text-emerald-700 bg-emerald-50 border border-emerald-100" :
+                            selectedItem.confidence >= 0.85 ? "text-amber-700 bg-amber-50 border border-amber-100" :
+                            "text-rose-700 bg-rose-50 border border-rose-100"
+                        }`}
+                        >
+                        {(selectedItem.confidence * 100).toFixed(0)}%
+                        </span>
                     ) : (
-                        <>
-                            {(() => {
-                                const selectedItem = expense.occurrences.find(o => o.id === expense.selectedOccurrenceId) || expense.occurrences[0];
-                                return selectedItem?.metadata?.page_number ? (
-                                    <button
-                                      onClick={() => setViewingItem(selectedItem)}
-                                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                                      title={`View ${selectedItem.source_document} (Page ${selectedItem.metadata.page_number})`}
-                                    >
-                                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                                        <circle cx="12" cy="12" r="3"/>
-                                      </svg>
-                                    </button>
-                                ) : null;
-                            })()}
-                            <button
-                                onClick={() => startEditing(expense)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
-                                title="Edit"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                                </svg>
-                            </button>
-                            <button
-                                onClick={() => handleDelete(expense.id)}
-                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                title="Delete"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M3 6h18"></path>
-                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                                </svg>
-                            </button>
-                        </>
+                        <span className="text-slate-400 text-xs">-</span>
                     )}
-                  </div>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                  {editingId === expense.id ? (
+                    <div className="flex items-center justify-end space-x-3">
+                        <button
+                            onClick={() => handleSaveEdit(expense.id)}
+                            disabled={isSaving}
+                            className="text-emerald-600 hover:text-emerald-800 font-semibold"
+                        >
+                            Save
+                        </button>
+                        <button
+                            onClick={cancelEditing}
+                            className="text-slate-500 hover:text-slate-700 font-medium"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-end space-x-4">
+                        <button
+                            onClick={() => startEditing(expense)}
+                            className="text-slate-500 hover:text-[#FF5E00] font-medium transition-colors"
+                        >
+                            Edit
+                        </button>
+                        {!selectedItem?.user_verified ? (
+                            <button
+                            onClick={() => handleOccurrenceChange(expense.id, expense.selectedOccurrenceId)}
+                            className="text-[#FF5E00] hover:text-orange-800 font-semibold transition-colors flex items-center"
+                            >
+                            Verify
+                            </button>
+                        ) : (
+                            <span className="inline-flex items-center text-emerald-700 font-medium text-sm">
+                                <svg className="w-4 h-4 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                </svg>
+                                Verified
+                            </span>
+                        )}
+                        <button
+                            onClick={() => handleDelete(expense.id)}
+                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                            title="Delete"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 6h18"></path>
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                  )}
                 </td>
               </tr>
-            ))}
+            )})}
 
             {isAdding && (
               <tr className="bg-blue-50/50">
-                <td className="px-6 py-3 text-sm">
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                  <span className="text-slate-400 italic">Manual Entry</span>
+                </td>
+                <td className="px-6 py-4 text-sm">
                   <input
                     type="text"
                     placeholder="New Expense Name"
                     value={newItem.name}
                     onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                    className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none font-medium"
+                    className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                     autoFocus
                   />
                 </td>
-                <td className="px-6 py-3 text-sm">
+                <td className="px-6 py-4 text-sm">
                   <select
                     value={newItem.category}
                     onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
-                    className="w-full bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-xs"
+                    className="block w-full px-3 py-2 text-sm border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                   >
                     {availableCategories.map((cat) => (
                       <option key={cat} value={cat}>{cat}</option>
                     ))}
                   </select>
                 </td>
-                <td className="px-6 py-3 text-sm text-right">
-                    <div className="flex items-center justify-end">
+                <td className="px-6 py-4 text-sm text-right">
+                    <div className="flex items-center justify-end font-mono">
                       <span className="text-slate-400 mr-1">$</span>
                       <input
                         type="text"
                         placeholder="0"
                         value={newItem.amount}
                         onChange={(e) => setNewItem({ ...newItem, amount: parseFloat(e.target.value) || 0 })}
-                        className="w-24 bg-white border border-blue-200 rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none text-right"
+                        className="w-24 bg-white border border-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-[#FF5E00] outline-none text-right"
                       />
                     </div>
                 </td>
-                <td className="px-6 py-3 text-sm text-right">
-                    <div className="flex items-center justify-end gap-2">
+                <td className="px-6 py-4 text-center">
+                    <span className="text-slate-400 text-xs">-</span>
+                </td>
+                <td className="px-6 py-4 text-sm text-right">
+                    <div className="flex items-center justify-end space-x-3">
                       <button
                         onClick={handleAddNewExpense}
                         disabled={isSaving}
-                        className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
-                        title="Save"
+                        className="text-emerald-600 hover:text-emerald-800 font-semibold"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
+                        Save
                       </button>
                       <button
                         onClick={() => setIsAdding(false)}
-                        className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-colors"
-                        title="Cancel"
+                        className="text-slate-500 hover:text-slate-700 font-medium"
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="18" y1="6" x2="6" y2="18"></line>
-                          <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
+                        Cancel
                       </button>
                     </div>
                 </td>
