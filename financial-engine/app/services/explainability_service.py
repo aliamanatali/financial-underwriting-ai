@@ -100,7 +100,7 @@ class ExplainabilityService:
             Guidance for AI:
             - If the status is PASS, you generally approve. If FAIL, you reject.
             - DO NOT fabricate specific findings from a structural report (e.g., do not mention specific foundation or roof issues unless they are in the data).
-            - Instead, based on the Year Built ({self.analysis.property_meta.year_built}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
+            - Instead, based on the Year Built ({self.analysis.property_meta.year_built if self.analysis.property_meta.year_built > 0 else "Unknown"}), recommend standard due diligence (e.g., "Given the 1970s vintage, a Property Condition Assessment is recommended to evaluate plumbing and roof systems").
             - "Upside in rent" refers to the Loss to Lease (Current vs Market).
             """
             
@@ -765,8 +765,10 @@ class ExplainabilityService:
         # Vintage check
         year_built = self.analysis.property_meta.year_built or 0
         diligence_note = "None"
-        if year_built < 1980:
+        if year_built > 0 and year_built < 1980:
             diligence_note = f"Structural Inspection Required (Year Built {year_built})"
+        elif year_built == 0:
+            diligence_note = "Year Built unknown - standard inspection recommended"
         
         # Dynamic near_campus determination
         # TODO: Integrate with geocoding API to determine proximity to universities
@@ -808,7 +810,7 @@ class ExplainabilityService:
             is_mismanaged_source="Expense Ratio Analysis (T12/Pro Forma)",
             
             diligence_issues=diligence_note,
-            diligence_issues_source=f"Property Vintage (Year Built: {year_built})",
+            diligence_issues_source=f"Property Vintage (Year Built: {year_built if year_built > 0 else '-'})",
             
             primary_risks=primary_risks,
             primary_risks_source="Risk Assessment Model (DSCR, LTV, Age)",

@@ -1147,18 +1147,17 @@ export default function RentRollWidget({
           <div className="overflow-x-auto horizontal-scrollbar">
             <table className="min-w-full text-center text-sm whitespace-nowrap">
             <thead className="bg-neutral-900 text-white text-xs uppercase font-semibold">
-                <tr>
-                  <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
-                  <th colSpan={5} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
+              <tr>
+                <th colSpan={1} className="px-4 py-2 text-center border-b border-r border-neutral-800"></th>
+                <th colSpan={5} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Unit Mix Summary</th>
                   <th colSpan={1} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Current Effective</th>
                   <th colSpan={3} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Pro Forma Rents</th>
                   <th colSpan={2} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-700">Pro Forma Rent Comparison</th>
                   <th colSpan={6} className="px-4 py-2 text-center border-b border-r border-neutral-800 bg-neutral-800">Notes on Tenancy</th>
                 </tr>
                 <tr className="tracking-wider whitespace-nowrap">
-                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10 text-center">Count</th>
-                  <th className="px-4 py-3 border-r sticky left-[3rem] bg-neutral-900 z-10 text-center">Unit</th>
-                  <th className="px-4 py-3 border-r sticky left-[7rem] bg-neutral-900 z-10 text-center">Occupancy Type</th>
+                  <th className="px-4 py-3 border-r sticky left-0 bg-neutral-900 z-10 text-center">Unit</th>
+                  <th className="px-4 py-3 border-r sticky left-[4rem] bg-neutral-900 z-10 text-center">Occupancy Type</th>
                   <th className="px-4 py-3 border-r text-center">Beds</th>
                   <th className="px-4 py-3 border-r text-center">Size</th>
                   <th className="px-4 py-3 border-r text-center">$/Month</th>
@@ -1218,15 +1217,14 @@ export default function RentRollWidget({
                   const bedCount = (item as any).bed_count || config?.bed_count || getBedCountFromUnitType(item.unit_type);
                   return (
                     <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
-                      <td className="px-4 py-2.5 text-center sticky left-0 bg-white group-hover:bg-neutral-50/50">{idx + 1}</td>
-                      <td className="px-4 py-2.5 sticky left-[3rem] bg-white group-hover:bg-neutral-50/50 text-center">
+                      <td className="px-4 py-2.5 sticky left-0 bg-white group-hover:bg-neutral-50/50 text-center">
                         {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
                           <input type="text" value={item.unit_number || ""} onChange={(e) => handleItemChangeById(item.id, "unit_number", e.target.value)} className="w-32 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_number
                         )}
                       </td>
-                      <td className="px-4 py-2.5 sticky left-[7rem] bg-white group-hover:bg-neutral-50/50 text-center">
+                      <td className="px-4 py-2.5 sticky left-[4rem] bg-white group-hover:bg-neutral-50/50 text-center">
                         {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
                           <input type="text" value={item.unit_type || ""} onChange={(e) => handleItemChangeById(item.id, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (

@@ -67,8 +67,8 @@ class MemoService:
         Write a professional investment memo for a real estate deal with the following details:
         
         Property: {analysis_data.property_meta.address}
-        Year Built: {analysis_data.property_meta.year_built}
-        Total Units: {analysis_data.property_meta.total_units}
+        Year Built: {analysis_data.property_meta.year_built if analysis_data.property_meta.year_built > 0 else "-"}
+        Total Units: {analysis_data.property_meta.total_units if analysis_data.property_meta.total_units > 0 else "-"}
         Current Occupancy: {occupancy_rate:.1f}%
         Current Cap Rate: {historical_cap_rate:.2f}%
         Pro Forma Cap Rate: {cap_rate:.2f}%
@@ -373,7 +373,7 @@ This {analysis_data.property_meta.total_units}-unit multifamily asset presents a
 - **Market Risk**: Economic downturn could impact rental demand and vacancy rates.
 - **Interest Rate Risk**: Rising rates could affect refinance and acquisition financing.
 - **Operational Risk**: Asset management execution is critical to achieving projections.
-- **Structural/Physical Risk**: Building age ({analysis_data.property_meta.year_built}) requires ongoing capital reserves for maintenance.
+- **Structural/Physical Risk**: Building age ({analysis_data.property_meta.year_built if analysis_data.property_meta.year_built > 0 else "Unknown"}) requires ongoing capital reserves for maintenance.
 
 ### What is the value-add strategy?
 1. **Rent Growth**: Market rent achievement through tenant turnover and lease-ups.
@@ -392,7 +392,7 @@ This {analysis_data.property_meta.total_units}-unit multifamily asset presents a
 ✓ Established property with proven operations
 
 ### Weaknesses
-✗ Property age ({analysis_data.property_meta.year_built}) may require capital reserves
+✗ Property age ({analysis_data.property_meta.year_built if analysis_data.property_meta.year_built > 0 else "Unknown"}) may require capital reserves
 ✗ Limited upside without rent growth execution
 ✗ Market-dependent tenant demand
 

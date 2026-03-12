@@ -1855,7 +1855,7 @@ async def _analyze_deal_package_logic(
                             # If we found the specific text, center on it
                             if item.raw_text and item.raw_text in full_text:
                                 idx = full_text.find(item.raw_text)
-                                start = max(0, idx - 2000)
+                                start = max(0, idx - 3000)
                                 end = min(len(full_text), idx + 3000)
                                 window_text = full_text[start:end]
                             
@@ -1957,11 +1957,11 @@ async def _analyze_deal_package_logic(
                             except: pass
                         
                         if full_text:
-                            window_text = full_text[:3000]
+                            window_text = full_text[:6000]
                             if item.raw_text and item.raw_text in full_text:
                                 idx = full_text.find(item.raw_text)
-                                start = max(0, idx - 1000)
-                                end = min(len(full_text), idx + 1000)
+                                start = max(0, idx - 3000)
+                                end = min(len(full_text), idx + 3000)
                                 window_text = full_text[start:end]
                             
                             yb_candidates.append({
@@ -2027,7 +2027,7 @@ async def _analyze_deal_package_logic(
     
     # Defaults based on Underwriting Flow
     is_flow_a = (package.underwriting_flow == "OM_DRIVEN")
-    default_year_built = 0 if is_flow_a else 1980
+    default_year_built = 0  # Do not assume values
     default_address = "Missing in OM" if is_flow_a else _clean_address(package.property_name)
 
     property_meta = PropertyMeta(
@@ -2151,11 +2151,7 @@ async def _analyze_deal_package_logic(
                     amount_str = item.raw_text.split("$")[-1].replace(",", "").strip()
                     amount = sanitize_float(amount_str)
                     if amount == 0.0:
-                        # For Flow A, do not auto-guess values
-                        if is_flow_a:
-                            amount = 0.0
-                        else:
-                            amount = 1000.0  # Default fallback for Flow B
+                        amount = 0.0  # Do not auto-guess values
                 
                 # Get document_id from metadata if available
                 doc_id = item.metadata.get("document_id") if item.metadata else None
@@ -2221,27 +2217,7 @@ async def _analyze_deal_package_logic(
 
     # Create a basic rent roll if none exists
     if not rent_roll:
-        if package.underwriting_flow == "OM_DRIVEN":
-            logger.warning("Flow A (OM_DRIVEN): No rent roll found in OM. Flagging as Missing.")
-            # Do NOT generate placeholders for Flow A
-            # We will rely on flagging it in the analysis or summary
-        else:
-            # Flow B: Generate placeholder rent roll based on property size (Auto-guess allowed)
-            logger.info("Flow B: Generating placeholder rent roll.")
-            num_units = property_meta.total_units or 0
-            for i in range(num_units):
-                rent_roll.append(RentRollItem(
-                    unit_number=f"Unit {i+1}",
-                    unit_type="1BR",
-                    unit_size=750,
-                    tenant_name="Occupied",
-                    current_rent=2000.0,
-                    stabilized_rent=2200.0,
-                    market_rent=2100.0,
-                    move_in_date="",
-                    lease_start="2024-01-01",
-                    lease_end="2024-12-31"
-                ))
+        logger.warning("No rent roll found. Flagging as Missing. No placeholder will be generated.")
     
     # Calculate rent roll summary
     total_units = len(rent_roll)
