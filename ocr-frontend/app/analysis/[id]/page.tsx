@@ -86,7 +86,7 @@ export default function AnalysisResultPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Initializing..." });
-  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export" | "verification" | "verify-expenses">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "audit" | "export" | "verification">("dashboard");
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
@@ -484,18 +484,6 @@ export default function AnalysisResultPage() {
               Verify Data
             </button>
             <button
-              onClick={() => setActiveTab('verify-expenses')}
-              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border border-transparent hover:border-neutral-200 ${
-                activeTab === 'verify-expenses' ? 'text-neutral-900 bg-neutral-100' : 'text-neutral-600 hover:bg-neutral-100'
-              }`}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="1" x2="12" y2="23"></line>
-                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-              </svg>
-              Verify Expenses
-            </button>
-            <button
               onClick={() => setActiveTab('audit')}
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
             >
@@ -542,19 +530,7 @@ export default function AnalysisResultPage() {
             {activeTab === "verification" && (
               <VerificationWidget
                 packageId={id}
-                view="data"
-                onAnalysisUpdate={(newAnalysis) => {
-                    console.log("Updating analysis state from verification", newAnalysis);
-                    setAnalysis(newAnalysis);
-                    setActiveTab("dashboard");
-                }}
-              />
-            )}
-
-            {activeTab === "verify-expenses" && (
-              <VerificationWidget
-                packageId={id}
-                view="expenses"
+                view="both"
                 onAnalysisUpdate={(newAnalysis) => {
                     console.log("Updating analysis state from verification", newAnalysis);
                     setAnalysis(newAnalysis);

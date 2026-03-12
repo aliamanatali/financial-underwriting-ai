@@ -18,9 +18,12 @@ interface ExpenseItem {
   metadata?: any;
 }
 
+export type GlobalFilter = "All" | "Handwritten" | "Duplicates";
+
 interface ExpensesVerificationWidgetProps {
   items: NormalizedDataItem[];
   availableCategories: string[];
+  globalFilter?: GlobalFilter;
   onUpdateExpenses: (updatedItems: NormalizedDataItem[]) => Promise<void>;
   onAddExpense: (newItem: Partial<NormalizedDataItem>) => Promise<void>;
   onRemoveExpense: (itemId: string) => Promise<void>;
@@ -41,6 +44,7 @@ interface GroupedExpense {
 export default function ExpensesVerificationWidget({
   items = [],
   availableCategories = [],
+  globalFilter = "All",
   onUpdateExpenses,
   onAddExpense,
   onRemoveExpense,
@@ -48,9 +52,6 @@ export default function ExpensesVerificationWidget({
   documents,
   packageId,
 }: ExpensesVerificationWidgetProps) {
-  type TextTypeFilter = "All" | "Computerized" | "Human Written";
-  const [textTypeFilter, setTextTypeFilter] = useState<TextTypeFilter>("All");
-
   const [isAdding, setIsAdding] = useState(false);
   const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,7 +81,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
         (item) =>
           item && (item.category_group === "Operating Expense" ||
           item.category_group === "Tax & Insurance") &&
-          (textTypeFilter === "All" || (item.text_type || "Computerized") === textTypeFilter)
+          (globalFilter === "All" || globalFilter === "Duplicates" || (item.text_type === "Human Written"))
       );
 
       // 2. Intelligent Deduplication
@@ -116,7 +117,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
       console.error("Error filtering expenses:", e);
       return [];
     }
-  }, [items, textTypeFilter]);
+  }, [items, globalFilter]);
 
   const [localExpenses, setLocalExpenses] = useState<GroupedExpense[]>([]);
 
@@ -166,8 +167,13 @@ const getCategoryGroup = (category: string): CategoryGroup => {
       return a.name.localeCompare(b.name);
     });
 
-    setLocalExpenses(sortedExpenses);
-  }, [expenseItems]);
+    // Apply duplicates filter if selected
+    const filteredExpenses = globalFilter === "Duplicates"
+      ? sortedExpenses.filter(e => e.occurrences.length > 1)
+      : sortedExpenses;
+
+    setLocalExpenses(filteredExpenses);
+  }, [expenseItems, globalFilter]);
 
   const startEditing = (expense: GroupedExpense) => {
     setEditingId(expense.id);
@@ -291,21 +297,6 @@ const getCategoryGroup = (category: string): CategoryGroup => {
           <span className="text-sm text-slate-500">{localExpenses.length} items</span>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex space-x-1 mr-2 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
-                    <button
-                        key={tab}
-                        onClick={() => setTextTypeFilter(tab)}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                            textTypeFilter === tab
-                                ? "bg-slate-100 text-slate-900"
-                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                        }`}
-                    >
-                        {tab}
-                    </button>
-                ))}
-            </div>
             <button
                 onClick={() => setIsAdding(true)}
                 className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 text-xs font-medium rounded-lg transition-colors shadow-sm"
@@ -446,7 +437,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                             className="w-24 bg-white border border-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-[#FF5E00] outline-none text-right"
                         />
                     </div>
-                  ) : expense.occurrences.length > 1 ? (
+                  ) : (expense.occurrences.length > 1 && globalFilter === "Duplicates") ? (
                     <div className="flex flex-col items-end gap-1">
                         <span className="flex items-center text-[10px] font-bold text-amber-600 uppercase bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mb-1">
                             <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -467,7 +458,17 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         </select>
                     </div>
                   ) : (
-                    <span className="text-slate-900 font-semibold">${expense.amount.toLocaleString()}</span>
+                    <div className="flex flex-col items-end gap-1">
+                        <span className="text-slate-900 font-semibold">${expense.amount.toLocaleString()}</span>
+                        {expense.occurrences.length > 1 && globalFilter !== "Duplicates" && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200">
+                                <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                Duplicates Found ({expense.occurrences.length})
+                            </span>
+                        )}
+                    </div>
                   )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-center">

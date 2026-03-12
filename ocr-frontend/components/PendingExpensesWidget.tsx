@@ -18,9 +18,12 @@ interface ExpenseItem {
   metadata?: any;
 }
 
+export type GlobalFilter = "All" | "Handwritten" | "Duplicates";
+
 interface PendingExpensesWidgetProps {
   items: NormalizedDataItem[];
   availableCategories: string[];
+  globalFilter?: GlobalFilter;
   onUpdateExpenses: (updatedItems: NormalizedDataItem[]) => Promise<void>;
   onAddExpense: (newItem: Partial<NormalizedDataItem>) => Promise<void>;
   onRemoveExpense: (itemId: string) => Promise<void>;
@@ -32,6 +35,7 @@ interface PendingExpensesWidgetProps {
 export default function PendingExpensesWidget({
   items = [],
   availableCategories = [],
+  globalFilter = "All",
   onUpdateExpenses,
   onAddExpense,
   onRemoveExpense,
@@ -65,13 +69,14 @@ export default function PendingExpensesWidget({
   const expenseItems = useMemo(() => {
     try {
       return items.filter(
-        (item) => item && item.category_group === "Pending Expense"
+        (item) => item && item.category_group === "Pending Expense" &&
+        (globalFilter === "All" || globalFilter === "Duplicates" || item.text_type === "Human Written")
       );
     } catch (e) {
       console.error("Error filtering pending expenses:", e);
       return [];
     }
-  }, [items]);
+  }, [items, globalFilter]);
 
   const [localExpenses, setLocalExpenses] = useState<ExpenseItem[]>([]);
 

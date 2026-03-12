@@ -8,11 +8,14 @@ const SourceDocumentViewer = dynamic(() => import("./SourceDocumentViewer"), {
   ssr: false,
 });
 
+export type GlobalFilter = "All" | "Handwritten" | "Duplicates";
+
 interface DataVerificationTableProps {
   items: NormalizedDataItem[];
   availableCategories: string[];
   documents: Record<string, DocumentMetadata[]>;
   packageId?: string;
+  globalFilter?: GlobalFilter;
   onVerify: (itemId: string, userCorrection?: string, userRawText?: string) => void;
   onVerifyAll: () => void;
   onUpdateItem?: (updatedItem: NormalizedDataItem) => Promise<void>;
@@ -25,14 +28,13 @@ export default function DataVerificationTable({
   availableCategories,
   documents,
   packageId,
+  globalFilter = "All",
   onVerify,
   onVerifyAll,
   onUpdateItem,
   onAddItem,
   onRemoveItem,
 }: DataVerificationTableProps) {
-  type TextTypeFilter = "All" | "Computerized" | "Human Written";
-  const [groupFilters, setGroupFilters] = useState<Record<string, TextTypeFilter>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [editRawTextValue, setEditRawTextValue] = useState<string>("");
@@ -281,18 +283,17 @@ export default function DataVerificationTable({
 
   return (
     <div className="space-y-6">
-
       {/* Grouped Tables */}
       <div className="space-y-8">
         {groupOrder.map((group) => {
             const rawGroupItems = processedGroupedItems[group];
             if (!rawGroupItems || rawGroupItems.length === 0) return null;
 
-            const currentFilter = groupFilters[group] || "All";
             const groupItems = rawGroupItems.map(field => {
-               const filteredOccurrences = field.occurrences.filter(o =>
-                   currentFilter === "All" || (o.text_type || "Computerized") === currentFilter
-               );
+               let filteredOccurrences = field.occurrences;
+               if (globalFilter === "Handwritten") {
+                   filteredOccurrences = field.occurrences.filter(o => o.text_type === "Human Written");
+               }
                
                const normalizedValue = field.occurrences[0]?.normalized_value;
                let selectedId = normalizedValue ? selectedOccurrenceIds[normalizedValue] : undefined;
@@ -303,7 +304,13 @@ export default function DataVerificationTable({
                }
 
                return { ...field, occurrences: filteredOccurrences, id: selectedId };
-            }).filter(field => field.occurrences.length > 0);
+            }).filter(field => {
+               if (field.occurrences.length === 0) return false;
+               if (globalFilter === "Duplicates") {
+                   return field.occurrences.length > 1;
+               }
+               return true;
+            });
 
             if (groupItems.length === 0 && rawGroupItems.length > 0) {
                  // We still might want to render the header and an empty state, or just hide it. Let's show it so they can unfilter.
@@ -319,21 +326,6 @@ export default function DataVerificationTable({
                             <span className="text-sm text-slate-500">{groupItems.length} items</span>
                         </div>
                         <div className="flex space-x-3 items-center">
-                            <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                                {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
-                                    <button
-                                        key={tab}
-                                        onClick={() => setGroupFilters(prev => ({ ...prev, [group]: tab }))}
-                                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                                            currentFilter === tab
-                                                ? "bg-slate-100 text-slate-900"
-                                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                                        }`}
-                                    >
-                                        {tab}
-                                    </button>
-                                ))}
-                            </div>
                             {onAddItem && (
                                 <button
                                     onClick={() => {
@@ -478,7 +470,7 @@ export default function DataVerificationTable({
                                         onChange={(e) => setEditRawTextValue(e.target.value)}
                                         className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
                                     />
-                                ) : hasDuplicates ? (
+                                ) : (hasDuplicates && globalFilter === "Duplicates") ? (
                                     <div className="flex flex-col gap-1">
                                         <div className="flex items-center gap-1.5 mb-1">
                                             <span className="flex items-center text-[10px] font-bold text-amber-600 uppercase bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
@@ -522,6 +514,14 @@ export default function DataVerificationTable({
                                         <span className="inline-flex items-center ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-orange-600 bg-orange-50 border border-orange-200" title="Handwritten">
                                             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 mr-1"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
                                             Human Written
+                                        </span>
+                                    )}
+                                    {hasDuplicates && globalFilter !== "Duplicates" && (
+                                        <span className="inline-flex items-center ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200" title="Duplicates">
+                                            <svg className="w-3 h-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                            </svg>
+                                            Duplicates Found ({groupField.occurrences.length})
                                         </span>
                                     )}
                                     </div>

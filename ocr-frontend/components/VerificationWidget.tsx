@@ -61,6 +61,7 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string>("");
+  const [globalFilter, setGlobalFilter] = useState<"All" | "Handwritten" | "Duplicates">("All");
 
   const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
@@ -478,7 +479,7 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
                   <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
                 </svg>
               )}
-              {view === "expenses" ? "Verify Expenses" : "Data Verification"}
+              {view === "expenses" ? "Verify Expenses" : "Verify Data"}
             </h2>
             <p className="text-sm text-neutral-500 mt-1">
               {view === "expenses" ? "Review and correct expense verifications." : "Review and correct AI-mapped categories from your documents."}
@@ -581,30 +582,50 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
           </div>
         </div>
       ) : (
-        // Data Tables by Section
-        <div className="space-y-12">
-          {(view === "expenses" || view === "both") && (
-            <>
-              <ExpensesVerificationWidget
-                items={normalizedItems}
-                availableCategories={AVAILABLE_CATEGORIES}
-                onUpdateExpenses={handleUpdateItems}
-                onAddExpense={handleAddManualExpense}
-                onRemoveExpense={handleRemoveItem}
-                onRegenerate={handleRegenerateReport}
-                documents={documents}
-                packageId={packageId}
-              />
-              <PendingExpensesWidget
-                items={normalizedItems}
-                availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
-                onUpdateExpenses={handleUpdateItems}
-                onAddExpense={handleAddManualExpense}
-                onRemoveExpense={handleRemoveItem}
-                onRegenerate={handleRegenerateReport}
-                documents={documents}
-                packageId={packageId}
-              />
+        <div className="flex flex-col gap-6">
+          {/* Global Tabs */}
+          <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-fit">
+            {(["All", "Handwritten", "Duplicates"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setGlobalFilter(tab)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  globalFilter === tab
+                    ? "bg-slate-100 text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Data Tables by Section */}
+          <div className="space-y-12">
+            {(view === "expenses" || view === "both") && (
+              <>
+                <ExpensesVerificationWidget
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES}
+                  globalFilter={globalFilter}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
+                  documents={documents}
+                  packageId={packageId}
+                />
+                <PendingExpensesWidget
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
+                  globalFilter={globalFilter}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
+                  documents={documents}
+                  packageId={packageId}
+                />
             </>
           )}
 
@@ -614,10 +635,12 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
               availableCategories={AVAILABLE_CATEGORIES}
               documents={documents}
               packageId={packageId}
+              globalFilter={globalFilter}
               onVerify={handleVerifyItem}
               onVerifyAll={handleVerifyAll}
             />
           )}
+          </div>
         </div>
       )}
 
