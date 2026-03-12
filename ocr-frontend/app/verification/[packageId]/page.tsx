@@ -254,8 +254,8 @@ export default function VerificationPage() {
     }
   };
 
-  // Handle adding a manual expense
-  const handleAddManualExpense = async (newItem: Partial<NormalizedDataItem>) => {
+  // Handle adding a manual item
+  const handleAddItem = async (newItem: Partial<NormalizedDataItem>) => {
     try {
       const response = await fetch(
         `${baseUrl}/api/v1/multi-document/packages/${packageId}/add-normalized-item`,
@@ -295,15 +295,34 @@ export default function VerificationPage() {
     }
   };
 
-  // Edit item category
-  const handleEditItem = (itemId: string, currentCategory: string) => {
-    setEditingItem(itemId);
-    setEditCategory(currentCategory);
-  };
+  const handleUpdateItem = async (item: NormalizedDataItem) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${item.id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            user_correction: item.user_correction || item.normalized_value,
+            payload: {
+              amount: item.metadata?.amount,
+              raw_text: item.raw_text,
+              category_group: item.category_group
+            }
+          }),
+        }
+      );
 
-  // Save edited category
-  const handleSaveEdit = (itemId: string) => {
-    handleVerifyItem(itemId, editCategory);
+      if (response.ok) {
+        setNormalizedItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
+        );
+      }
+    } catch (err) {
+      console.error("Error updating item:", err);
+    }
   };
 
   // Verify all items using batch endpoint
@@ -662,6 +681,9 @@ export default function VerificationPage() {
                   packageId={packageId}
                   onVerify={handleVerifyItem}
                   onVerifyAll={handleVerifyAll}
+                  onUpdateItem={handleUpdateItem}
+                  onAddItem={handleAddItem}
+                  onRemoveItem={handleRemoveItem}
                 />
               </div>
             )}

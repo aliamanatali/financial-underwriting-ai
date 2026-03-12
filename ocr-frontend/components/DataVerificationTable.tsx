@@ -15,6 +15,9 @@ interface DataVerificationTableProps {
   packageId?: string;
   onVerify: (itemId: string, userCorrection?: string, userRawText?: string) => void;
   onVerifyAll: () => void;
+  onUpdateItem?: (updatedItem: NormalizedDataItem) => Promise<void>;
+  onAddItem?: (newItem: Partial<NormalizedDataItem>) => Promise<void>;
+  onRemoveItem?: (itemId: string) => Promise<void>;
 }
 
 export default function DataVerificationTable({
@@ -24,18 +27,28 @@ export default function DataVerificationTable({
   packageId,
   onVerify,
   onVerifyAll,
+  onUpdateItem,
+  onAddItem,
+  onRemoveItem,
 }: DataVerificationTableProps) {
   type TextTypeFilter = "All" | "Computerized" | "Human Written";
   const [groupFilters, setGroupFilters] = useState<Record<string, TextTypeFilter>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
   const [editRawTextValue, setEditRawTextValue] = useState<string>("");
+  const [editAmountValue, setEditAmountValue] = useState<string | number>("");
   const [viewingItem, setViewingItem] = useState<NormalizedDataItem | null>(null);
+  
+  const [selectedOccurrenceIds, setSelectedOccurrenceIds] = useState<Record<string, string>>({});
+  const [isAdding, setIsAdding] = useState<string | null>(null);
+  const [newItem, setNewItem] = useState<{ raw_text: string; category: string; amount: string | number }>({ raw_text: "", category: "", amount: "" });
+  const [isSaving, setIsSaving] = useState(false);
 
   const handleEdit = (item: NormalizedDataItem) => {
     setEditingId(item.id);
     setEditValue(item.user_correction || item.normalized_value);
     setEditRawTextValue(item.raw_text || "");
+    setEditAmountValue(item.metadata?.amount ?? "");
   };
 
   const DEDUPLICATE_FIELDS = [
@@ -135,31 +148,109 @@ export default function DataVerificationTable({
     "Other"
   ];
 
-  const handleSave = (itemId: string) => {
+  const handleSave = async (itemId: string) => {
     const originalItem = items.find((i) => i.id === itemId);
     if (originalItem) {
-      const correctionChanged = editValue !== originalItem.normalized_value;
-      const rawTextChanged = editRawTextValue !== originalItem.raw_text;
-      
-      if (correctionChanged || rawTextChanged) {
-        onVerify(
-          itemId,
-          correctionChanged ? editValue : undefined,
-          rawTextChanged ? editRawTextValue : undefined
-        );
+      if (onUpdateItem) {
+        setIsSaving(true);
+        try {
+          let finalAmount: number | string | undefined = undefined;
+          if (editAmountValue !== "") {
+              const cleanValue = String(editAmountValue).replace(/[$,]/g, '').trim();
+              const numParsed = Number(cleanValue);
+              if (cleanValue !== "" && !isNaN(numParsed)) {
+                  finalAmount = numParsed;
+              } else {
+                  finalAmount = editAmountValue;
+              }
+          }
+
+          await onUpdateItem({
+             ...originalItem,
+             raw_text: editRawTextValue,
+             user_correction: editValue,
+             metadata: {
+                ...(originalItem.metadata || {}),
+                amount: finalAmount
+             }
+          });
+        } finally {
+          setIsSaving(false);
+        }
       } else {
-        onVerify(itemId);
+        const correctionChanged = editValue !== originalItem.normalized_value;
+        const rawTextChanged = editRawTextValue !== originalItem.raw_text;
+        
+        if (correctionChanged || rawTextChanged) {
+          onVerify(
+            itemId,
+            correctionChanged ? editValue : undefined,
+            rawTextChanged ? editRawTextValue : undefined
+          );
+        } else {
+          onVerify(itemId);
+        }
       }
     }
     setEditingId(null);
     setEditValue("");
     setEditRawTextValue("");
+    setEditAmountValue("");
+  };
+
+  const handleDelete = async (itemId: string) => {
+     if (onRemoveItem) {
+         if (confirm("Are you sure you want to remove this item?")) {
+             setIsSaving(true);
+             try {
+                 await onRemoveItem(itemId);
+             } finally {
+                 setIsSaving(false);
+             }
+         }
+     }
+  };
+
+  const handleAddNewItem = async (group: string) => {
+      if (onAddItem && newItem.raw_text) {
+          setIsSaving(true);
+          try {
+              let finalAmount: number | string | undefined = undefined;
+              if (newItem.amount !== "") {
+                  const cleanValue = String(newItem.amount).replace(/[$,]/g, '').trim();
+                  const numParsed = Number(cleanValue);
+                  if (cleanValue !== "" && !isNaN(numParsed)) {
+                      finalAmount = numParsed;
+                  } else {
+                      finalAmount = newItem.amount;
+                  }
+              }
+
+              await onAddItem({
+                  raw_text: newItem.raw_text,
+                  normalized_value: newItem.category || "Uncategorized",
+                  category_group: group as CategoryGroup,
+                  confidence: 1.0,
+                  user_verified: true,
+                  source_document: "Manual Entry",
+                  metadata: {
+                      amount: finalAmount,
+                      is_manual: true
+                  }
+              });
+              setIsAdding(null);
+              setNewItem({ raw_text: "", category: "", amount: "" });
+          } finally {
+              setIsSaving(false);
+          }
+      }
   };
 
   const handleCancel = () => {
     setEditingId(null);
     setEditValue("");
     setEditRawTextValue("");
+    setEditAmountValue("");
   };
 
   const getConfidenceColor = (confidence: number) => {
@@ -184,8 +275,13 @@ export default function DataVerificationTable({
   const handleOccurrenceChange = (groupField: GroupedDataField, newOccurrenceId: string) => {
     const newOccurrence = groupField.occurrences.find(o => o.id === newOccurrenceId);
     if (newOccurrence) {
-      // Trigger a verify on the newly selected occurrence to mark it as the verified one
-      onVerify(newOccurrenceId);
+      const normalizedValue = groupField.occurrences[0]?.normalized_value;
+      if (normalizedValue) {
+        setSelectedOccurrenceIds(prev => ({
+          ...prev,
+          [normalizedValue]: newOccurrenceId
+        }));
+      }
     }
   };
 
@@ -203,7 +299,16 @@ export default function DataVerificationTable({
                const filteredOccurrences = field.occurrences.filter(o =>
                    currentFilter === "All" || (o.text_type || "Computerized") === currentFilter
                );
-               return { ...field, occurrences: filteredOccurrences };
+               
+               const normalizedValue = field.occurrences[0]?.normalized_value;
+               let selectedId = normalizedValue ? selectedOccurrenceIds[normalizedValue] : undefined;
+               selectedId = selectedId || field.id;
+               
+               if (!filteredOccurrences.some(o => o.id === selectedId) && filteredOccurrences.length > 0) {
+                   selectedId = filteredOccurrences[0].id;
+               }
+
+               return { ...field, occurrences: filteredOccurrences, id: selectedId };
             }).filter(field => field.occurrences.length > 0);
 
             if (groupItems.length === 0 && rawGroupItems.length > 0) {
@@ -219,20 +324,37 @@ export default function DataVerificationTable({
                             <h3 className="text-lg font-semibold text-slate-900">{group}</h3>
                             <span className="text-sm text-slate-500">{groupItems.length} items</span>
                         </div>
-                        <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                            {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
+                        <div className="flex space-x-3 items-center">
+                            <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
+                                {(["All", "Computerized", "Human Written"] as TextTypeFilter[]).map((tab) => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setGroupFilters(prev => ({ ...prev, [group]: tab }))}
+                                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                                            currentFilter === tab
+                                                ? "bg-slate-100 text-slate-900"
+                                                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                                        }`}
+                                    >
+                                        {tab}
+                                    </button>
+                                ))}
+                            </div>
+                            {onAddItem && (
                                 <button
-                                    key={tab}
-                                    onClick={() => setGroupFilters(prev => ({ ...prev, [group]: tab }))}
-                                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                                        currentFilter === tab
-                                            ? "bg-slate-100 text-slate-900"
-                                            : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                                    }`}
+                                    onClick={() => {
+                                        setIsAdding(group);
+                                        setNewItem({ raw_text: "", category: "", amount: "" });
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 text-xs font-medium rounded-lg transition-colors shadow-sm"
                                 >
-                                    {tab}
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M5 12h14"></path>
+                                        <path d="M12 5v14"></path>
+                                    </svg>
+                                    Add Item
                                 </button>
-                            ))}
+                            )}
                         </div>
                     </div>
                     <div className="overflow-x-auto">
@@ -248,15 +370,76 @@ export default function DataVerificationTable({
                             <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
                             Mapped Category
                             </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            Amount / Value
+                            </th>
+                            <th className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider">
                             Confidence
                             </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                            <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">
                             Actions
                             </th>
                         </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-200">
+                            {isAdding === group && (
+                                <tr className="bg-blue-50/50">
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                        <span className="text-slate-400 italic">Manual Entry</span>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm text-slate-900">
+                                        <input
+                                            type="text"
+                                            placeholder="Item Name / Raw Text"
+                                            value={newItem.raw_text}
+                                            onChange={(e) => setNewItem({ ...newItem, raw_text: e.target.value })}
+                                            className="block w-full px-2 py-1.5 text-xs font-mono border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
+                                            autoFocus
+                                        />
+                                    </td>
+                                    <td className="px-6 py-4 text-sm">
+                                        <select
+                                            value={newItem.category}
+                                            onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
+                                            className="block w-full px-3 py-2 text-sm border border-slate-300 rounded-md shadow-sm focus:ring-[#FF5E00] focus:border-[#FF5E00]"
+                                        >
+                                            <option value="">Select Category</option>
+                                            {availableCategories.map((cat) => (
+                                                <option key={cat} value={cat}>{cat}</option>
+                                            ))}
+                                        </select>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm text-right font-mono">
+                                        <input
+                                            type="text"
+                                            placeholder="Amount"
+                                            value={newItem.amount}
+                                            onChange={(e) => setNewItem({ ...newItem, amount: e.target.value })}
+                                            className="w-24 bg-white border border-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-[#FF5E00] outline-none text-right ml-auto"
+                                        />
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                                        <span className="text-slate-400 text-xs">-</span>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                        <div className="flex items-center justify-end space-x-3">
+                                            <button
+                                                onClick={() => handleAddNewItem(group)}
+                                                disabled={isSaving || !newItem.raw_text}
+                                                className="text-emerald-600 hover:text-emerald-800 font-semibold disabled:opacity-50"
+                                            >
+                                                Save
+                                            </button>
+                                            <button
+                                                onClick={() => setIsAdding(null)}
+                                                className="text-slate-500 hover:text-slate-700 font-medium"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
                         {groupItems.map((groupField) => {
                             const item = groupField.occurrences.find(o => o.id === groupField.id) || groupField.occurrences[0];
                             const hasDuplicates = groupField.occurrences.length > 1;
@@ -374,8 +557,29 @@ export default function DataVerificationTable({
                             </td>
 
 
+                            {/* Amount / Value */}
+                            <td className="px-6 py-4 text-sm text-right font-mono">
+                                {editingId === item.id ? (
+                                    <input
+                                        type="text"
+                                        value={editAmountValue}
+                                        onChange={(e) => setEditAmountValue(e.target.value)}
+                                        className="w-24 bg-white border border-slate-300 rounded-md px-2 py-1.5 focus:ring-1 focus:ring-[#FF5E00] outline-none text-right ml-auto"
+                                        placeholder="Amount"
+                                    />
+                                ) : (
+                                    item.metadata?.amount !== undefined ? (
+                                        <span className="text-slate-900 font-semibold">
+                                            {typeof item.metadata.amount === 'number' && item.metadata.amount > 1000 ?
+                                                `$${item.metadata.amount.toLocaleString()}` :
+                                                item.metadata.amount}
+                                        </span>
+                                    ) : <span className="text-slate-400 text-xs">-</span>
+                                )}
+                            </td>
+
                             {/* Confidence */}
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-6 py-4 whitespace-nowrap text-center">
                                 <span
                                 className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getConfidenceColor(
                                     item.confidence
@@ -386,12 +590,13 @@ export default function DataVerificationTable({
                             </td>
 
                             {/* Actions */}
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                                 {editingId === item.id ? (
-                                <div className="flex space-x-3">
+                                <div className="flex items-center justify-end space-x-3">
                                     <button
                                     onClick={() => handleSave(item.id)}
-                                    className="text-emerald-600 hover:text-emerald-800 font-semibold"
+                                    disabled={isSaving}
+                                    className="text-emerald-600 hover:text-emerald-800 font-semibold disabled:opacity-50"
                                     >
                                     Save
                                     </button>
@@ -403,7 +608,7 @@ export default function DataVerificationTable({
                                     </button>
                                 </div>
                                 ) : (
-                                <div className="flex items-center space-x-4">
+                                <div className="flex items-center justify-end space-x-4">
                                     <button
                                         onClick={() => handleEdit(item)}
                                         className="text-slate-500 hover:text-[#FF5E00] font-medium transition-colors"
@@ -424,6 +629,19 @@ export default function DataVerificationTable({
                                             </svg>
                                             Verified
                                         </span>
+                                    )}
+                                    {onRemoveItem && (
+                                        <button
+                                            onClick={() => handleDelete(item.id)}
+                                            className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                            title="Delete"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M3 6h18"></path>
+                                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                                            </svg>
+                                        </button>
                                     )}
                                 </div>
                                 )}
