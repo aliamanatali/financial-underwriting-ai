@@ -218,18 +218,29 @@ const getCategoryGroup = (category: string): CategoryGroup => {
     }
   };
 
-  const handleOccurrenceChange = async (expenseId: string, occurrenceId: string) => {
+  const handleOccurrenceChange = (expenseId: string, occurrenceId: string) => {
+    setLocalExpenses(prev => prev.map(exp => {
+      if (exp.id === expenseId) {
+        return {
+          ...exp,
+          selectedOccurrenceId: occurrenceId
+        };
+      }
+      return exp;
+    }));
+  };
+
+  const handleVerifyOccurrence = async (expenseId: string) => {
     const expenseGroup = localExpenses.find(e => e.id === expenseId);
     if (!expenseGroup) return;
 
-    const newOccurrence = expenseGroup.occurrences.find(o => o.id === occurrenceId);
-    if (!newOccurrence) return;
+    const selectedOccurrence = expenseGroup.occurrences.find(o => o.id === expenseGroup.selectedOccurrenceId);
+    if (!selectedOccurrence) return;
 
     setIsSaving(true);
     try {
-        // Mark the selected occurrence as user verified to ensure it's picked next time
         const updatedItem = {
-            ...newOccurrence,
+            ...selectedOccurrence,
             user_verified: true
         } as NormalizedDataItem;
 
@@ -450,7 +461,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         >
                             {expense.occurrences.map((occ) => (
                                 <option key={occ.id} value={occ.id}>
-                                    ${typeof occ.metadata?.amount === 'number' ? occ.metadata.amount.toLocaleString() : 0} ({occ.source_document || 'Unknown Source'})
+                                    ${typeof occ.metadata?.amount === 'number' ? occ.metadata.amount.toLocaleString() : 0}
                                 </option>
                             ))}
                         </select>
@@ -501,7 +512,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                         </button>
                         {!selectedItem?.user_verified ? (
                             <button
-                            onClick={() => handleOccurrenceChange(expense.id, expense.selectedOccurrenceId)}
+                            onClick={() => handleVerifyOccurrence(expense.id)}
                             className="text-[#FF5E00] hover:text-orange-800 font-semibold transition-colors flex items-center"
                             >
                             Verify

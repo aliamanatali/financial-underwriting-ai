@@ -51,16 +51,6 @@ export default function DataVerificationTable({
     setEditAmountValue(item.metadata?.amount ?? "");
   };
 
-  const DEDUPLICATE_FIELDS = [
-    "Property Name",
-    "Property Address",
-    "Total Units",
-    "Year Built",
-    "Purchase Price",
-    "Price per Unit",
-    "Rentable Area"
-  ];
-
   interface GroupedDataField {
     id: string; // The ID of the currently selected occurrence
     occurrences: NormalizedDataItem[];
@@ -74,8 +64,10 @@ export default function DataVerificationTable({
       acc[group] = [];
     }
     
-    // Check if this is a field that needs deduplication
-    const isDeduplicatedField = DEDUPLICATE_FIELDS.includes(item.normalized_value);
+    // Deduplicate ALL fields that have a normalized value (excluding generic ones like Uncategorized/Other)
+    const isDeduplicatedField = !!item.normalized_value &&
+                               item.normalized_value !== "Uncategorized" &&
+                               item.normalized_value !== "Other";
     
     if (isDeduplicatedField) {
       // Find if we already have this field in the group
@@ -102,7 +94,9 @@ export default function DataVerificationTable({
     const dedupMap = new Map<string, GroupedDataField>();
 
     itemsInGroup.forEach(item => {
-      const isDeduplicatedField = DEDUPLICATE_FIELDS.includes(item.normalized_value);
+      const isDeduplicatedField = !!item.normalized_value &&
+                                 item.normalized_value !== "Uncategorized" &&
+                                 item.normalized_value !== "Other";
 
       if (isDeduplicatedField) {
         if (!dedupMap.has(item.normalized_value)) {
@@ -499,11 +493,24 @@ export default function DataVerificationTable({
                                             onChange={(e) => handleOccurrenceChange(groupField, e.target.value)}
                                             className="bg-amber-50/30 border border-amber-300 rounded px-2 py-1.5 text-xs font-mono text-slate-700 focus:ring-1 focus:ring-amber-500 outline-none max-w-[250px] shadow-sm"
                                         >
-                                            {groupField.occurrences.map((occ) => (
+                                            {groupField.occurrences.map((occ) => {
+                                                let displayVal = occ.raw_text || "Empty Value";
+                                                // If it's a purely numeric field and raw_text is uninformative, append the amount
+                                                if (occ.metadata?.amount !== undefined && occ.metadata.amount !== 0 && occ.metadata.amount !== "") {
+                                                    const formattedAmount = typeof occ.metadata.amount === 'number' && occ.metadata.amount > 1000
+                                                        ? `$${occ.metadata.amount.toLocaleString()}`
+                                                        : String(occ.metadata.amount);
+                                                    
+                                                    // Only append if raw_text doesn't already contain the number
+                                                    if (!displayVal.includes(String(occ.metadata.amount))) {
+                                                        displayVal = `${displayVal} [Amount: ${formattedAmount}]`;
+                                                    }
+                                                }
+                                                return (
                                                 <option key={occ.id} value={occ.id}>
-                                                    {occ.raw_text} - from {occ.source_document || 'Unknown'}
+                                                    {displayVal}
                                                 </option>
-                                            ))}
+                                            )})}
                                         </select>
                                     </div>
                                 ) : (
