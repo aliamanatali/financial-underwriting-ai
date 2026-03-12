@@ -189,12 +189,7 @@ export default function RentRollWidget({
   validationTrigger,
 }: RentRollWidgetProps) {
   const [activeTab, setActiveTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">(initialTab);
-  const [isEditing, setIsEditing] = useState({
-    details: false,
-    omExport: false,
-    unitBreakdown: false,
-    unitBreakdownStabilized: initialEditMode && initialTab === "unitBreakdownStabilized",
-  });
+  const [isEditing, setIsEditing] = useState<boolean>(initialEditMode || false);
   
   const componentRef = React.useRef<HTMLDivElement>(null);
 
@@ -203,8 +198,8 @@ export default function RentRollWidget({
     if (initialTab) {
       setActiveTab(initialTab);
     }
-    if (initialEditMode && initialTab) {
-      setIsEditing(prev => ({ ...prev, [initialTab]: true }));
+    if (initialEditMode !== undefined) {
+      setIsEditing(initialEditMode);
     }
     
     // Scroll to the widget if triggered
@@ -480,18 +475,16 @@ export default function RentRollWidget({
   };
 
   const handleEdit = () => {
-    setIsEditing(prev => ({ ...prev, [activeTab]: true }));
-    if (activeTab === 'details') {
-      // Validate all items when entering edit mode for details tab
-      const initialErrors: Record<string, Record<string, string>> = {};
+    setIsEditing(true);
+    // Validate all items when entering edit mode
+    const initialErrors: Record<string, Record<string, string>> = {};
       items.forEach(item => {
         const errors = validateItem(item);
         if (Object.keys(errors).length > 0) {
           initialErrors[item.id] = errors;
         }
       });
-      setRowErrors(initialErrors);
-    }
+    setRowErrors(initialErrors);
   };
 
   const handleUnitBreakdownChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
@@ -614,12 +607,7 @@ export default function RentRollWidget({
       console.log("RentRollWidget: Sending update payload", payload);
       await apiClient.updateManualOverrides(packageId, payload);
       console.log("RentRollWidget: Update successful");
-      setIsEditing({
-        details: false,
-        omExport: false,
-        unitBreakdown: false,
-        unitBreakdownStabilized: false,
-      });
+      setIsEditing(false);
       if (onUpdate) {
         onUpdate();
       }
@@ -689,7 +677,7 @@ export default function RentRollWidget({
         setShowWarning(true);
         // Switch to the tab to help user
         setActiveTab("unitBreakdownStabilized");
-        setIsEditing(prev => ({ ...prev, unitBreakdownStabilized: true }));
+        setIsEditing(true);
         return;
     }
 
@@ -746,7 +734,7 @@ export default function RentRollWidget({
   const handleCancel = () => {
     setItems(initializeItems(rentRoll, studentHousingConfig));
     setRowErrors({});
-    setIsEditing(prev => ({ ...prev, [activeTab]: false }));
+    setIsEditing(false);
   };
 
   const addItem = () => {
@@ -892,7 +880,7 @@ export default function RentRollWidget({
     })).sort((a, b) => b.count - a.count); // Sort by count descending
   }, [items]);
 
-  const displaySummary = (isEditing.details || isEditing.omExport || isEditing.unitBreakdown || isEditing.unitBreakdownStabilized) ? localSummary : (summary || localSummary);
+  const displaySummary = isEditing ? localSummary : (summary || localSummary);
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(Math.round(val));
@@ -955,7 +943,7 @@ export default function RentRollWidget({
               </button>
             </div>
           </div>
-          {!isEditing[activeTab] ? (
+          {!isEditing ? (
             <div className="flex gap-2">
               <button
                 onClick={handleExport}
@@ -1021,7 +1009,7 @@ export default function RentRollWidget({
                  <tr className="bg-neutral-900 border-b border-neutral-900 text-xs text-white uppercase tracking-wider font-semibold whitespace-nowrap">
                  <th className="px-4 py-3 text-center min-w-[150px]">Unit #</th>
                  <th className="px-4 py-3 text-center">Vacant</th>
-                 {hasTenantName && !isEditing.details && isNonOMFlow && <th className="px-4 py-3 text-center">Tenant</th>}
+                 {hasTenantName && !isEditing && isNonOMFlow && <th className="px-4 py-3 text-center">Tenant</th>}
                  <th className="px-4 py-3 text-center">Unit Size</th>
                  <th className="px-4 py-3 text-center">Unit Type</th>
                  <th className="px-4 py-3 text-center">Current Rent</th>
@@ -1054,7 +1042,7 @@ export default function RentRollWidget({
                  {hasFloor && <th className="px-4 py-3 text-center">Floor</th>}
                  <th className="px-4 py-3 text-center">Lease Start</th>
                  <th className="px-4 py-3 text-center">Lease End</th>
-                   {isEditing.details && <th className="px-4 py-3 text-center">Action</th>}
+                   {isEditing && <th className="px-4 py-3 text-center">Action</th>}
                  </tr>
                </thead>
                <tbody className="divide-y divide-neutral-100">
@@ -1067,7 +1055,7 @@ export default function RentRollWidget({
                        key={item.id}
                        item={item}
                        idx={idx}
-                       isEditing={isEditing.details}
+                       isEditing={isEditing}
                        errors={rowErrors[item.id]}
                        handleItemChange={handleItemChangeById}
                        handleNumericChange={handleNumericChangeById}
@@ -1094,7 +1082,7 @@ export default function RentRollWidget({
                 {/* Header Row */}
                 <tr className="text-xs font-semibold uppercase tracking-wider border-b border-neutral-800">
                   <td className="px-4 py-3 text-center">Total Units</td>
-                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
+                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing ? 1 : 2) : 1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Avg Unit Size</td>
                   <td colSpan={1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Current Rent</td>
@@ -1107,7 +1095,7 @@ export default function RentRollWidget({
                   <td className="px-4 py-3 text-center">
                     <div className="font-bold text-lg">{displaySummary.total_units}</div>
                   </td>
-                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing.details ? 1 : 2) : 1} className="px-4 py-3"></td>
+                  <td colSpan={(hasTenantName && isNonOMFlow) ? (isEditing ? 1 : 2) : 1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">
                      <div className="font-bold text-lg">{Math.round(displaySummary.avg_unit_size || 0)}</div>
                   </td>
@@ -1218,21 +1206,21 @@ export default function RentRollWidget({
                   return (
                     <tr key={item.id} className="hover:bg-neutral-50/50 transition-colors">
                       <td className="px-4 py-2.5 sticky left-0 bg-white group-hover:bg-neutral-50/50 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="text" value={item.unit_number || ""} onChange={(e) => handleItemChangeById(item.id, "unit_number", e.target.value)} className="w-32 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_number
                         )}
                       </td>
                       <td className="px-4 py-2.5 sticky left-[4rem] bg-white group-hover:bg-neutral-50/50 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="text" value={item.unit_type || ""} onChange={(e) => handleItemChangeById(item.id, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_type
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                             <input
                               type="text"
                               value={bedCount}
@@ -1244,14 +1232,14 @@ export default function RentRollWidget({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="text" value={item.unit_size} onChange={(e) => handleNumericChangeById(item.id, "unit_size", e.target.value)} className="w-20 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           item.unit_size
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="text" value={item.current_rent} onChange={(e) => handleNumericChangeById(item.id, "current_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           formatCurrency(Number(item.current_rent))
@@ -1259,7 +1247,7 @@ export default function RentRollWidget({
                       </td>
                       <td className="px-4 py-2.5 text-center">${Math.round(Number(item.current_rent) * 12 / (Number(item.unit_size) || 1))}</td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="text" value={item.market_rent} onChange={(e) => handleNumericChangeById(item.id, "market_rent", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           formatCurrency(Number(item.market_rent))
@@ -1267,7 +1255,7 @@ export default function RentRollWidget({
                       </td>
                       <td className="px-4 py-2.5 text-center">${Math.round(Number(item.market_rent) * 12 / (Number(item.unit_size) || 1))}</td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input
                             type="text"
                             value={Math.round(Number(item.market_rent) - Number(item.current_rent))}
@@ -1282,7 +1270,7 @@ export default function RentRollWidget({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                            <div className="flex items-center justify-center gap-1">
                               <input
                                 type="text"
@@ -1302,21 +1290,21 @@ export default function RentRollWidget({
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                          {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                          {isEditing ? (
                               <input type="text" value={item.unit_type || ""} onChange={(e) => handleItemChangeById(item.id, "unit_type", e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                           ) : (
                               item.unit_type
                           )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                          {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                          {isEditing ? (
                               <input type="text" value={item.unit_config_label || item.unit_type || ""} onChange={(e) => handleItemChangeById(item.id, "unit_config_label" as any, e.target.value)} className="w-24 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                           ) : (
                               item.unit_config_label || item.unit_type
                           )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                          {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                          {isEditing ? (
                               <input
                                 type="text"
                                 value={bedCount}
@@ -1329,14 +1317,14 @@ export default function RentRollWidget({
                       </td>
                       <td className="px-4 py-2.5 text-center">{(item.unit_type || "").toLowerCase().includes('rent control') ? 'RC' : '-'}</td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="date" value={toInputDate(item.lease_start)} onChange={(e) => handleItemChangeById(item.id, "lease_start", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                            (formatDateOnly(item.lease_start) && formatDateOnly(item.lease_start).toUpperCase() !== "V") ? formatDateOnly(item.lease_start) : "-"
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
-                        {isEditing.omExport || (isEditing.details && activeTab === 'omExport') ? (
+                        {isEditing ? (
                           <input type="date" value={toInputDate(item.lease_end)} onChange={(e) => handleItemChangeById(item.id, "lease_end", fromInputDate(e.target.value))} className="w-28 bg-white border border-neutral-200 rounded px-2 py-1 text-xs text-center focus:ring-1 focus:ring-neutral-900 focus:outline-none" />
                         ) : (
                           (formatDateOnly(item.lease_end) && formatDateOnly(item.lease_end).toUpperCase() !== "V") ? formatDateOnly(item.lease_end) : "-"
@@ -1353,7 +1341,7 @@ export default function RentRollWidget({
           <UnitBreakdownTable
             rentRoll={visibleItems}
             studentHousingConfig={studentHousingConfig}
-            isEditing={isEditing.unitBreakdown}
+            isEditing={isEditing}
             onItemChange={handleUnitBreakdownChange}
             formatCurrency={formatCurrency}
           />
@@ -1362,7 +1350,7 @@ export default function RentRollWidget({
          <UnitBreakdownStabilizedTable
            rentRoll={visibleItems}
            studentHousingConfig={studentHousingConfig}
-            isEditing={isEditing.unitBreakdownStabilized}
+            isEditing={isEditing}
             onItemChange={handleUnitBreakdownChange}
           />
        )}
