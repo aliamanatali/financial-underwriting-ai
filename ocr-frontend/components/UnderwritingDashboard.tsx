@@ -99,7 +99,7 @@ import WidgetTooltip from "./WidgetTooltip";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
-  onReanalyze?: (params: DealParameters) => void;
+  onReanalyze?: (params: DealParameters) => Promise<void> | void;
   initialRentRollTab?: "details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized";
   initialRentRollEditMode?: boolean;
   validationTrigger?: number;
@@ -270,6 +270,7 @@ export default function UnderwritingDashboard({
     purchase_price: analysis.property_meta?.purchase_price || 0,
     current_loan_balance: analysis.property_meta?.current_loan_balance || 0,
   });
+  const [isSavingProperty, setIsSavingProperty] = useState(false);
 
   const handleParamChange = (key: keyof DealParameters, value: string) => {
     // Handle percentage inputs (user types 3 for 3%, we store 0.03)
@@ -288,12 +289,18 @@ export default function UnderwritingDashboard({
     }));
   };
 
-  const handleSave = () => {
+  const [isSavingParams, setIsSavingParams] = useState(false);
+  const handleSave = async () => {
     console.log("handleSave called with params:", editParams);
     console.log("onReanalyze function exists:", !!onReanalyze);
     if (onReanalyze) {
       console.log("Calling onReanalyze with params:", editParams);
-      onReanalyze(editParams);
+      setIsSavingParams(true);
+      try {
+        await onReanalyze(editParams);
+      } finally {
+        setIsSavingParams(false);
+      }
     } else {
       console.error("onReanalyze callback is not defined!");
     }
@@ -380,6 +387,7 @@ export default function UnderwritingDashboard({
 
   const handleSavePropertyDetails = async () => {
     console.log("Saving property details and triggering re-analysis:", editPropertyDetails);
+    setIsSavingProperty(true);
     
     const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
     const packageId = analysis.document_id;
@@ -411,6 +419,7 @@ export default function UnderwritingDashboard({
     } catch (error) {
       console.error("Error updating property details:", error);
     } finally {
+      setIsSavingProperty(false);
       setIsEditingPropertyDetails(false);
     }
   };
@@ -536,9 +545,18 @@ export default function UnderwritingDashboard({
               </button>
               <button
                 onClick={handleSavePropertyDetails}
-                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all"
+                disabled={isSavingProperty}
+                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all disabled:opacity-50 flex items-center gap-1"
               >
-                Save Changes
+                {isSavingProperty ? (
+                    <>
+                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                    </>
+                ) : "Save Changes"}
               </button>
             </div>
           )}
@@ -876,9 +894,18 @@ export default function UnderwritingDashboard({
               </button>
               <button
                 onClick={handleSave}
-                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all"
+                disabled={isSavingParams}
+                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all disabled:opacity-50 flex items-center gap-1"
               >
-                Save & Regenerate
+                {isSavingParams ? (
+                    <>
+                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                    </>
+                ) : "Save & Regenerate"}
               </button>
             </div>
           </div>
