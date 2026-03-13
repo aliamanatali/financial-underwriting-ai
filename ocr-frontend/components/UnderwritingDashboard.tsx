@@ -1068,14 +1068,14 @@ export default function UnderwritingDashboard({
                        {missingValues.map((val) => <li key={val}>• Missing: {val}</li>)}
                      </ul>
                   )}
-                  {logicErrors.length > 0 && (
+                  {/* {logicErrors.length > 0 && (
                      <div className="mt-2">
                        <p className="text-sm text-rose-600 font-bold mb-2">Data Logic Errors:</p>
                        <ul className="text-sm text-rose-600 font-medium bg-rose-50/50 p-3 rounded-lg border border-rose-100">
                          {logicErrors.map((err) => <LogicErrorItem key={err} errorMsg={err} analysis={analysis} />)}
                        </ul>
                      </div>
-                  )}
+                  )} */}
                 </div>
                 
               </div>

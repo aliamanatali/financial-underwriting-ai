@@ -264,7 +264,7 @@ export default function RentRollWidget({
 
   // Filter items for display and calculations in Non-OM flows
   const visibleItems = React.useMemo(() => {
-    if (!isNonOMFlow) return items;
+    if (!isNonOMFlow || isEditing) return items;
     
     return items.filter(item => {
       const sizeStr = String(item.unit_size).toLowerCase().trim();
@@ -277,7 +277,7 @@ export default function RentRollWidget({
         sizeStr === "unkown" // Handle common typo from prompt
       );
     });
-  }, [items, isNonOMFlow]);
+  }, [items, isNonOMFlow, isEditing]);
 
   useEffect(() => {
     setItems(initializeItems(rentRoll, studentHousingConfig));
@@ -320,17 +320,23 @@ export default function RentRollWidget({
     const errors: Record<string, string> = {};
     if (!item.unit_number) errors.unit_number = "Required";
     if (!item.unit_type) errors.unit_type = "Required";
-    if (parseFloat(String(item.unit_size)) <= 0) errors.unit_size = "Invalid Size";
-    if (parseFloat(String(item.market_rent)) <= 0) errors.market_rent = "Required";
+    
+    const sizeVal = parseFloat(String(item.unit_size));
+    if (isNaN(sizeVal) || sizeVal <= 0) errors.unit_size = "Invalid Size";
+    
+    const marketVal = parseFloat(String(item.market_rent));
+    if (isNaN(marketVal) || marketVal <= 0) errors.market_rent = "Required";
     
     // Stabilized rent validation: only required (> 0) if not vacant.
     // If vacant, stabilized rent is allowed (and expected) to be 0.
-    if (!item.is_vacant && parseFloat(String(item.stabilized_rent)) <= 0) {
+    const stabilizedVal = parseFloat(String(item.stabilized_rent));
+    if (!item.is_vacant && (isNaN(stabilizedVal) || stabilizedVal <= 0)) {
         errors.stabilized_rent = "Required";
     }
 
+    const currentVal = parseFloat(String(item.current_rent));
     if (item.is_vacant) {
-        if (parseFloat(String(item.current_rent)) > 0) {
+        if (!isNaN(currentVal) && currentVal > 0) {
             errors.current_rent = "Must be 0 if vacant";
         }
         if (item.tenant_name?.toLowerCase() !== "vacant") {
