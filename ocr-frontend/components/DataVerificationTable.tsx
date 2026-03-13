@@ -665,7 +665,7 @@ export default function DataVerificationTable({
       </div>
 
       {/* Legend */}
-      <div className="bg-white rounded-lg p-4 border border-slate-200">
+      {/* <div className="bg-white rounded-lg p-4 border border-slate-200">
         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
           Confidence Score Legend
         </h3>
@@ -683,7 +683,7 @@ export default function DataVerificationTable({
             <span className="text-slate-600">Low Confidence (Less than 85%)</span>
           </div>
         </div>
-      </div>
+      </div> */}
       {viewingItem && getDocumentId(viewingItem) && (
         <SourceDocumentViewer
           documentId={getDocumentId(viewingItem)!}
