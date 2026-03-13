@@ -276,20 +276,9 @@ export default function PendingExpensesWidget({
                     </select>
                   ) : (
                     <div className="flex flex-col">
-                        <span
-                        className={`font-medium ${
-                            originalItem?.user_correction
-                            ? "text-[#E65400]"
-                            : "text-slate-900"
-                        }`}
-                        >
+                        <span className="font-medium text-slate-900">
                         {expense.category}
                         </span>
-                        {originalItem?.user_correction && (
-                        <span className="text-[10px] uppercase font-bold text-[#FF5E00] mt-1">
-                            Edited
-                        </span>
-                        )}
                     </div>
                   )}
                 </td>

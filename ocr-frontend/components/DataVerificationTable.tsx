@@ -566,20 +566,9 @@ export default function DataVerificationTable({
                                 </select>
                                 ) : (
                                 <div className="flex flex-col">
-                                    <span
-                                    className={`font-medium ${
-                                        item.user_correction
-                                        ? "text-#E65400"
-                                        : "text-slate-900"
-                                    }`}
-                                    >
-                                    {item.user_correction || item.normalized_value}
+                                    <span className="font-medium text-slate-900">
+                                        {item.user_correction || item.normalized_value}
                                     </span>
-                                    {item.user_correction && (
-                                    <span className="text-[10px] uppercase font-bold text-[#FF5E00] mt-1">
-                                        Edited
-                                    </span>
-                                    )}
                                 </div>
                                 )}
                             </td>
