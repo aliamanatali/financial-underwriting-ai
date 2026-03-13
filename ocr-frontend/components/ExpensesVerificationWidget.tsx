@@ -307,7 +307,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                 </svg>
                 Add Expense
             </button>
-            <button
+            {/* <button
                 onClick={async () => {
                     if (isSaving) return;
                     setIsSaving(true);
@@ -328,7 +328,7 @@ const getCategoryGroup = (category: string): CategoryGroup => {
                     <path d="M21 6v6h-6"></path>
                 </svg>
                 Save & Update Report
-            </button>
+            </button> */}
         </div>
       </div>
 
