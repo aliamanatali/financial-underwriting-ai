@@ -609,7 +609,7 @@ export default function VerificationPage() {
                           <path d="M21 12a9 9 0 1 1-2.5-6.2"></path>
                           <path d="M21 6v6h-6"></path>
                         </svg>
-                        {regenerating ? "Regenerating..." : "Regenerate Report"}
+                        {regenerating ? "Regenerating..." : "Save and Regenerate"}
                       </button>
                     </div>
                   </div>

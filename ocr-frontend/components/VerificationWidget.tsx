@@ -49,9 +49,10 @@ interface VerificationWidgetProps {
   packageId: string;
   view?: "data" | "expenses" | "both";
   onAnalysisUpdate?: (analysis: any) => void;
+  onDataChange?: () => void;
 }
 
-export default function VerificationWidget({ packageId, view = "both", onAnalysisUpdate }: VerificationWidgetProps) {
+export default function VerificationWidget({ packageId, view = "both", onAnalysisUpdate, onDataChange }: VerificationWidgetProps) {
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [normalizedItems, setNormalizedItems] = useState<NormalizedDataItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,6 +63,7 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string>("");
   const [globalFilter, setGlobalFilter] = useState<"All" | "Handwritten" | "Duplicates">("All");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
@@ -251,6 +253,8 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
         })
       );
       setEditingItem(null);
+      setHasUnsavedChanges(true);
+      if (onDataChange) onDataChange();
     } catch (err) {
       console.error("Error verifying item:", err);
     }
@@ -284,6 +288,8 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
           setNormalizedItems((prev) =>
             prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
           );
+          setHasUnsavedChanges(true);
+          if (onDataChange) onDataChange();
         }
       } catch (err) {
         console.error("Error updating item:", err);
@@ -309,6 +315,8 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
         const data = await response.json();
         // Add to local state
         setNormalizedItems((prev) => [...prev, data.item]);
+        setHasUnsavedChanges(true);
+        if (onDataChange) onDataChange();
       }
     } catch (err) {
       console.error("Error adding manual expense:", err);
@@ -328,6 +336,8 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
       if (response.ok) {
         // Remove from local state
         setNormalizedItems((prev) => prev.filter((i) => i.id !== itemId));
+        setHasUnsavedChanges(true);
+        if (onDataChange) onDataChange();
       }
     } catch (err) {
       console.error("Error removing item:", err);
@@ -372,6 +382,8 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
             : item
         )
       );
+      setHasUnsavedChanges(true);
+      if (onDataChange) onDataChange();
     } catch (err) {
       console.error("Error verifying all items:", err);
     }
@@ -426,7 +438,7 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
       if (onAnalysisUpdate) {
         onAnalysisUpdate(newAnalysis);
       }
-      
+      setHasUnsavedChanges(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report regeneration failed");
     } finally {
@@ -520,7 +532,7 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
                   <path d="M21 12a9 9 0 1 1-2.5-6.2"></path>
                   <path d="M21 6v6h-6"></path>
                 </svg>
-                {regenerating ? "Regenerating..." : "Regenerate Report"}
+                {regenerating ? "Regenerating..." : "Save and Regenerate"}
               </button>
             </div>
           </div>

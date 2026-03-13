@@ -91,6 +91,7 @@ export default function AnalysisResultPage() {
   const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
   const [validationTrigger, setValidationTrigger] = useState<number>(0);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -534,8 +535,10 @@ export default function AnalysisResultPage() {
                 onAnalysisUpdate={(newAnalysis) => {
                     console.log("Updating analysis state from verification", newAnalysis);
                     setAnalysis(newAnalysis);
+                    setHasUnsavedChanges(false);
                     setActiveTab("dashboard");
                 }}
+                onDataChange={() => setHasUnsavedChanges(true)}
               />
             )}
 
@@ -557,6 +560,21 @@ export default function AnalysisResultPage() {
           </div>
         </main>
       </div>
+
+      {activeTab === "verification" && hasUnsavedChanges && (
+        <div className="fixed bottom-[84px] right-6 z-[60] bg-white border border-neutral-200 text-neutral-800 px-4 py-3 rounded-xl shadow-2xl max-w-sm text-xs font-medium animate-in fade-in slide-in-from-bottom-4">
+          <div className="flex gap-2 items-start">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#FF5E00]">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <p className="leading-relaxed">
+              Changes have been made to the data. To generate an updated financial report, please scroll to the top and click 'Save and Regenerate'.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Chat Widget */}
       <ReportChatWidget documentId={id} />
