@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiClient } from "@/lib/api";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -45,6 +45,16 @@ export default function SourceDocumentViewer({
   const [pageHeight, setPageHeight] = useState<number>(0);
 
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  // Drag and move state
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isPageLoaded, setIsPageLoaded] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [startY, setStartY] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
 
   // Determine file type
   const extension = filename.split('.').pop()?.toLowerCase() || '';
@@ -156,10 +166,66 @@ export default function SourceDocumentViewer({
     }
   }
 
+  // Reset page loaded state when scale or page changes
+  useEffect(() => {
+    setIsPageLoaded(false);
+  }, [scale, pageNumber, documentId]);
+
   function onPageLoadSuccess(page: any) {
     setPageWidth(page.width);
     setPageHeight(page.height);
   }
+
+  function onPageRenderSuccess() {
+    setIsPageLoaded(true);
+  }
+
+  // Scroll to highlight automatically when selected or loaded
+  useEffect(() => {
+    if (isPageLoaded && highlightRef.current && scrollContainerRef.current) {
+      // Use a slightly longer timeout to ensure browser layout is complete
+      // especially for image-based PDFs which might take longer to compute layout
+      setTimeout(() => {
+        if (highlightRef.current) {
+          highlightRef.current.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'center'
+          });
+        }
+      }, 250);
+    }
+  }, [bbox, isPageLoaded, scale, pageNumber]);
+
+  // Drag to pan handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only drag with left mouse button
+    if (e.button !== 0 || !scrollContainerRef.current) return;
+    
+    // Don't drag if clicking on a button or link
+    if ((e.target as HTMLElement).closest('button, a')) return;
+
+    setIsDragging(true);
+    setStartX(e.pageX - scrollContainerRef.current.offsetLeft);
+    setStartY(e.pageY - scrollContainerRef.current.offsetTop);
+    setScrollLeft(scrollContainerRef.current.scrollLeft);
+    setScrollTop(scrollContainerRef.current.scrollTop);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || !scrollContainerRef.current) return;
+    e.preventDefault(); // Prevent text selection/native drag during active panning
+    const x = e.pageX - scrollContainerRef.current.offsetLeft;
+    const y = e.pageY - scrollContainerRef.current.offsetTop;
+    const walkX = (x - startX) * 1.5;
+    const walkY = (y - startY) * 1.5;
+    scrollContainerRef.current.scrollLeft = scrollLeft - walkX;
+    scrollContainerRef.current.scrollTop = scrollTop - walkY;
+  };
+
+  const handleMouseUpOrLeave = () => {
+    setIsDragging(false);
+  };
 
   // Calculate highlight box style
   const getHighlightStyle = () => {
@@ -235,9 +301,18 @@ export default function SourceDocumentViewer({
         </div>
 
         {/* Document Content */}
-        <div className="flex-1 overflow-auto bg-gray-100 p-4 flex justify-center">
-          <div className="relative shadow-lg bg-white min-h-[400px] min-w-[600px] flex flex-col items-center justify-center">
-            {isPdf ? (
+        <div
+          ref={scrollContainerRef}
+          className={`flex-1 overflow-auto bg-gray-100 p-4 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUpOrLeave}
+          onMouseLeave={handleMouseUpOrLeave}
+          onDragStart={(e) => e.preventDefault()} // Prevent native image dragging
+        >
+          <div className="w-max h-max min-w-full min-h-full flex items-center justify-center">
+            <div className="relative shadow-lg bg-white min-h-[400px] min-w-[600px] flex flex-col items-center justify-center">
+              {isPdf ? (
               <>
                 {loadingError ? (
                    <div className="flex flex-col items-center justify-center h-96 w-[600px] bg-white p-6 text-center">
@@ -283,6 +358,7 @@ export default function SourceDocumentViewer({
                       pageNumber={pageNumber}
                       scale={scale}
                       onLoadSuccess={onPageLoadSuccess}
+                      onRenderSuccess={onPageRenderSuccess}
                       className="bg-white shadow-md relative"
                       renderTextLayer={true}
                       renderAnnotationLayer={true}
@@ -290,6 +366,7 @@ export default function SourceDocumentViewer({
                       {/* Highlight Overlay */}
                       {highlightStyle && (
                         <div
+                          ref={highlightRef}
                           className="absolute border-2 border-yellow-500 bg-yellow-400/40 transition-all duration-300 mix-blend-multiply z-20 pointer-events-none"
                           style={highlightStyle}
                         >
@@ -326,7 +403,8 @@ export default function SourceDocumentViewer({
                   Download File
                 </a>}
               </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>

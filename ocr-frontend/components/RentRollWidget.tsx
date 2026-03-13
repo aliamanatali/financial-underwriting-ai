@@ -1485,7 +1485,7 @@ function SortableRow({
       ref={setNodeRef}
       style={style}
       className={`group hover:bg-neutral-50/50 transition-colors border-l-4 ${
-        isDragging ? "bg-neutral-50 shadow-md" : "bg-white"
+        isDragging ? "bg-neutral-50 shadow-md" : errors ? "bg-rose-50" : "bg-white"
       } ${
         errors ? "border-l-rose-500 bg-rose-50/10" : "border-l-transparent"
       }`}
