@@ -1,9 +1,98 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
+import MarkdownRenderer from "./MarkdownRenderer";
+
+const LogicErrorItem = ({ errorMsg, analysis }: { errorMsg: string, analysis: any }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [explanation, setExplanation] = useState<string | null>(null);
+
+  const fetchExplanation = async () => {
+    if (explanation || loading) return;
+    setLoading(true);
+    try {
+      const contextData = {
+        gross_potential_rent: analysis?.rent_roll_summary?.total_annual_rent,
+        net_operating_income: analysis?.pro_forma_noi,
+        operating_expenses: analysis?.pro_forma_expenses,
+        occupancy_rate: analysis?.rent_roll_summary?.occupancy_rate,
+        purchase_price: analysis?.property_meta?.purchase_price,
+        cap_rate: analysis?.cap_rate
+      };
+
+      const prompt = `Please analyze this specific data logic error from our commercial real estate underwriting system: "${errorMsg}".
+
+Here is the current relevant data for this property:
+${JSON.stringify(contextData, null, 2)}
+
+Based on this specific data:
+1. Provide insights into exactly which numbers are causing this error and why.
+2. Suggest a concrete fix or adjustment to the inputs to resolve this error.
+Explain in a concise, professional manner. IMPORTANT: Do NOT include conversational filler, greetings, or introductory statements. Start directly with the analysis.`;
+      
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, messages: [] }),
+      });
+      
+      const data = await response.json();
+      if (data.response) {
+        setExplanation(data.response);
+      } else {
+        setExplanation("Failed to get explanation from Gemini.");
+      }
+    } catch (e) {
+      setExplanation("Error fetching explanation.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExplanation();
+  }, [errorMsg, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <li className="mb-2 list-none">
+      <div
+        className="cursor-pointer hover:text-rose-900 flex items-start gap-1 font-medium transition-colors"
+        onClick={() => {
+          setExpanded(!expanded);
+        }}
+      >
+        <span className="mt-0.5 shrink-0 text-rose-500">
+          <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <span className="flex-1">{errorMsg}</span>
+      </div>
+      
+      {expanded && (
+        <div className="mt-2 ml-4 mb-3 p-3 bg-white/80 border border-rose-200/60 rounded-lg text-rose-900/90 text-xs leading-relaxed shadow-sm">
+          {loading ? (
+             <div className="flex items-center gap-2 text-rose-600 font-medium">
+               <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24">
+                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+               </svg>
+               Analyzing logic error ...
+             </div>
+          ) : (
+            <div className="prose prose-sm prose-rose max-w-none text-[11px] prose-p:my-1 prose-headings:my-2">
+              <MarkdownRenderer content={explanation || ""} />
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+};
 import CombinedRentRollTable from "./CombinedRentRollTable";
 import ExpenseRevenueList from "./ExpenseRevenueList";
 import WidgetTooltip from "./WidgetTooltip";
@@ -370,7 +459,7 @@ export default function UnderwritingDashboard({
     
     // Logic Error: Cap Rate shouldn't be negative (unless deep distress, but usually indicates data error here)
     if (analysis.cap_rate && analysis.cap_rate < 0) {
-      errors.push("Cap Rate is negative, indicating potential data error in NOI or Price.");
+      errors.push("Cap Rate is negative, indicating potential data error.");
     }
 
     return errors;
@@ -407,16 +496,21 @@ export default function UnderwritingDashboard({
 
             {logicErrors.length > 0 && (
               <div className="mt-2">
-                 <p className="text-xs text-rose-700 font-semibold mb-0.5">Data Logic Errors:</p>
-                 <ul className="list-disc list-inside text-xs text-rose-700 ml-1">
-                   {logicErrors.map(err => <li key={err}>{err}</li>)}
+                 <p className="text-xs text-rose-700 font-semibold mb-1 flex items-center gap-1.5">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                     <circle cx="12" cy="12" r="10"></circle>
+                     <line x1="12" y1="8" x2="12" y2="12"></line>
+                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                   </svg>
+                   Data Logic Errors (Click to analyze):
+                 </p>
+                 <ul className="text-xs text-rose-700 ml-1">
+                   {logicErrors.map(err => <LogicErrorItem key={err} errorMsg={err} analysis={analysis} />)}
                  </ul>
               </div>
             )}
 
-            <p className="text-xs text-rose-700 mt-3 font-medium border-t border-rose-200 pt-2">
-              Please verify the data in the Property Details section below or check the source documents.
-            </p>
+         
           </div>
         </div>
       )}
@@ -948,9 +1042,12 @@ export default function UnderwritingDashboard({
                      </ul>
                   )}
                   {logicErrors.length > 0 && (
-                     <ul className="text-sm text-rose-600 font-medium">
-                       {logicErrors.map((err) => <li key={err}>• Error: {err}</li>)}
-                     </ul>
+                     <div className="mt-2">
+                       <p className="text-sm text-rose-600 font-bold mb-2">Data Logic Errors:</p>
+                       <ul className="text-sm text-rose-600 font-medium bg-rose-50/50 p-3 rounded-lg border border-rose-100">
+                         {logicErrors.map((err) => <LogicErrorItem key={err} errorMsg={err} analysis={analysis} />)}
+                       </ul>
+                     </div>
                   )}
                 </div>
                 
