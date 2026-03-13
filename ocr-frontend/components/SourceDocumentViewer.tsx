@@ -270,6 +270,9 @@ export default function SourceDocumentViewer({
             <p className="text-sm text-gray-500">
               Page {pageNumber} of {numPages || "--"}
             </p>
+            <p className="text-xs text-amber-600 mt-1 italic">
+              Please note: The highlighted source may be slightly misaligned but will be close to the actual written source.
+            </p>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
