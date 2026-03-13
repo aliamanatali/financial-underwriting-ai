@@ -1,16 +1,105 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UnderwritingAnalysis, ExplainabilityMetadata, DealParameters } from "@/lib/types";
 import SensitivityAnalysisWidget from "./SensitivityAnalysisWidget";
 import RentRollWidget from "./RentRollWidget";
+import MarkdownRenderer from "./MarkdownRenderer";
+
+const LogicErrorItem = ({ errorMsg, analysis }: { errorMsg: string, analysis: any }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [explanation, setExplanation] = useState<string | null>(null);
+
+  const fetchExplanation = async () => {
+    if (explanation || loading) return;
+    setLoading(true);
+    try {
+      const contextData = {
+        gross_potential_rent: analysis?.rent_roll_summary?.total_annual_rent,
+        net_operating_income: analysis?.pro_forma_noi,
+        operating_expenses: analysis?.pro_forma_expenses,
+        occupancy_rate: analysis?.rent_roll_summary?.occupancy_rate,
+        purchase_price: analysis?.property_meta?.purchase_price,
+        cap_rate: analysis?.cap_rate
+      };
+
+      const prompt = `Please analyze this specific data logic error from our commercial real estate underwriting system: "${errorMsg}".
+
+Here is the current relevant data for this property:
+${JSON.stringify(contextData, null, 2)}
+
+Based on this specific data:
+1. Provide insights into exactly which numbers are causing this error and why.
+2. Suggest a concrete fix or adjustment to the inputs to resolve this error.
+Explain in a concise, professional manner. IMPORTANT: Do NOT include conversational filler, greetings, or introductory statements. Start directly with the analysis.`;
+      
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, messages: [] }),
+      });
+      
+      const data = await response.json();
+      if (data.response) {
+        setExplanation(data.response);
+      } else {
+        setExplanation("Failed to get explanation from Gemini.");
+      }
+    } catch (e) {
+      setExplanation("Error fetching explanation.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExplanation();
+  }, [errorMsg, analysis]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <li className="mb-2 list-none">
+      <div
+        className="cursor-pointer hover:text-rose-900 flex items-start gap-1 font-medium transition-colors"
+        onClick={() => {
+          setExpanded(!expanded);
+        }}
+      >
+        <span className="mt-0.5 shrink-0 text-rose-500">
+          <svg className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+        <span className="flex-1">{errorMsg}</span>
+      </div>
+      
+      {expanded && (
+        <div className="mt-2 ml-4 mb-3 p-3 bg-white/80 border border-rose-200/60 rounded-lg text-rose-900/90 text-xs leading-relaxed shadow-sm">
+          {loading ? (
+             <div className="flex items-center gap-2 text-rose-600 font-medium">
+               <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24">
+                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+               </svg>
+               Analyzing logic error ...
+             </div>
+          ) : (
+            <div className="prose prose-sm prose-rose max-w-none text-[11px] prose-p:my-1 prose-headings:my-2">
+              <MarkdownRenderer content={explanation || ""} />
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  );
+};
 import CombinedRentRollTable from "./CombinedRentRollTable";
 import ExpenseRevenueList from "./ExpenseRevenueList";
 import WidgetTooltip from "./WidgetTooltip";
 
 interface UnderwritingDashboardProps {
   analysis: UnderwritingAnalysis;
-  onReanalyze?: (params: DealParameters) => void;
+  onReanalyze?: (params: DealParameters) => Promise<void> | void;
   initialRentRollTab?: "details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized";
   initialRentRollEditMode?: boolean;
   validationTrigger?: number;
@@ -63,13 +152,34 @@ function SourceTooltip({ source }: { source?: string }) {
   );
 }
 
-function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata }) {
+function ExplanationTooltip({ metadata, analysis, selectedPeriod = "T12" }: { metadata?: ExplainabilityMetadata, analysis: UnderwritingAnalysis, selectedPeriod?: string }) {
   if (!metadata) return null;
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 0,
+    }).format(value);
+  };
+
+  const periodMultiplier = selectedPeriod === "T3" ? 0.25 :
+                           selectedPeriod === "T6" ? 0.5 :
+                           selectedPeriod === "T9" ? 0.75 : 1.0;
+
+  const isHistorical = metadata.metric.toLowerCase().includes("historical") ||
+                       metadata.metric.toLowerCase().includes("t12");
+
+  // Update strings runtime
+  const forwardPeriod = selectedPeriod.replace("T", "F");
+  const displayMetric = metadata.metric.replace("T12", selectedPeriod).replace("F12", forwardPeriod).replace("Historical ", "");
+  const displaySourceDoc = metadata.source.document.replace("T12", selectedPeriod).replace("F12", forwardPeriod);
+  const displayFieldsUsed = metadata.source.fields_used.map(f => f.replace("T12", selectedPeriod).replace("F12", forwardPeriod));
 
   return (
     <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/explanation:block w-96 p-4 bg-white border border-slate-200 rounded-lg shadow-xl text-left text-sm font-normal normal-case">
       <div className="flex justify-between items-start mb-2 border-b pb-2">
-        <h4 className="font-bold text-slate-900">{metadata.metric}</h4>
+        <h4 className="font-bold text-slate-900">{displayMetric}</h4>
         <span className={`px-2 py-0.5 text-xs rounded-full ${
           metadata.classification.includes("Assumptions")
             ? "bg-amber-100 text-amber-800"
@@ -83,9 +193,9 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
         <div>
           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Source</p>
           <p className="text-slate-700">
-            <span className="font-medium">{metadata.source.document}</span>
-            {metadata.source.fields_used.length > 0 && (
-              <span className="text-slate-500"> ({metadata.source.fields_used.join(", ")})</span>
+            <span className="font-medium">{displaySourceDoc}</span>
+            {displayFieldsUsed.length > 0 && (
+              <span className="text-slate-500"> ({displayFieldsUsed.join(", ")})</span>
             )}
           </p>
         </div>
@@ -93,19 +203,28 @@ function ExplanationTooltip({ metadata }: { metadata?: ExplainabilityMetadata })
         <div>
           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Calculation</p>
           <code className="block bg-slate-50 p-1.5 rounded text-xs text-slate-800 font-mono mt-1 border">
-            {metadata.calculation.formula}
+            {metadata.calculation.formula.replace("12", selectedPeriod.replace("T", "").replace("F", ""))}
           </code>
           <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            {Object.entries(metadata.calculation.inputs).map(([key, val]) => (
-              <div key={key} className="flex justify-between">
-                <span className="text-slate-500">{key}:</span>
-                <span className="font-medium text-slate-900">
-                  {typeof val === 'number'
-                    ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val)
-                    : val}
-                </span>
-              </div>
-            ))}
+            {Object.entries(metadata.calculation.inputs).map(([key, val]) => {
+              // Only scale dollar amounts, not unit counts or percentages
+              const isUnitCount = key.toLowerCase().includes("units") || key.toLowerCase().includes("count");
+              const isPercentage = key.toLowerCase().includes("%") || key.toLowerCase().includes("rate") || key.toLowerCase().includes("ratio");
+              
+              const shouldScale = typeof val === 'number' && !isUnitCount && !isPercentage;
+              const displayVal = shouldScale ? val * periodMultiplier : val;
+              const displayKey = key.replace("T12", selectedPeriod).replace("F12", forwardPeriod);
+              return (
+                <div key={key} className="flex justify-between">
+                  <span className="text-slate-500">{displayKey}:</span>
+                  <span className="font-medium text-slate-900">
+                    {typeof displayVal === 'number'
+                      ? (isUnitCount ? displayVal.toLocaleString() : (isPercentage ? (displayVal < 1 ? (displayVal * 100).toFixed(1) + "%" : displayVal + "%") : formatCurrency(displayVal)))
+                      : displayVal}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -136,6 +255,7 @@ export default function UnderwritingDashboard({
 }: UnderwritingDashboardProps) {
   const [isEditingPropertyDetails, setIsEditingPropertyDetails] = useState(false);
   const [isCommentaryExpanded, setIsCommentaryExpanded] = useState(true);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>("T12");
   const [editParams, setEditParams] = useState<DealParameters>(
     analysis.deal_parameters || {
       growth_rate: 0.03,
@@ -150,6 +270,7 @@ export default function UnderwritingDashboard({
     purchase_price: analysis.property_meta?.purchase_price || 0,
     current_loan_balance: analysis.property_meta?.current_loan_balance || 0,
   });
+  const [isSavingProperty, setIsSavingProperty] = useState(false);
 
   const handleParamChange = (key: keyof DealParameters, value: string) => {
     // Handle percentage inputs (user types 3 for 3%, we store 0.03)
@@ -168,12 +289,18 @@ export default function UnderwritingDashboard({
     }));
   };
 
-  const handleSave = () => {
+  const [isSavingParams, setIsSavingParams] = useState(false);
+  const handleSave = async () => {
     console.log("handleSave called with params:", editParams);
     console.log("onReanalyze function exists:", !!onReanalyze);
     if (onReanalyze) {
       console.log("Calling onReanalyze with params:", editParams);
-      onReanalyze(editParams);
+      setIsSavingParams(true);
+      try {
+        await onReanalyze(editParams);
+      } finally {
+        setIsSavingParams(false);
+      }
     } else {
       console.error("onReanalyze callback is not defined!");
     }
@@ -211,12 +338,32 @@ export default function UnderwritingDashboard({
     return (value * 100).toFixed(2) + "%";
   };
 
-  const historicalNOI = analysis.historical_noi || 0;
+  // Get data for selected historical period
+  const periodMultiplier = selectedPeriod === "T3" ? 0.25 :
+                           selectedPeriod === "T6" ? 0.5 :
+                           selectedPeriod === "T9" ? 0.75 : 1.0;
+
+  const selectedPeriodData = analysis.historical_periods?.find(p => p.period === selectedPeriod) || {
+    period: selectedPeriod,
+    total_expenses: (analysis.historical_total_expenses || 0) * periodMultiplier,
+    noi: (analysis.historical_noi || 0) * periodMultiplier,
+    cap_rate: analysis.historical_cap_rate || 0
+  };
+
+  const historicalNOI = selectedPeriodData.noi;
+  const historicalTotalExpenses = selectedPeriodData.total_expenses;
+  const historicalCapRate = selectedPeriodData.cap_rate;
+  
   const proFormaNOI = analysis.pro_forma_noi || 0;
-  const noiChange = proFormaNOI - historicalNOI;
+  
+  // Adjusted Pro Forma values for the selected period
+  const adjustedProFormaNOI = proFormaNOI * periodMultiplier;
+  const adjustedProFormaExpenses = (analysis.pro_forma_expenses || 0) * periodMultiplier;
+  const adjustedProFormaGPR = (analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0)) * periodMultiplier;
+  
+  const noiChange = adjustedProFormaNOI - historicalNOI;
   const noiChangePercent = historicalNOI > 0 ? (noiChange / historicalNOI) * 100 : 0;
 
-  const historicalCapRate = analysis.historical_cap_rate || 0;
   const proFormaCapRate = analysis.cap_rate || 0;
   const capRateChange = proFormaCapRate - historicalCapRate;
 
@@ -240,6 +387,7 @@ export default function UnderwritingDashboard({
 
   const handleSavePropertyDetails = async () => {
     console.log("Saving property details and triggering re-analysis:", editPropertyDetails);
+    setIsSavingProperty(true);
     
     const API_BASE_URL = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
     const packageId = analysis.document_id;
@@ -271,6 +419,7 @@ export default function UnderwritingDashboard({
     } catch (error) {
       console.error("Error updating property details:", error);
     } finally {
+      setIsSavingProperty(false);
       setIsEditingPropertyDetails(false);
     }
   };
@@ -319,7 +468,7 @@ export default function UnderwritingDashboard({
     
     // Logic Error: Cap Rate shouldn't be negative (unless deep distress, but usually indicates data error here)
     if (analysis.cap_rate && analysis.cap_rate < 0) {
-      errors.push("Cap Rate is negative, indicating potential data error in NOI or Price.");
+      errors.push("Cap Rate is negative, indicating potential data error.");
     }
 
     return errors;
@@ -356,16 +505,21 @@ export default function UnderwritingDashboard({
 
             {logicErrors.length > 0 && (
               <div className="mt-2">
-                 <p className="text-xs text-rose-700 font-semibold mb-0.5">Data Logic Errors:</p>
-                 <ul className="list-disc list-inside text-xs text-rose-700 ml-1">
-                   {logicErrors.map(err => <li key={err}>{err}</li>)}
+                 <p className="text-xs text-rose-700 font-semibold mb-1 flex items-center gap-1.5">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                     <circle cx="12" cy="12" r="10"></circle>
+                     <line x1="12" y1="8" x2="12" y2="12"></line>
+                     <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                   </svg>
+                   Data Logic Errors (Click to analyze):
+                 </p>
+                 <ul className="text-xs text-rose-700 ml-1">
+                   {logicErrors.map(err => <LogicErrorItem key={err} errorMsg={err} analysis={analysis} />)}
                  </ul>
               </div>
             )}
 
-            <p className="text-xs text-rose-700 mt-3 font-medium border-t border-rose-200 pt-2">
-              Please verify the data in the Property Details section below or check the source documents.
-            </p>
+         
           </div>
         </div>
       )}
@@ -391,9 +545,18 @@ export default function UnderwritingDashboard({
               </button>
               <button
                 onClick={handleSavePropertyDetails}
-                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all"
+                disabled={isSavingProperty}
+                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all disabled:opacity-50 flex items-center gap-1"
               >
-                Save Changes
+                {isSavingProperty ? (
+                    <>
+                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                    </>
+                ) : "Save Changes"}
               </button>
             </div>
           )}
@@ -731,9 +894,18 @@ export default function UnderwritingDashboard({
               </button>
               <button
                 onClick={handleSave}
-                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all"
+                disabled={isSavingParams}
+                className="text-[10px] font-medium bg-neutral-900 text-white px-2 py-1 rounded hover:bg-neutral-800 transition-all disabled:opacity-50 flex items-center gap-1"
               >
-                Save & Regenerate
+                {isSavingParams ? (
+                    <>
+                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                    </>
+                ) : "Save & Regenerate"}
               </button>
             </div>
           </div>
@@ -853,13 +1025,25 @@ export default function UnderwritingDashboard({
         <div className="lg:col-span-8 flex flex-col gap-6">
           <div className="bg-white rounded-xl border border-neutral-200 shadow-sm flex flex-col">
             <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-neutral-900">Operating Analysis</h3>
+              <div className="flex items-center gap-4">
+                <h3 className="text-sm font-semibold text-neutral-900">Operating Analysis</h3>
+                <select
+                  value={selectedPeriod}
+                  onChange={(e) => setSelectedPeriod(e.target.value)}
+                  className="text-[10px] font-medium border border-neutral-200 rounded px-2 py-1 bg-neutral-50 hover:bg-white transition-all cursor-pointer outline-none focus:ring-1 focus:ring-neutral-400"
+                >
+                  <option value="T12">T12 (Trailing 12m)</option>
+                  <option value="T9">T9 (Trailing 9m)</option>
+                  <option value="T6">T6 (Trailing 6m)</option>
+                  <option value="T3">T3 (Trailing 3m)</option>
+                </select>
+              </div>
               <div className="flex gap-2">
                 <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-                  <span className="w-2 h-2 rounded-full bg-neutral-300"></span> Historical (T12)
+                  <span className="w-2 h-2 rounded-full bg-neutral-300"></span> Historical ({selectedPeriod})
                 </span>
                 <span className="flex items-center gap-1 text-[10px] text-neutral-500">
-                  <span className="w-2 h-2 rounded-full bg-neutral-900"></span> Pro Forma (F12)
+                  <span className="w-2 h-2 rounded-full bg-neutral-900"></span> Pro Forma ({selectedPeriod.replace("T", "F")})
                 </span>
               </div>
             </div>
@@ -884,11 +1068,14 @@ export default function UnderwritingDashboard({
                        {missingValues.map((val) => <li key={val}>• Missing: {val}</li>)}
                      </ul>
                   )}
-                  {logicErrors.length > 0 && (
-                     <ul className="text-sm text-rose-600 font-medium">
-                       {logicErrors.map((err) => <li key={err}>• Error: {err}</li>)}
-                     </ul>
-                  )}
+                  {/* {logicErrors.length > 0 && (
+                     <div className="mt-2">
+                       <p className="text-sm text-rose-600 font-bold mb-2">Data Logic Errors:</p>
+                       <ul className="text-sm text-rose-600 font-medium bg-rose-50/50 p-3 rounded-lg border border-rose-100">
+                         {logicErrors.map((err) => <LogicErrorItem key={err} errorMsg={err} analysis={analysis} />)}
+                       </ul>
+                     </div>
+                  )} */}
                 </div>
                 
               </div>
@@ -898,8 +1085,8 @@ export default function UnderwritingDashboard({
               <thead>
                 <tr className="bg-neutral-50/50 border-b border-neutral-100 text-xs text-neutral-500 font-medium">
                   <th className="px-6 py-3 font-medium">Item</th>
-                  <th className="px-6 py-3 font-medium text-right">T12 (Historical)</th>
-                  <th className="px-6 py-3 font-medium text-right">F12 (Pro Forma)</th>
+                  <th className="px-6 py-3 font-medium text-right">{selectedPeriod} (Historical)</th>
+                  <th className="px-6 py-3 font-medium text-right">{selectedPeriod.replace("T", "F")} (Pro Forma)</th>
                   <th className="px-6 py-3 font-medium text-right w-24">Var %</th>
                 </tr>
               </thead>
@@ -907,60 +1094,60 @@ export default function UnderwritingDashboard({
                 <tr className="group hover:bg-neutral-50 transition-colors">
                   <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
                     Gross Potential Rent
-                    <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} />
+                    <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">
                     <span className="relative group/explanation cursor-help inline-block">
-                      {formatCurrency(analysis.rent_roll_summary?.total_annual_rent || 0)}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Gross Potential Rent"]} />
+                      {formatCurrency((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Gross Potential Rent"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900 font-medium">
                     <span className="relative group/explanation cursor-help inline-block">
-                      {formatCurrency(analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0))}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} />
+                      {formatCurrency(adjustedProFormaGPR)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Gross Potential Rent"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-emerald-600 text-xs">
-                    {((analysis.rent_roll.reduce((sum, item) => sum + item.market_rent * 12, 0) - (analysis.rent_roll_summary?.total_annual_rent || 0)) / (analysis.rent_roll_summary?.total_annual_rent || 1) * 100).toFixed(1)}%
+                    {((adjustedProFormaGPR - ((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier)) / (((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier) || 1) * 100).toFixed(1)}%
                   </td>
                 </tr>
                 <tr className="group hover:bg-neutral-50 transition-colors">
                   <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
                     Total Expenses
-                    <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} />
+                    <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900">
                     <span className="relative group/explanation cursor-help inline-block">
-                      ({formatCurrency(analysis.historical_total_expenses || analysis.historical_expenses?.reduce((sum, e) => sum + e.amount, 0) || 0)})
-                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Total Operating Expenses"]} />
+                      ({formatCurrency(historicalTotalExpenses)})
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900">
                     <span className="relative group/explanation cursor-help inline-block">
-                      ({formatCurrency(analysis.pro_forma_expenses || 0)})
-                      <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} />
+                      ({formatCurrency(adjustedProFormaExpenses)})
+                      <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-emerald-600 text-xs">
-                    {(((analysis.historical_total_expenses || 0) - (analysis.pro_forma_expenses || 0)) / (analysis.historical_total_expenses || 1) * 100).toFixed(1)}%
+                    {((historicalTotalExpenses - adjustedProFormaExpenses) / (historicalTotalExpenses || 1) * 100).toFixed(1)}%
                   </td>
                 </tr>
                 <tr className="bg-neutral-50/30 font-semibold border-t border-neutral-200">
                   <td className="px-6 py-4 text-neutral-900 group/explanation relative cursor-help">
                     Net Operating Income
-                    <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} />
+                    <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-4 text-right text-rose-600">
                     <span className="relative group/explanation cursor-help inline-block">
                       {formatCurrency(historicalNOI)}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Net Operating Income (NOI)"]} />
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Net Operating Income (NOI)"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right text-rose-600">
                     <span className="relative group/explanation cursor-help inline-block">
-                      {formatCurrency(proFormaNOI)}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} />
+                      {formatCurrency(adjustedProFormaNOI)}
+                      <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right text-emerald-600 text-xs">{noiChangePercent.toFixed(1)}%</td>
@@ -968,18 +1155,18 @@ export default function UnderwritingDashboard({
                 <tr className="group hover:bg-neutral-50 transition-colors">
                   <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
                     Cap Rate
-                    <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} />
+                    <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-3.5 text-right text-rose-600 font-medium">
                     <span className="relative group/explanation cursor-help inline-block">
                       {formatPercent(historicalCapRate)}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Cap Rate"]} />
+                      <ExplanationTooltip metadata={analysis.explainability?.["Historical Cap Rate"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-rose-600 font-medium">
                     <span className="relative group/explanation cursor-help inline-block">
                       {formatPercent(proFormaCapRate)}
-                      <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} />
+                      <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right"></td>

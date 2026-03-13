@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import { apiClient } from "@/lib/api";
 import DataVerificationTable from "@/components/DataVerificationTable";
+import PendingExpensesWidget from "@/components/PendingExpensesWidget";
+
+const ExpensesVerificationWidget = dynamic(() => import("@/components/ExpensesVerificationWidget"), {
+  ssr: false,
+});
+
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
 
 const AVAILABLE_CATEGORIES = [
@@ -40,10 +47,12 @@ const AVAILABLE_CATEGORIES = [
 
 interface VerificationWidgetProps {
   packageId: string;
+  view?: "data" | "expenses" | "both";
   onAnalysisUpdate?: (analysis: any) => void;
+  onDataChange?: () => void;
 }
 
-export default function VerificationWidget({ packageId, onAnalysisUpdate }: VerificationWidgetProps) {
+export default function VerificationWidget({ packageId, view = "both", onAnalysisUpdate, onDataChange }: VerificationWidgetProps) {
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [normalizedItems, setNormalizedItems] = useState<NormalizedDataItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +62,8 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
   const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "" });
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string>("");
+  const [globalFilter, setGlobalFilter] = useState<"All" | "Handwritten" | "Duplicates">("All");
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const baseUrl = process.env.NEXT_PUBLIC_FINANCIAL_API_URL;
 
@@ -191,8 +202,13 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
   };
 
   // Verify a single item
-  const handleVerifyItem = async (itemId: string, userCorrection?: string) => {
+  const handleVerifyItem = async (itemId: string, userCorrection?: string, userRawText?: string) => {
     try {
+      const payload: any = {};
+      if (userRawText !== undefined) {
+        payload.raw_text = userRawText;
+      }
+      
       const response = await fetch(
         `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${itemId}`,
         {
@@ -200,7 +216,10 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ user_correction: userCorrection }),
+          body: JSON.stringify({
+            user_correction: userCorrection,
+            payload: Object.keys(payload).length > 0 ? payload : undefined
+          }),
         }
       );
 
@@ -210,19 +229,118 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
 
       // Update local state
       setNormalizedItems((prev) =>
-        prev.map((item) =>
-          item.id === itemId
-            ? {
-                ...item,
-                user_verified: true,
-                user_correction: userCorrection || null,
+        prev.map((item) => {
+          if (item.id === itemId) {
+            const updatedItem = {
+              ...item,
+              user_verified: true,
+              user_correction: userCorrection !== undefined ? userCorrection : item.user_correction,
+            };
+            if (userRawText !== undefined) {
+              updatedItem.raw_text = userRawText;
+              // Extract numeric amount locally for immediate UI update
+              const amounts = userRawText.match(/\$?([\d,]+\.?\d*)/g);
+              if (amounts) {
+                const parsed = parseFloat(amounts[amounts.length - 1].replace(/,/g, '').replace('$', ''));
+                if (!isNaN(parsed)) {
+                  updatedItem.metadata = { ...updatedItem.metadata, amount: parsed };
+                }
               }
-            : item
-        )
+            }
+            return updatedItem;
+          }
+          return item;
+        })
       );
       setEditingItem(null);
+      setHasUnsavedChanges(true);
+      if (onDataChange) onDataChange();
     } catch (err) {
       console.error("Error verifying item:", err);
+    }
+  };
+
+  // Handle updates from ExpensesVerificationWidget
+  const handleUpdateItems = async (updatedItems: NormalizedDataItem[]) => {
+    // For now, we update them one by one, but we could add a batch endpoint
+    for (const item of updatedItems) {
+      try {
+        const response = await fetch(
+          `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${item.id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              user_correction: item.user_correction || item.normalized_value,
+              payload: {
+                amount: item.metadata?.amount,
+                raw_text: item.raw_text,
+                category_group: item.category_group
+              }
+            }),
+          }
+        );
+
+        if (response.ok) {
+          // Update local state
+          setNormalizedItems((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
+          );
+          setHasUnsavedChanges(true);
+          if (onDataChange) onDataChange();
+        }
+      } catch (err) {
+        console.error("Error updating item:", err);
+      }
+    }
+  };
+
+  // Handle adding a manual expense
+  const handleAddManualExpense = async (newItem: Partial<NormalizedDataItem>) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/add-normalized-item`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(newItem),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        // Add to local state
+        setNormalizedItems((prev) => [...prev, data.item]);
+        setHasUnsavedChanges(true);
+        if (onDataChange) onDataChange();
+      }
+    } catch (err) {
+      console.error("Error adding manual expense:", err);
+    }
+  };
+
+  // Handle removing an item
+  const handleRemoveItem = async (itemId: string) => {
+    try {
+      const response = await fetch(
+        `${baseUrl}/api/v1/multi-document/packages/${packageId}/remove-normalized-item/${itemId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (response.ok) {
+        // Remove from local state
+        setNormalizedItems((prev) => prev.filter((i) => i.id !== itemId));
+        setHasUnsavedChanges(true);
+        if (onDataChange) onDataChange();
+      }
+    } catch (err) {
+      console.error("Error removing item:", err);
     }
   };
 
@@ -264,6 +382,8 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
             : item
         )
       );
+      setHasUnsavedChanges(true);
+      if (onDataChange) onDataChange();
     } catch (err) {
       console.error("Error verifying all items:", err);
     }
@@ -318,7 +438,7 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
       if (onAnalysisUpdate) {
         onAnalysisUpdate(newAnalysis);
       }
-      
+      setHasUnsavedChanges(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report regeneration failed");
     } finally {
@@ -360,14 +480,21 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
         <div className="flex items-end justify-between mb-1">
           <div>
             <h2 className="text-lg font-semibold text-neutral-900 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-                <path d="M9 11l3 3L22 4"></path>
-                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
-              </svg>
-              Data Verification
+              {view === "expenses" ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                  <line x1="12" y1="1" x2="12" y2="23"></line>
+                  <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                  <path d="M9 11l3 3L22 4"></path>
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+                </svg>
+              )}
+              {view === "expenses" ? "Verify Expenses" : "Verify Data"}
             </h2>
             <p className="text-sm text-neutral-500 mt-1">
-              Review and correct AI-mapped categories from your documents.
+              {view === "expenses" ? "Review and correct expense verifications." : "Review and correct AI-mapped categories from your documents."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -405,7 +532,7 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
                   <path d="M21 12a9 9 0 1 1-2.5-6.2"></path>
                   <path d="M21 6v6h-6"></path>
                 </svg>
-                {regenerating ? "Regenerating..." : "Regenerate Report"}
+                {regenerating ? "Regenerating..." : "Save and Regenerate"}
               </button>
             </div>
           </div>
@@ -467,16 +594,65 @@ export default function VerificationWidget({ packageId, onAnalysisUpdate }: Veri
           </div>
         </div>
       ) : (
-        // Data Tables by Section
-        <div className="space-y-8">
-          <DataVerificationTable
-            items={normalizedItems}
-            availableCategories={AVAILABLE_CATEGORIES}
-            documents={documents}
-            packageId={packageId}
-            onVerify={handleVerifyItem}
-            onVerifyAll={handleVerifyAll}
-          />
+        <div className="flex flex-col gap-6">
+          {/* Global Tabs */}
+          <div className="flex space-x-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-fit">
+            {(["All", "Handwritten", "Duplicates"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setGlobalFilter(tab)}
+                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                  globalFilter === tab
+                    ? "bg-slate-100 text-slate-900 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Data Tables by Section */}
+          <div className="space-y-12">
+            {(view === "expenses" || view === "both") && (
+              <>
+                <ExpensesVerificationWidget
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES}
+                  globalFilter={globalFilter}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
+                  documents={documents}
+                  packageId={packageId}
+                />
+                <PendingExpensesWidget
+                  items={normalizedItems}
+                  availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
+                  globalFilter={globalFilter}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
+                  documents={documents}
+                  packageId={packageId}
+                />
+            </>
+          )}
+
+          {(view === "data" || view === "both") && (
+            <DataVerificationTable
+              items={normalizedItems}
+              availableCategories={AVAILABLE_CATEGORIES}
+              documents={documents}
+              packageId={packageId}
+              globalFilter={globalFilter}
+              onVerify={handleVerifyItem}
+              onVerifyAll={handleVerifyAll}
+            />
+          )}
+          </div>
         </div>
       )}
 

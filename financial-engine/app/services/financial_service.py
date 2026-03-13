@@ -50,8 +50,17 @@ class FinancialService:
         pnl_expenses = []
         raw_bill_expenses = []
         
+        manual_entries = []
+        verified_any_source = []
         for exp in expenses:
             src = (exp.source_document or "").upper()
+            is_verified = hasattr(exp, 'user_verified') and exp.user_verified
+            
+            if "MANUAL" in src:
+                manual_entries.append(exp)
+            elif is_verified:
+                verified_any_source.append(exp)
+            
             if "OM" in src or "OFFERING" in src or "MEMORANDUM" in src:
                 om_expenses.append(exp)
             elif any(kw in src for kw in ["P&L", "PL ", "T12", "STATEMENT", "OPERATING"]):
@@ -62,8 +71,12 @@ class FinancialService:
         # Priority 1: OM Primacy
         # If we have substantial data from OM, we use OM ONLY.
         if len(om_expenses) > 5:
-            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources.")
-            expenses = om_expenses
+            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources (except verified items).")
+            # Keep OM expenses + manual entries + any item verified by user from other sources
+            # Use a set of IDs to avoid duplicates if a verified item is also in om_expenses
+            seen_ids = {e.id for e in om_expenses if hasattr(e, 'id') and e.id}
+            others_to_keep = [e for e in (manual_entries + verified_any_source) if not (hasattr(e, 'id') and e.id in seen_ids)]
+            expenses = om_expenses + others_to_keep
         
         # Priority 2: T12/P&L Primacy over Raw Bills
         # If we have a P&L, we should ignore ALL raw bills for expenses.
@@ -96,7 +109,7 @@ class FinancialService:
                 else:
                     logger.debug(f"Hierarchy: Discarding raw expense item: {exp.original_text}")
             
-            expenses = pnl_expenses + filtered_raw_bills
+            expenses = pnl_expenses + filtered_raw_bills + manual_entries
         
         # --- Step 1: Year-Based Filtering ---
         # Collect years from all expenses
@@ -152,6 +165,37 @@ class FinancialService:
             if len(items) <= 1:
                 final_expenses.extend(items)
                 continue
+            
+            # Priority 0: Separate User-Verified Items
+            verified_items = [i for i in items if hasattr(i, 'user_verified') and i.user_verified]
+            unverified_items = [i for i in items if not (hasattr(i, 'user_verified') and i.user_verified)]
+            
+            # If we have verified items, we still want to keep other non-duplicate items
+            # but for certain categories like Tax/Insurance, verified items should indeed be the only ones.
+            if verified_items:
+                # Handle potential string or enum category comparison
+                is_fixed_category = any(
+                    (category == c or str(category) == str(c) or str(category) == c.value)
+                    for c in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE, ExpenseCategory.MANAGEMENT_FEES]
+                )
+                
+                if is_fixed_category:
+                    logger.info(f"Deduplicating {category}: Keeping {len(verified_items)} user-verified items and discarding others.")
+                    # If multiple verified items exist for these fixed categories, we take the LATEST one (highest index)
+                    # as it's likely the most recent user edit.
+                    final_expenses.append(verified_items[-1])
+                    continue
+                else:
+                    # For variable categories, we keep verified items
+                    # and then process unverified ones, but we should deduplicate against verified items too.
+                    final_expenses.extend(verified_items)
+                    
+                    # Deduplicate unverified items against verified ones (by amount)
+                    verified_amounts = {round(i.amount, 2) for i in verified_items}
+                    items = [i for i in unverified_items if round(i.amount, 2) not in verified_amounts]
+                    
+                    if not items:
+                        continue
             
             # --- Strategy 0.5: Frequency-Based Deduplication (Duplicate Entries) ---
             # Fix for "Fire alarm monitoring extracted 30 times" and "Duplicate Property Tax entries"
@@ -229,7 +273,8 @@ class FinancialService:
                  # Max plausible insurance is ~$2,500/unit/year.
                  # We don't have unit count here easily, but we can check absolute outliers.
                  # $100k for insurance on a single building is suspicious unless it's huge.
-                 if category == ExpenseCategory.INSURANCE and largest.amount > 100000:
+                 # CRITICAL: Never ignore user-verified values, even if they seem high.
+                 if category == ExpenseCategory.INSURANCE and largest.amount > 100000 and not getattr(largest, 'user_verified', False):
                      # Check if we have a smaller, more reasonable item?
                      reasonable_items = [i for i in items if 1000 < i.amount < 50000]
                      if reasonable_items:
@@ -343,7 +388,10 @@ class FinancialService:
     def calculate_historical(self, analysis: UnderwritingAnalysis) -> Dict[str, float]:
         """
         Calculates T12 historical performance based on extracted data.
+        Now also supports T3, T6, T9 trailing periods.
         """
+        from app.models.schemas import HistoricalSummary
+
         hgi = sum(item.current_rent * 12 for item in analysis.rent_roll)
         
         # Deduplicate expenses (Fix for "Redundant Tax Entries")
@@ -351,6 +399,9 @@ class FinancialService:
             analysis.historical_expenses = self._deduplicate_expenses(analysis.historical_expenses)
         
         total_expenses = 0.0
+        total_expenses_t3 = 0.0
+        total_expenses_t6 = 0.0
+        total_expenses_t9 = 0.0
         
         # --- FIX: HARD FILTERING of the Historical List ---
         # Instead of just skipping them during sum, we must REMOVE them from the list entirely
@@ -390,10 +441,6 @@ class FinancialService:
                     ExpenseCategory.OTHER_INCOME,
                     ExpenseCategory.GROSS_POTENTIAL_RENT,
                     ExpenseCategory.REIMBURSEMENTS,
-                    # FIX: Strict CapEx Exclusion
-                    # ExpenseCategory.CAPITAL_EXPENDITURE is not in the Enum (it's a CategoryGroup), using CAPITAL_RESERVES mostly.
-                    # But checking schema, there is no CAPITAL_EXPENDITURE in ExpenseCategory enum.
-                    # We already excluded CAPITAL_RESERVES above.
                 ]:
                     logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
                     continue
@@ -412,34 +459,92 @@ class FinancialService:
                 if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
                      logger.info(f"Removing Revenue Item from Expenses: {cat_val} - {expense.original_text} (${expense.amount:,.2f})")
                      continue
-
+ 
                 # 3. OUTLIER CHECK
-                # Exclude extremely large single line items that look like aggregate totals
-                # A single expense item > $200k in a $300k revenue deal is suspicious
-                # Typically, Taxes and Insurance are the largest single items.
                 if expense.amount > 200000 and expense.mapped_category not in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
                      logger.warning(f"Removing Suspiciously Large Item: {expense.original_text} (${expense.amount:,.2f})")
                      continue
-
+ 
                 # If passed all checks, include in sum AND final list
                 total_expenses += expense.amount
+                
+                # Sum Trailing Periods (Annualized)
+                # Note: We assume LLM extracts the PERIOD sum, so we annualize here.
+                # If LLM already annualized, this will be wrong, but usually P&Ls show period totals.
+                # Heuristic: If T3 > T12, it's already annualized.
+                if expense.amount_t3 is not None:
+                    total_expenses_t3 += expense.amount_t3 * 4
+                if expense.amount_t6 is not None:
+                    total_expenses_t6 += expense.amount_t6 * 2
+                if expense.amount_t9 is not None:
+                    total_expenses_t9 += expense.amount_t9 * (12/9)
+                
                 valid_expenses.append(expense)
             
             # UPDATE THE OBJECT WITH FILTERED LIST
-            # This ensures the "T12" column in reports only contains valid OpEx
             analysis.historical_expenses = valid_expenses
-
+ 
             if total_expenses == 0:
                 logger.warning("Historical expenses list is present but total amount is 0. Check normalization.")
         else:
             logger.warning("No historical expenses found in analysis object.")
-
-        historical_noi = hgi - total_expenses
-        
+ 
         purchase_price = analysis.property_meta.purchase_price or 0
+        
+        # Calculate T12 Snapshot
+        historical_noi = hgi - total_expenses
         historical_cap_rate = historical_noi / purchase_price if purchase_price > 0 else 0
         
-        # Save to Analysis Object
+        # Build Periods
+        periods = []
+        
+        # T12 (Always)
+        periods.append(HistoricalSummary(
+            period="T12",
+            total_expenses=self._sanitize_value(total_expenses),
+            noi=self._sanitize_value(historical_noi),
+            cap_rate=self._sanitize_value(historical_cap_rate)
+        ))
+        
+        # Synthetic Period Generation (as per user request: "generate others from our selves by dividing the values")
+        # If T3, T6, or T9 data wasn't explicitly extracted, generate them by dividing T12.
+        
+        # T3
+        val_t3 = total_expenses_t3 if total_expenses_t3 > 0 else (total_expenses * (3/12))
+        hgi_t3 = hgi * (3/12)
+        noi_t3 = hgi_t3 - val_t3
+        periods.append(HistoricalSummary(
+            period="T3",
+            total_expenses=self._sanitize_value(val_t3),
+            noi=self._sanitize_value(noi_t3),
+            cap_rate=self._sanitize_value(noi_t3 / (purchase_price * (3/12)) if purchase_price > 0 else 0)
+        ))
+            
+        # T6
+        val_t6 = total_expenses_t6 if total_expenses_t6 > 0 else (total_expenses * (6/12))
+        hgi_t6 = hgi * (6/12)
+        noi_t6 = hgi_t6 - val_t6
+        periods.append(HistoricalSummary(
+            period="T6",
+            total_expenses=self._sanitize_value(val_t6),
+            noi=self._sanitize_value(noi_t6),
+            cap_rate=self._sanitize_value(noi_t6 / (purchase_price * (6/12)) if purchase_price > 0 else 0)
+        ))
+            
+        # T9
+        val_t9 = total_expenses_t9 if total_expenses_t9 > 0 else (total_expenses * (9/12))
+        hgi_t9 = hgi * (9/12)
+        noi_t9 = hgi_t9 - val_t9
+        periods.append(HistoricalSummary(
+            period="T9",
+            total_expenses=self._sanitize_value(val_t9),
+            noi=self._sanitize_value(noi_t9),
+            cap_rate=self._sanitize_value(noi_t9 / (purchase_price * (9/12)) if purchase_price > 0 else 0)
+        ))
+            
+        analysis.historical_periods = periods
+        
+        # Save defaults to Analysis Object (Backward Compatibility uses T12)
         analysis.historical_total_expenses = self._sanitize_value(total_expenses)
         analysis.historical_noi = self._sanitize_value(historical_noi)
         analysis.historical_cap_rate = self._sanitize_value(historical_cap_rate)
@@ -535,6 +640,10 @@ class FinancialService:
         for item in analysis.rent_roll:
             u_type = item.unit_type or "Unknown"
             
+            # Update vacancy based on tenant name or current rent if not explicitly set
+            if getattr(item, 'is_vacant', None) is None:
+                item.is_vacant = ((item.tenant_name or "").lower() == "vacant" or (item.current_rent == 0 and (not item.tenant_name or (item.tenant_name or "").lower() == "vacant")))
+
             # Use current rent as fallback for market rent if 0 (Fix for Missing Market Rent)
             current = item.current_rent or 0
             market = item.market_rent or 0
@@ -550,7 +659,14 @@ class FinancialService:
             if u_type not in unit_groups:
                 unit_groups[u_type] = []
                 unit_market_rents[u_type] = []
-            unit_groups[u_type].append(current)
+            
+            # Use current if not vacant, else 0
+            is_vacant = getattr(item, 'is_vacant', False)
+            if is_vacant:
+                unit_groups[u_type].append(0.0)
+            else:
+                unit_groups[u_type].append(current)
+                
             unit_market_rents[u_type].append(market)
             
             # Update item in place just in case we need it later
@@ -585,7 +701,8 @@ class FinancialService:
             scaled_count = int(round(raw_count * scaling_factor))
             total_scaled_count += scaled_count
             
-            # Calculate average rent excluding 0s
+            # Calculate average rent excluding units marked as 0 (vacant)
+            # In unit_groups, we already appended 0.0 for vacant units.
             paying_rents = [r for r in rents if r > 0]
             avg_rent = sum(paying_rents) / len(paying_rents) if paying_rents else 0
             mkt_rents = unit_market_rents.get(u_type, [])
@@ -759,19 +876,24 @@ class FinancialService:
 
         if analysis.historical_expenses:
             has_t12_data = True
-            for expense in analysis.historical_expenses:
-                # Skip if it's Taxes or Mgmt Fee - we use the calculated values above
-                # Also skip Debt/Loan Balance items that shouldn't be in OpEx
+            
+            # Group items by category to prioritize verified ones
+            from collections import defaultdict
+            items_by_cat = defaultdict(list)
+            for exp in analysis.historical_expenses:
+                cat_val = exp.mapped_category.value if hasattr(exp.mapped_category, 'value') else str(exp.mapped_category)
+                items_by_cat[cat_val].append(exp)
+            
+            for cat_name, items in items_by_cat.items():
+                # Identify first item to check category type (for exclusions)
+                first_item = items[0]
                 
-                # Handle Enum or String category
-                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
-
                 # --- FIX: Strict Exclusion Logic ---
                 # Exclude Taxes/Mgmt (calculated separately)
                 # Exclude Non-OpEx categories (Debt, Reserves, Uncategorized, Property Info)
                 
                 # Check Enum exclusions
-                if expense.mapped_category in [
+                if first_item.mapped_category in [
                     ExpenseCategory.REAL_ESTATE_TAXES,
                     ExpenseCategory.MANAGEMENT_FEES,
                     ExpenseCategory.CURRENT_LOAN_BALANCE,
@@ -792,7 +914,7 @@ class FinancialService:
                     continue
                 
                 # Additional String Checks (Case-insensitive for safety)
-                cat_val_lower = cat_val.lower()
+                cat_val_lower = cat_name.lower()
                 if any(x in cat_val_lower for x in [
                     "debt", "mortgage", "non-operating", "capital expenditure",
                     "depreciation", "amortization", "uncategorized",
@@ -800,25 +922,35 @@ class FinancialService:
                 ]):
                     continue
                 
+                # Exclude Revenue keywords
+                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
+                    continue
+
                 # Check for critical categories
-                if expense.mapped_category == ExpenseCategory.PAYROLL:
-                    has_payroll = True
+                verified_in_cat = [i for i in items if getattr(i, 'user_verified', False)]
                 
-                # Exclude Revenue keywords
-                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
-                    continue
-
-                # Exclude Revenue keywords
-                if "income" in cat_val_lower or "revenue" in cat_val_lower or "reimbursement" in cat_val_lower:
-                    continue
-
-                # Check for marketing (flexible match)
-                cat_val = expense.mapped_category.value if hasattr(expense.mapped_category, 'value') else str(expense.mapped_category)
-                if cat_val == ExpenseCategory.ADVERTISING_MARKETING.value or "Marketing" in cat_val or "Advertising" in cat_val:
-                    has_marketing = True
+                if verified_in_cat:
+                    # PRIORITY: If user verified/edited items in this category, use ONLY those.
+                    # This ensures that edited values completely replace unverified ones.
+                    cat_total = sum(i.amount for i in verified_in_cat)
+                    logger.info(f"Priority: Using {len(verified_in_cat)} user-verified items for category '{cat_name}' (Total: ${cat_total})")
                     
-                cat_name = cat_val # Use the safely extracted string value
-                other_expenses_map[cat_name] = other_expenses_map.get(cat_name, 0.0) + expense.amount
+                    # Update trackers
+                    if any(i.mapped_category == ExpenseCategory.PAYROLL for i in verified_in_cat):
+                        has_payroll = True
+                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in verified_in_cat):
+                        has_marketing = True
+                else:
+                    # No verified items, sum up unverified ones
+                    cat_total = sum(i.amount for i in items)
+                    
+                    # Update trackers
+                    if any(i.mapped_category == ExpenseCategory.PAYROLL for i in items):
+                        has_payroll = True
+                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in items):
+                        has_marketing = True
+
+                other_expenses_map[cat_name] = cat_total
         else:
              self.audit_log_service.add_log(analysis, "Data Warning", "No T12 Expenses Found", "Extraction", "Using only calculated Taxes & Mgmt Fee")
              analysis.gating_reasons.append("CRITICAL: No T12 Expense Data extracted. Pro Forma expenses may be understated.")

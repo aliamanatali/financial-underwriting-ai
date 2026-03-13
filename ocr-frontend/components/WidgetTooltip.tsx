@@ -113,7 +113,7 @@ function PortalTooltip({ title, description, formulas, top, left, position }: an
             {formulas.map((item: any, idx: number) => (
               <div key={idx} className="mb-1 last:mb-0">
                 <span className="text-xs font-medium text-slate-700 block">{item.label}:</span>
-                <code className="block text-[10px] bg-white border border-slate-200 rounded px-1.5 py-0.5 mt-0.5 text-slate-600 font-mono break-all">
+                <code className="block text-[10px] bg-white border border-slate-200 rounded px-1.5 py-0.5 mt-0.5 text-slate-600 font-mono break-words">
                   {item.formula}
                 </code>
               </div>

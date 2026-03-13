@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FINANCIAL_UNDERWRITING_SYSTEM_PROMPT } from "@/data/financialPrompt";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = process.env.GEMINI_API_URL || "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview-exp:generateContent";
+// User explicitly requested to use 2.5 pro
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent";
 
 /**
  * Chat message from frontend

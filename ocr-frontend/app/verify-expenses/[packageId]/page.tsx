@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import Sidebar from "@/components/Sidebar";
 import { apiClient } from "@/lib/api";
-import DataVerificationTable from "@/components/DataVerificationTable";
+import ExpensesVerificationWidget from "@/components/ExpensesVerificationWidget";
 import { FinancialAnalysisProgress, DealPackage, NormalizedDataItem } from "@/lib/types";
+import PendingExpensesWidget from "@/components/PendingExpensesWidget";
  
  const AVAILABLE_CATEGORIES = [
    // Revenue
@@ -254,8 +255,8 @@ export default function VerificationPage() {
     }
   };
 
-  // Handle adding a manual item
-  const handleAddItem = async (newItem: Partial<NormalizedDataItem>) => {
+  // Handle adding a manual expense
+  const handleAddManualExpense = async (newItem: Partial<NormalizedDataItem>) => {
     try {
       const response = await fetch(
         `${baseUrl}/api/v1/multi-document/packages/${packageId}/add-normalized-item`,
@@ -295,34 +296,15 @@ export default function VerificationPage() {
     }
   };
 
-  const handleUpdateItem = async (item: NormalizedDataItem) => {
-    try {
-      const response = await fetch(
-        `${baseUrl}/api/v1/multi-document/packages/${packageId}/verify-item/${item.id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            user_correction: item.user_correction || item.normalized_value,
-            payload: {
-              amount: item.metadata?.amount,
-              raw_text: item.raw_text,
-              category_group: item.category_group
-            }
-          }),
-        }
-      );
+  // Edit item category
+  const handleEditItem = (itemId: string, currentCategory: string) => {
+    setEditingItem(itemId);
+    setEditCategory(currentCategory);
+  };
 
-      if (response.ok) {
-        setNormalizedItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...item, user_verified: true } : i))
-        );
-      }
-    } catch (err) {
-      console.error("Error updating item:", err);
-    }
+  // Save edited category
+  const handleSaveEdit = (itemId: string) => {
+    handleVerifyItem(itemId, editCategory);
   };
 
   // Verify all items using batch endpoint
@@ -519,7 +501,7 @@ export default function VerificationPage() {
                   <span>Analysis</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-semibold text-neutral-900">Data Verification</h1>
+                  <h1 className="text-sm font-semibold text-neutral-900">Verify Expenses</h1>
                 </div>
               </div>
             </div>
@@ -544,7 +526,7 @@ export default function VerificationPage() {
                 <div className="flex items-end justify-between mb-1">
                   <div>
                     <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
-                      Data Verification
+                      Verify Expenses
                     </h2>
                     <p className="text-sm text-neutral-500">Preparing verification data...</p>
                   </div>
@@ -557,7 +539,7 @@ export default function VerificationPage() {
                 <div className="flex items-end justify-between mb-1">
                   <div>
                     <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
-                      Data Verification
+                      Verify Expenses
                     </h2>
                     <p className="text-sm text-neutral-500">Extracting and normalizing data from your documents...</p>
                   </div>
@@ -570,9 +552,9 @@ export default function VerificationPage() {
                 <div className="flex items-end justify-between mb-1">
                   <div>
                     <h2 className="text-2xl font-semibold text-neutral-900 tracking-tight flex items-center gap-3 mb-2">
-                      Data Verification
+                      Verify Expenses
                     </h2>
-                    <p className="text-sm text-neutral-500">Review and correct AI-mapped categories.</p>
+                    <p className="text-sm text-neutral-500">Review and correct expense verifications.</p>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col items-end mr-4">
@@ -674,16 +656,26 @@ export default function VerificationPage() {
               </div>
             ) : (
               <div className="space-y-12">
-                <DataVerificationTable
+                <ExpensesVerificationWidget
                   items={normalizedItems}
                   availableCategories={AVAILABLE_CATEGORIES}
+                  onUpdateExpenses={handleUpdateItems}
+                  onAddExpense={handleAddManualExpense}
+                  onRemoveExpense={handleRemoveItem}
+                  onRegenerate={handleRegenerateReport}
                   documents={documents}
                   packageId={packageId}
-                  onVerify={handleVerifyItem}
-                  onVerifyAll={handleVerifyAll}
-                  onUpdateItem={handleUpdateItem}
-                  onAddItem={handleAddItem}
-                  onRemoveItem={handleRemoveItem}
+                />
+
+                <PendingExpensesWidget
+                 items={normalizedItems}
+                 availableCategories={AVAILABLE_CATEGORIES.filter(c => c !== "Uncategorized")}
+                 onUpdateExpenses={handleUpdateItems}
+                 onAddExpense={handleAddManualExpense}
+                 onRemoveExpense={handleRemoveItem}
+                 onRegenerate={handleRegenerateReport}
+                 documents={documents}
+                 packageId={packageId}
                 />
               </div>
             )}

@@ -70,8 +70,8 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
   }, [rentRoll, isEditing, studentHousingConfig]);
 
   const formatCurrency = (val: number, decimals = 0) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(val);
-  const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 1 }).format(val);
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(Math.round(val));
+  const formatPercent = (val: number) => new Intl.NumberFormat('en-US', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(val));
 
   const handleNumericChange = (unitType: string, field: keyof EditableRentRollItem, value: string) => {
     const numericValue = value.replace(/[^0-9.]/g, '');
@@ -81,65 +81,62 @@ export default function UnitBreakdownStabilizedTable({ rentRoll, studentHousingC
   };
  
    const handleLocalChange = (unitType: string, field: keyof EditableRentRollItem, value: any) => {
-    setLocalRentRoll(prev => {
-        const updated = prev.map(item => {
-            if (item.unit_type === unitType) {
-                let newItem = { ...item, [field]: value };
+    // Calculate new state first
+    const updated = localRentRoll.map(item => {
+        if (item.unit_type === unitType) {
+            let newItem = { ...item, [field]: value };
 
-                // UX Improvement: Auto-update label if it matches the occupancy type
-                if (field === "occupancy_type") {
-                    // If label was same as old occupancy (default), update it to new occupancy
-                    // We need the *previous* label/occupancy state, but since we are mapping over current items, 'item' is the previous state
-                    if (item.unit_config_label === item.occupancy_type) {
-                        newItem.unit_config_label = value;
-                    }
-
-                    // Intelligent Preset for Mixed/Single/Double Logic
-                    if (value === "Single") {
-                        newItem.beds_single = newItem.bed_count;
-                        newItem.beds_double = 0;
-                    } else if (value === "Double") {
-                        newItem.beds_single = 0;
-                        newItem.beds_double = newItem.bed_count;
-                    }
-                    // For "Mixed", we leave values as-is
-                    if (!newItem.beds_single) newItem.beds_single = 0;
-                    if (!newItem.beds_double) newItem.beds_double = 0;
-                }
-
-                // UX Improvement: If bed count changes, auto-update sub-counts if strictly Single or Double
-                if (field === "bed_count") {
-                    if (newItem.occupancy_type === "Single") {
-                        newItem.beds_single = value;
-                    } else if (newItem.occupancy_type === "Double") {
-                        newItem.beds_double = value;
-                    }
-                }
-
-                return newItem;
-            }
-            return item;
-        });
-        
-        // Propagate changes to parent
-        // Note: We need to find the updated item to pass the *new* values for potentially auto-updated fields
-        const updatedItem = updated.find(i => i.unit_type === unitType);
-        if (updatedItem && onItemChange) {
-            // We need to call onItemChange for all potentially changed fields
-            onItemChange(unitType, field, value);
+            // UX Improvement: Auto-update label if it matches the occupancy type
             if (field === "occupancy_type") {
-                onItemChange(unitType, "unit_config_label", updatedItem.unit_config_label);
-                onItemChange(unitType, "beds_single", updatedItem.beds_single);
-                onItemChange(unitType, "beds_double", updatedItem.beds_double);
-            }
-            if (field === "bed_count") {
-                onItemChange(unitType, "beds_single", updatedItem.beds_single);
-                onItemChange(unitType, "beds_double", updatedItem.beds_double);
-            }
-        }
+                // If label was same as old occupancy (default), update it to new occupancy
+                if (item.unit_config_label === item.occupancy_type) {
+                    newItem.unit_config_label = value;
+                }
 
-        return updated;
+                // Intelligent Preset for Mixed/Single/Double Logic
+                if (value === "Single") {
+                    newItem.beds_single = newItem.bed_count;
+                    newItem.beds_double = 0;
+                } else if (value === "Double") {
+                    newItem.beds_single = 0;
+                    newItem.beds_double = newItem.bed_count;
+                }
+                // For "Mixed", we leave values as-is
+                if (!newItem.beds_single) newItem.beds_single = 0;
+                if (!newItem.beds_double) newItem.beds_double = 0;
+            }
+
+            // UX Improvement: If bed count changes, auto-update sub-counts if strictly Single or Double
+            if (field === "bed_count") {
+                if (newItem.occupancy_type === "Single") {
+                    newItem.beds_single = value;
+                } else if (newItem.occupancy_type === "Double") {
+                    newItem.beds_double = value;
+                }
+            }
+
+            return newItem;
+        }
+        return item;
     });
+
+    // Set local state
+    setLocalRentRoll(updated);
+    
+    // Propagate changes to parent outside of state updater
+    const updatedItem = updated.find(i => i.unit_type === unitType);
+    if (updatedItem && onItemChange) {
+        onItemChange(unitType, field, value);
+        if (field === "occupancy_type") {
+            onItemChange(unitType, "unit_config_label", updatedItem.unit_config_label);
+            onItemChange(unitType, "beds_single", updatedItem.beds_single);
+            onItemChange(unitType, "beds_double", updatedItem.beds_double);
+        }
+        if (field === "bed_count") {
+            onItemChange(unitType, "beds_single", updatedItem.beds_single);
+            onItemChange(unitType, "beds_double", updatedItem.beds_double);
+        }
+    }
   };
 
    const data = React.useMemo(() => {

@@ -229,6 +229,7 @@ class MultiDocumentExtractionService:
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 5. Property Identity & Deal Terms (e.g., "Property Name", "Property Address", "Purchase Price", "Year Built")
+                6. Pending Expenses (e.g., "Proposals", "Quotes", "Unpaid Bills")
                 
                 CRITICAL RULES TO AVOID ERRORS:
                 
@@ -250,48 +251,62 @@ class MultiDocumentExtractionService:
                    - Permit fees for capital work → type: "capex"
                    - Permit fees for repairs → type: "expense"
                 
-                4. NO DUPLICATE SCENARIOS: If the document shows multiple columns (e.g., "Current" vs "Pro Forma"), extract ONLY the "Current" or "Actual" or "T-12" column.
+                4. MULTI-PERIOD EXTRACTION:
+                   - If the document contains columns for trailing periods (e.g. T3, T6, T9, T12), extract ALL of them.
+                   - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
+                   - If only a total/annual column exists, use it for "amount" (T12).
                 
-                5. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
+                5. PENDING EXPENSES (PROPOSALS / UNPAID BILLS):
+                   - If an item is a "Proposal", "Quote", "Estimate", or an "Unpaid" bill with a "Balance Due", it is NOT a historical expense.
+                   - These should be type: "pending_expense"
+                   - This is for items that are not yet paid and need user approval.
                 
-                6. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                6. NO SISTER PROPERTIES: Extract ONLY expenses for the subject property if identifiable.
                 
-                7. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
-
-                8. IGNORE INSURANCE LIMITS:
+                7. NO DOUBLE COUNTING: Do NOT extract "Total" or "Subtotal" lines if you are also extracting individual line items.
+                
+                8. NO ASSESSED VALUES: Do NOT extract "Assessed Value" as a Tax Expense. Only extract actual tax amounts due.
+ 
+                9. IGNORE INSURANCE LIMITS:
                    - Do NOT extract "Aggregate", "Per Claim", "Limit of Liability", "Per Occurrence", "Medical Expenses", "Deductible".
                    - These are coverage limits, NOT the premium amount.
                    - Only extract the "Premium" or "Total Premium" amount.
-
-                9. PROPERTY IDENTITY & DEAL TERMS:
+ 
+                10. PROPERTY IDENTITY & DEAL TERMS:
                    - Extract the explicit "Property Name" if listed (e.g. "The Highland Apartments").
                    - Extract the "Property Address" if listed.
                    - Extract "Purchase Price" (or Sale Price, Contract Price) if listed. This is CRITICAL for Purchase Agreements (PSA).
                    - Extract "Year Built" if listed.
                    - type: "property_info"
-
-                10. LATEST PERIOD ONLY:
+ 
+                11. LATEST PERIOD ONLY:
                    - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
                    - Ignore columns for older years.
                 
                 For each item, provide:
                 1. The exact text/description as it appears in the document
                 2. The amount (annual or monthly) if applicable
-                3. The item type: "revenue", "expense", "property_info", "capex", "receivable"
-                4. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
-                5. The expense year (if identifiable, e.g. 2022, 2023)
-                6. The page number where this item is found
-                7. The bounding box of the area containing this item
+                3. The amount for trailing periods: amount_t3, amount_t6, amount_t9 if available
+                4. The item type: "revenue", "expense", "property_info", "capex", "receivable", "pending_expense"
+                5. The subtype (for revenue items): "rent", "late_fee", "other_income", "reimbursement"
+                6. The expense year (if identifiable, e.g. 2022, 2023)
+                7. The text type: Determine if the text is "Human Written" (handwritten notes, scribbles) or "Computerized" (standard typed text).
+                8. The page number where this item is found
+                9. The bounding box of the area containing this item
                 
                 Return the data as a JSON array with this structure:
                 [
                     {
                         "raw_text": "Exact description",
-                        "amount": 12345.67, // or null
+                        "amount": 12345.67, // T12 or Annual
+                        "amount_t3": 3000.0, // optional
+                        "amount_t6": 6000.0, // optional
+                        "amount_t9": 9000.0, // optional
                         "period": "annual" or "monthly" or "one-time",
-                        "type": "revenue", // or "expense", "property_info", "capex", "receivable"
+                        "type": "revenue", // or "expense", "property_info", "capex", "receivable", "pending_expense"
                         "subtype": "rent", // for revenue: "rent", "late_fee", "other_income", "reimbursement"; optional for others
                         "expense_year": 2023, // Integer year if found, null otherwise
+                        "text_type": "Computerized", // or "Human Written"
                         "page_number": 1, // Integer, 1-based page number
                         "bbox": [ymin, xmin, ymax, xmax] // Array of 4 integers, normalized coordinates 0-1000
                     }
@@ -317,21 +332,49 @@ class MultiDocumentExtractionService:
         try:
             prompt = self._get_financial_extraction_prompt()
             
-            # Using generate_content_async (text-only)
-            # Truncate content to avoid token limits if extremely large, though T12s usually fit.
-            response = await self.gemini_service.generate_content_async(f"{prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
+            expenses_data = []
+            max_retries = 3
+            current_prompt = prompt
             
-            # Clean and parse JSON
-            cleaned_text = self._extract_json_from_response(response)
-            
-            try:
-                expenses_data = json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
-                return []
+            for attempt in range(max_retries):
+                # Using generate_content_async (text-only)
+                # Truncate content to avoid token limits if extremely large, though T12s usually fit.
+                response = await self.gemini_service.generate_content_async(f"{current_prompt}\n\nDATA TO ANALYZE:\n{text_content[:30000]}")
                 
-            if not isinstance(expenses_data, list):
-                return []
+                # Clean and parse JSON
+                cleaned_text = self._extract_json_from_response(response)
+                
+                try:
+                    expenses_data = json.loads(cleaned_text)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON from LLM extraction for {filename}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return []
+                    
+                if not isinstance(expenses_data, list):
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    return []
+                    
+                # Validation: Check if items have page_number and bbox
+                missing_source = False
+                if expenses_data:
+                    for item in expenses_data:
+                        if not item.get("page_number") or not item.get("bbox"):
+                            missing_source = True
+                            break
+                            
+                if missing_source and attempt < max_retries - 1:
+                    logger.warning(f"Extracted data missing page_number or bbox in text extraction. Retrying attempt {attempt + 1}/{max_retries}...")
+                    current_prompt = prompt + "\n\nCRITICAL: You MUST include 'page_number' and 'bbox' (bounding box coordinates [ymin, xmin, ymax, xmax] 0-1000) for EVERY item. Do not omit them."
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                    
+                # If we got here with valid data or on last attempt
+                break
                 
             # Add metadata
             for expense in expenses_data:
@@ -595,7 +638,9 @@ class MultiDocumentExtractionService:
                             "raw_text": row_category,
                             "amount": abs(row_amount),
                             "source_document": filename,
-                            "type": row_type
+                            "type": row_type,
+                            "page_number": 1,
+                            "bbox": None
                         })
                 
                 if line_items:
@@ -612,7 +657,9 @@ class MultiDocumentExtractionService:
                 "amount": total_amount,
                 "source_document": filename,
                 "row_count": row_count,
-                "type": entry_type
+                "type": entry_type,
+                "page_number": 1,
+                "bbox": None
             }
             
             logger.info(f"Extracted aggregated data from {filename}: {row_count} rows, total amount: ${total_amount:,.2f}")
@@ -713,57 +760,64 @@ class MultiDocumentExtractionService:
                 client = self.gemini_service.client
                 model_name = self.gemini_service.model_name
                 
-                try:
-                    # Retry logic for 500 errors and timeouts
-                    async for attempt in AsyncRetrying(
-                        stop=stop_after_attempt(3),
-                        wait=wait_exponential(multiplier=1, min=2, max=10),
-                        retry=retry_if_exception_type((genai_errors.ServerError, genai_errors.APIError, asyncio.TimeoutError)),
-                        reraise=True
-                    ):
-                        with attempt:
-                            response = await asyncio.wait_for(
-                                client.aio.models.generate_content(
-                                    model=model_name,
-                                    contents=parts,
-                                    config=types.GenerateContentConfig(temperature=0.0)
-                                ),
-                                timeout=120.0
-                            )
-                except asyncio.TimeoutError:
-                    logger.error(f"Gemini visual extraction timed out for {filename}")
-                    return [{
-                        "raw_text": f"Document - {filename} (Extraction timed out)",
-                        "amount": 0.0,
-                        "source_document": filename,
-                        "error": "Timeout"
-                    }]
-                except (genai_errors.ServerError, genai_errors.APIError) as e:
-                    logger.error(f"Gemini visual extraction failed after retries for {filename}: {e}")
-                    return [{
-                        "raw_text": f"Document - {filename} (Gemini Error: {str(e)})",
-                        "amount": 0.0,
-                        "source_document": filename,
-                        "error": str(e)
-                    }]
+                expenses_data = []
+                max_retries = 3
                 
-                # Parse JSON response
-                if not response.text:
-                    logger.warning(f"Gemini returned empty response for {filename}")
-                    return []
-                    
-                response_text = response.text.strip()
-                logger.info(f"Gemini response for {filename}: {response_text[:200]}...")
-                
-                # Clean and parse JSON
-                cleaned_text = self._extract_json_from_response(response_text)
-                
-                expenses_data = json.loads(cleaned_text)
-                
-                # Validate that we got a list
-                if not isinstance(expenses_data, list):
-                    logger.error(f"Expected list from Gemini, got {type(expenses_data)}")
-                    return []
+                for attempt in range(max_retries):
+                    try:
+                        response = await asyncio.wait_for(
+                            client.aio.models.generate_content(
+                                model=model_name,
+                                contents=parts,
+                                config=types.GenerateContentConfig(temperature=0.0)
+                            ),
+                            timeout=120.0
+                        )
+                        
+                        if not response.text:
+                            logger.warning(f"Gemini returned empty response for {filename}")
+                            if attempt < max_retries - 1:
+                                continue
+                            return []
+                            
+                        response_text = response.text.strip()
+                        cleaned_text = self._extract_json_from_response(response_text)
+                        expenses_data = json.loads(cleaned_text)
+                        
+                        if not isinstance(expenses_data, list):
+                            logger.error(f"Expected list from Gemini, got {type(expenses_data)}")
+                            if attempt < max_retries - 1:
+                                continue
+                            return []
+                            
+                        # Validation: Check if items have page_number and bbox
+                        missing_source = False
+                        if expenses_data:
+                            for item in expenses_data:
+                                if not item.get("page_number") or not item.get("bbox"):
+                                    missing_source = True
+                                    break
+                                    
+                        if missing_source and attempt < max_retries - 1:
+                            logger.warning(f"Extracted data missing page_number or bbox. Retrying attempt {attempt + 1}/{max_retries}...")
+                            # Append a strict reminder to the prompt
+                            parts[1] = types.Part.from_text(text=prompt + "\n\nCRITICAL: You MUST include 'page_number' and 'bbox' (bounding box coordinates [ymin, xmin, ymax, xmax] 0-1000) for EVERY item. Do not omit them.")
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                            
+                        # If we got here with valid data or we're on the last attempt
+                        break
+                        
+                    except (json.JSONDecodeError, asyncio.TimeoutError, genai_errors.ServerError, genai_errors.APIError) as e:
+                        logger.error(f"Attempt {attempt + 1} failed for {filename}: {e}")
+                        if attempt == max_retries - 1:
+                            if isinstance(e, asyncio.TimeoutError):
+                                return [{"raw_text": f"Document - {filename} (Extraction timed out)", "amount": 0.0, "source_document": filename, "error": "Timeout"}]
+                            elif isinstance(e, (genai_errors.ServerError, genai_errors.APIError)):
+                                return [{"raw_text": f"Document - {filename} (Gemini Error: {str(e)})", "amount": 0.0, "source_document": filename, "error": str(e)}]
+                            else:
+                                raise e
+                        await asyncio.sleep(2 ** attempt) # Exponential backoff
                 
                 # Add source document to each item
                 for expense in expenses_data:
@@ -839,8 +893,8 @@ class MultiDocumentExtractionService:
                 {
                     "scenario_name": "Proforma at Stabilized Rent",
                     "rows": [
-                        {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750},
-                        {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05},
+                        {"row_name": "Gross Potential Market Rent", "annual": 1080000, "monthly": 90000, "per_unit": 33750, "page_number": 1, "bbox": [100, 100, 200, 200]},
+                        {"row_name": "Vacancy", "annual": -46191, "monthly": -3849, "per_unit": -1443, "percentage": 0.05, "page_number": 1, "bbox": [200, 100, 300, 200]},
                         ...
                     ],
                     "purchase_price": 9440000,
@@ -852,6 +906,7 @@ class MultiDocumentExtractionService:
 
             CRITICAL:
             - Preserve the exact row names.
+            - You MUST include 'page_number' (1-based integer) and 'bbox' ([ymin, xmin, ymax, xmax] 0-1000) for EVERY row to track its exact location. Do not omit them.
             - Return ONLY the JSON array.
             """
 
@@ -1084,7 +1139,7 @@ class MultiDocumentExtractionService:
                 {{
                     "id": 0,  // Must match input ID
                     "category": "Exact category name from the list above",
-                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other",
+                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other" | "Pending Expense",
                     "confidence": 0.95,
                     "reasoning": "Brief explanation"
                 }}
@@ -1094,6 +1149,7 @@ class MultiDocumentExtractionService:
             - If text describes the Property Name, map to Group: "Property Info" and Category: "Property Name"
             - If text describes the Property Address, map to Group: "Property Info" and Category: "Property Address"
             - If type is "receivable", map to Group: "Other" and Category: "Accounts Receivable" (NOT revenue - these are uncollected amounts)
+            - If type is "pending_expense", map to Group: "Pending Expense" and Category: "Miscellaneous Expense"
             - If type is "revenue" and subtype is "rent", map to Group: "Revenue" and Category: "Gross Potential Rent"
             - If type is "revenue" and subtype is "late_fee", map to Group: "Revenue" and Category: "Other Income"
             - If type is "revenue" and subtype is "other_income", map to Group: "Revenue" and Category: "Other Income"
@@ -1118,6 +1174,7 @@ class MultiDocumentExtractionService:
             - Debt
             - Tax & Insurance
             - Other
+            - Pending Expense
             """
             
             response_text = await self.gemini_service.generate_content_async(prompt)
@@ -1194,6 +1251,15 @@ class MultiDocumentExtractionService:
                 "category_group": "Other",
                 "confidence": 0.95,
                 "reasoning": "Receivable/Past Due amount - not revenue"
+            }
+        
+        # Handle pending expenses
+        if item_type == "pending_expense" or any(keyword in text_lower for keyword in ["proposal", "quote", "estimate", "unpaid", "due"]):
+            return {
+                "normalized_value": "Miscellaneous Expense",
+                "category_group": "Pending Expense",
+                "confidence": 0.95,
+                "reasoning": "Pending expense - requires approval"
             }
         
         # Handle revenue subtypes
@@ -1311,10 +1377,10 @@ class MultiDocumentExtractionService:
         for table in proforma_tables:
             name = (table.scenario_name or "").lower()
             if any(k in name for k in priority_keywords) and "pro forma" not in name and "proforma" not in name:
-                 # "Current Pro Forma" is ambiguous, but usually means Current.
-                 # But "Pro Forma" alone usually means Year 1.
-                 selected_table = table
-                 break
+                # "Current Pro Forma" is ambiguous, but usually means Current.
+                # But "Pro Forma" alone usually means Year 1.
+                selected_table = table
+                break
         
         # If no "Current", try "Year 1" or "Pro Forma" (some OMs only have proforma)
         if not selected_table:
@@ -1380,7 +1446,9 @@ class MultiDocumentExtractionService:
                 "source_document": filename,
                 "document_id": document_id,
                 "source_type": "OM_Proforma", # Marker for priority logic
-                "expense_year": None # OM usually implies current/forward, not specific year unless stated
+                "expense_year": None, # OM usually implies current/forward, not specific year unless stated
+                "page_number": row.page_number,
+                "bbox": row.bbox
             })
             
         logger.info(f"Converted {len(expenses)} rows from OM Proforma to Expense Items")
@@ -1395,6 +1463,9 @@ class MultiDocumentExtractionService:
         # 1. Property Meta
         meta = om_data.get("property_meta", {})
         if meta:
+            page_number = meta.get("page_number")
+            bbox = meta.get("bbox")
+            
             # Property Name
             if meta.get("property_name"):
                 items.append(NormalizedDataItem(
@@ -1405,7 +1476,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"text_value": meta["property_name"], "document_id": document_id}
+                    metadata={"text_value": meta["property_name"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
             # Property Address
@@ -1418,7 +1489,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"text_value": meta["address"], "document_id": document_id}
+                    metadata={"text_value": meta["address"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
             # Purchase Price
@@ -1431,7 +1502,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["purchase_price"], "document_id": document_id}
+                    metadata={"amount": meta["purchase_price"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
             
             # Total Units
@@ -1444,7 +1515,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["total_units"], "document_id": document_id}
+                    metadata={"amount": meta["total_units"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
             
             # Year Built
@@ -1457,7 +1528,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["year_built"], "document_id": document_id}
+                    metadata={"amount": meta["year_built"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
                 
             # Rentable Area
@@ -1470,7 +1541,7 @@ class MultiDocumentExtractionService:
                     category_group=CategoryGroup.PROPERTY_INFO,
                     confidence=0.95,
                     source_document=filename,
-                    metadata={"amount": meta["rentable_sqft"], "document_id": document_id}
+                    metadata={"amount": meta["rentable_sqft"], "document_id": document_id, "page_number": page_number, "bbox": bbox}
                 ))
 
         # 2. Rent Roll Items
@@ -1492,7 +1563,9 @@ class MultiDocumentExtractionService:
                     "lease_end": item.get("lease_end", ""),
                     "move_in_date": item.get("move_in_date", ""),
                     "is_rent_roll_item": True,
-                    "document_id": document_id
+                    "document_id": document_id,
+                    "page_number": item.get("page_number"),
+                    "bbox": item.get("bbox")
                 }
                 
                 # If we have an explicit unit number, use it (usually count=1)
@@ -1540,7 +1613,7 @@ class MultiDocumentExtractionService:
         progress_end: int = 80,
         initial_completed_files: List[str] = None,
         total_files_override: Optional[int] = None
-    ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str]):
+    ) -> (List[NormalizedDataItem], List[OMProformaTable], List[str], Optional[int], bool):
         """
         Process multiple financial documents and return normalized expense items and OM proforma data.
         
@@ -1557,6 +1630,8 @@ class MultiDocumentExtractionService:
             - List of NormalizedDataItem objects ready for user verification
             - List of OMProformaTable objects
             - List of completed filenames
+            - Verified Primary Fiscal Year (int or None)
+            - Is Partial Year (bool)
         """
         all_expenses = []
         om_proforma_results = []
@@ -1602,7 +1677,7 @@ class MultiDocumentExtractionService:
                     msg = f"Processing {filename}..."
                 else:
                     msg = f"Processed {cumulative_index}/{cumulative_total} documents"
-
+                
                 await progress_service.update_progress(
                     task_id,
                     current_pct,
@@ -1774,12 +1849,12 @@ class MultiDocumentExtractionService:
         if errors:
             logger.warning(f"Encountered {len(errors)} errors during processing: {errors}")
         
-        if not all_expenses:
-            logger.warning("No expenses were extracted from any document")
+        if not all_expenses and not pre_normalized_items:
+            logger.warning("No expenses or key data were extracted from any document")
             # Return empty list instead of raising exception, allowing process to continue with defaults
             if errors:
                 logger.error(f"Extraction failed with errors: {'; '.join(errors)}")
-            return [], om_proforma_results, list(completed_files)
+            return [], om_proforma_results, list(completed_files), None, False
         
         # Validate and fix expenses (filtering out totals, tuition, etc.) BEFORE batching
         # to ensure batch sizes align with normalization results.
@@ -1787,45 +1862,102 @@ class MultiDocumentExtractionService:
         all_expenses = self._validate_and_fix_extraction(all_expenses)
         logger.info(f"Total expenses after validation/filtering: {len(all_expenses)}")
 
-        # --- Filter for Latest Fiscal Year ---
+        # --- Filter for Primary Fiscal Year (AI Verified) ---
+        verified_primary_year = None
+        is_partial_year = False
+
         try:
-            # Group items by source document
-            doc_years = {}
+            # Group items by year and source to identify candidates
+            year_stats = {} # year -> {source -> count}
+            doc_contexts = {} # source -> sample text
+            
             for exp in all_expenses:
-                doc = exp.get("source_document")
                 year = exp.get("expense_year")
-                if doc and year and isinstance(year, int):
-                    if doc not in doc_years:
-                        doc_years[doc] = set()
-                    doc_years[doc].add(year)
-            
-            # Find max year per document
-            doc_max_years = {doc: max(years) for doc, years in doc_years.items() if years}
-            
-            if doc_max_years:
-                # Find global max year across all documents
-                global_max_year = max(doc_max_years.values())
-                logger.info(f"Global max fiscal year detected: {global_max_year}")
+                doc = exp.get("source_document")
+                if year and isinstance(year, int) and doc:
+                    if year not in year_stats:
+                        year_stats[year] = {}
+                    year_stats[year][doc] = year_stats[year].get(doc, 0) + 1
+                    
+                    if doc not in doc_contexts:
+                        doc_contexts[doc] = str(exp.get("raw_text", ""))[:200]
+
+            if year_stats and self.gemini_service:
+                # Prepare candidates for LLM verification
+                candidates = []
+                for year, docs in year_stats.items():
+                    total_items = sum(docs.values())
+                    # Pick the doc with most items for this year as primary source
+                    best_doc = max(docs.items(), key=lambda x: x[1])[0]
+                    candidates.append({
+                        "year": year,
+                        "source": best_doc,
+                        "item_count": total_items,
+                        "text_context": f"Year {year} found in {len(docs)} documents. Sample from primary: {doc_contexts.get(best_doc)}"
+                    })
                 
-                # Identify documents to drop (those with max year < global max year)
-                # Note: We keep documents with NO detected year (doc_max_years.get(doc) is None)
-                # to avoid dropping Excel files or docs where year wasn't extracted.
-                docs_to_drop = set()
-                for doc, max_year in doc_max_years.items():
-                    # If a document's latest data is older than the global latest data, drop it.
-                    # e.g. Doc A (2021) vs Doc B (2023) -> Drop Doc A.
-                    # e.g. Doc A (2023) vs Doc B (2024 T12) -> Drop Doc A (2023).
-                    if max_year < global_max_year:
-                        docs_to_drop.add(doc)
+                logger.info(f"Verifying primary fiscal year among candidates: {[c['year'] for c in candidates]}")
                 
-                if docs_to_drop:
-                    logger.info(f"Dropping historical documents older than {global_max_year}: {docs_to_drop}")
-                    original_count = len(all_expenses)
-                    all_expenses = [e for e in all_expenses if e.get("source_document") not in docs_to_drop]
-                    logger.info(f"Filtered out {original_count - len(all_expenses)} items from older fiscal years.")
+                prompt = f"""
+                You are a real estate underwriting verification agent. Determine the PRIMARY FISCAL YEAR for analysis.
+                
+                Candidates extracted from documents:
+                {json.dumps(candidates, indent=2)}
+                
+                LOGIC:
+                1. Identify the TRUE Primary Fiscal Year for underwriting.
+                2. PARTIAL YEAR HANDLING: 
+                   - If the most recent year (e.g. 2024) has significantly fewer items than the previous year (e.g. 2023), 
+                     it is likely a partial/YTD statement. 
+                   - Favor the most recent FULL year as the primary baseline.
+                   - If 2024 has only 2-10 items while 2023 has 40+, 2023 is clearly the primary full year.
+                3. Return the selected year as an integer.
+                
+                Return ONLY a JSON object: {{"selected_year": 2023, "is_partial": true, "reasoning": "..."}}
+                """
+                
+                response = await self.gemini_service.generate_content_async(prompt)
+                
+                import re
+                cleaned_res = response.strip()
+                match = re.search(r'\{.*\}', cleaned_res, re.DOTALL)
+                if match:
+                    res_json = json.loads(match.group(0))
+                    verified_primary_year = int(res_json.get("selected_year"))
+                    is_partial_year = bool(res_json.get("is_partial", False))
+                    logger.info(f"AI Selected Primary Fiscal Year: {verified_primary_year} (Partial: {is_partial_year}). Reasoning: {res_json.get('reasoning')}")
+                    
+                    # Filter: Drop documents that ONLY contain years OTHER than the selected one
+                    # AND ensure we don't drop documents with NO year info (like property info docs)
+                    
+                    doc_max_years = {}
+                    for year, docs in year_stats.items():
+                        for doc in docs:
+                            if doc not in doc_max_years or year > doc_max_years[doc]:
+                                doc_max_years[doc] = year
+                    
+                    docs_to_drop = set()
+                    for doc, max_year in doc_max_years.items():
+                        # If a document's latest data is older than the selected year, drop it.
+                        # If it's NEWER than the selected year (e.g. selected 2023 but doc has 2024 partial), 
+                        # we should also drop it to prevent mixing partial YTD with full years in the final sum.
+                        if max_year != verified_primary_year:
+                             docs_to_drop.add(doc)
+                    
+                    if docs_to_drop:
+                        logger.info(f"Dropping documents not matching primary fiscal year {verified_primary_year}: {docs_to_drop}")
+                        original_count = len(all_expenses)
+                        all_expenses = [e for e in all_expenses if e.get("source_document") not in docs_to_drop]
+                        logger.info(f"Filtered out {original_count - len(all_expenses)} items from non-primary years.")
+            
+            elif not self.gemini_service and year_stats:
+                # Fallback to old max year logic if Gemini unavailable
+                global_max_year = max(year_stats.keys())
+                verified_primary_year = global_max_year
+                all_expenses = [e for e in all_expenses if e.get("expense_year") is None or e.get("expense_year") == global_max_year]
+                
         except Exception as e:
-            logger.error(f"Error filtering for latest fiscal year: {e}")
-            # Continue without filtering on error
+            logger.error(f"Error filtering for primary fiscal year: {e}")
 
         # Normalize expenses using batch processing
         normalized_items: List[NormalizedDataItem] = []
@@ -1868,6 +2000,8 @@ class MultiDocumentExtractionService:
                                     group_enum = CategoryGroup.PROPERTY_INFO
                                 elif "Debt" in category_group:
                                     group_enum = CategoryGroup.DEBT
+                                elif "Pending" in category_group:
+                                    group_enum = CategoryGroup.PENDING_EXPENSE
                                 else:
                                     group_enum = CategoryGroup.OTHER
                             except:
@@ -1878,6 +2012,9 @@ class MultiDocumentExtractionService:
                         
                         meta = {
                             "amount": amount,
+                            "amount_t3": expense.get("amount_t3"),
+                            "amount_t6": expense.get("amount_t6"),
+                            "amount_t9": expense.get("amount_t9"),
                             "text_value": raw_text,
                             "reasoning": normalization.get("reasoning", ""),
                             "row_count": expense.get("row_count"),
@@ -1902,6 +2039,7 @@ class MultiDocumentExtractionService:
                             confidence=normalization.get("confidence", 0.5),
                             user_verified=False,
                             source_document=expense.get("source_document", "Unknown"),
+                            text_type=expense.get("text_type", "Computerized"),
                             metadata=meta
                         )
                         local_items.append(item)
@@ -1954,4 +2092,4 @@ class MultiDocumentExtractionService:
         
         logger.info(f"Normalization complete: {len(normalized_items)} items ready for verification")
         logger.info(f"Processed {len(documents)} documents, extracted {len(normalized_items)} normalized items and {len(om_proforma_results)} OM proforma tables.")
-        return normalized_items, om_proforma_results, list(completed_files)
+        return normalized_items, om_proforma_results, list(completed_files), verified_primary_year, is_partial_year

@@ -32,6 +32,7 @@ class CategoryGroup(str, Enum):
     PROPERTY_INFO = "Property Info" # Characteristics, Year Built, etc.
     DEBT = "Debt"
     TAX_INSURANCE = "Tax & Insurance"
+    PENDING_EXPENSE = "Pending Expense"
     OTHER = "Other"
 
 class ExpenseCategory(str, Enum):
@@ -117,11 +118,17 @@ class RentRollItem(BaseModel):
     source_file: Optional[str] = None
     floor: Optional[str] = None
     property_address: Optional[str] = None
+    is_vacant: bool = False
     
-    @validator('unit_number', 'tenant_name', pre=True)
-    def validate_required_string_fields(cls, v):
-        """Handle None/Empty strings for required display fields"""
-        if v is None:
+    @validator('unit_number', pre=True)
+    def validate_unit_number(cls, v):
+        if v is None or str(v).strip() == "":
+            return "N/A"
+        return str(v)
+
+    @validator('tenant_name', pre=True)
+    def validate_tenant_name(cls, v):
+        if v is None or str(v).strip() == "":
             return "Unknown"
         return str(v)
 
@@ -135,12 +142,41 @@ class RentRollItem(BaseModel):
     @validator('current_rent', 'stabilized_rent', 'market_rent', 'deposit', pre=True)
     def validate_rent_fields(cls, v):
         """Ensure rent fields are valid floats, default to 0.0 if None or invalid"""
-        if v is None or v == "":
+        if v is None or v == "" or str(v).strip() == "-":
             return 0.0
         try:
+            # Remove currency symbols and commas
+            if isinstance(v, str):
+                v = v.replace('$', '').replace(',', '').strip()
             return float(v)
         except (ValueError, TypeError):
             return 0.0
+
+    @validator('is_vacant', always=True)
+    def validate_vacancy_consistency(cls, v, values):
+        """Ensure vacancy status is consistent with tenant name, unit type and current rent"""
+        tenant_name = (values.get('tenant_name') or "").lower()
+        unit_type = (values.get('unit_type') or "").lower()
+        current_rent = values.get('current_rent') or 0.0
+        
+        # Keywords that indicate vacancy
+        vacancy_keywords = ["vacant", "vac", "empty", "model"]
+        
+        if v is True:
+            return True
+            
+        # Check if tenant name or unit type explicitly mentions vacancy
+        is_explicitly_vacant = any(kw in tenant_name for kw in vacancy_keywords) or \
+                              any(kw in unit_type for kw in vacancy_keywords)
+        
+        if is_explicitly_vacant:
+            return True
+            
+        # Fallback logic for rent being 0
+        if current_rent == 0 and (not tenant_name or tenant_name == "unknown" or any(kw in tenant_name for kw in vacancy_keywords)):
+            return True
+            
+        return v
 
 class RentRollSummary(BaseModel):
     total_units: int
@@ -199,15 +235,20 @@ class DealParameters(BaseModel):
     max_build_year: int = 1970
 
 class StandardizedExpense(BaseModel):
+    id: Optional[str] = None # Original ID from NormalizedDataItem
     original_text: str
     mapped_category: Union[ExpenseCategory, str] # Allow string for flexibility
-    amount: float
+    amount: float # T12 amount
+    amount_t3: Optional[float] = None
+    amount_t6: Optional[float] = None
+    amount_t9: Optional[float] = None
     confidence: float
     audit_log: AuditLog
     user_verified: bool = False  # Track if user has manually verified/corrected this mapping
     user_corrected_category: Optional[ExpenseCategory] = None  # If user changed the mapping
     expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
     source_document: Optional[str] = None # Source file name for traceability and deduplication
+    text_type: Optional[str] = "Computerized"
 
 # --- 2.2 Explainability Models ---
 
@@ -297,6 +338,7 @@ class NormalizedDataItem(BaseModel):
     user_verified: bool = False
     user_correction: Optional[str] = None
     source_document: str  # Which document this came from
+    text_type: Optional[str] = "Computerized"
     metadata: Optional[Dict[str, Any]] = {}
     
 class DocumentNormalizationResult(BaseModel):
@@ -327,13 +369,16 @@ class DealPackage(BaseModel):
     underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
     
     # Segmented Data Storage
-    underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
-    
     rent_roll_data: List[RentRollItem] = []
     financials_data: List[NormalizedDataItem] = [] # Specifically for financials (T12, P&L, Tax Bills)
     om_proforma_data: List["OMProformaTable"] = [] # Extracted OM Proforma tables
     
     manual_overrides: Dict[str, Any] = {} # User provided manual overrides
+    
+    # Fiscal Year Info
+    primary_fiscal_year: Optional[int] = None
+    is_partial_year: bool = False
+
 # --- 4. OM Proforma Models ---
 
 class OMProformaRow(BaseModel):
@@ -342,6 +387,8 @@ class OMProformaRow(BaseModel):
     monthly: Optional[float] = 0.0
     per_unit: Optional[float] = 0.0
     percentage: Optional[float] = None # e.g. 0.05 for 5%
+    page_number: Optional[int] = None
+    bbox: Optional[List[float]] = None
 
 class OMProformaTable(BaseModel):
     scenario_name: str
@@ -374,6 +421,12 @@ class StudentHousingConfig(BaseModel):
     unit_type_configs: List[UnitTypeConfig] = []
 
 # --- 3. Main Analysis Model ---
+class HistoricalSummary(BaseModel):
+    period: str  # T3, T6, T9, T12
+    total_expenses: float = 0.0
+    noi: float = 0.0
+    cap_rate: float = 0.0
+
 class UnderwritingAnalysis(BaseModel):
     document_id: str
     pass_fail_status: str
@@ -381,6 +434,9 @@ class UnderwritingAnalysis(BaseModel):
     underwriting_flow: str = "MULTI_SOURCE" # "OM_DRIVEN" or "MULTI_SOURCE"
 
     property_meta: PropertyMeta
+    primary_fiscal_year: Optional[int] = None
+    is_partial_year: bool = False
+    
     rent_roll: List[RentRollItem]
     rent_roll_summary: RentRollSummary
     unit_mix_summary: List[UnitTypeSummary] = []
@@ -428,6 +484,7 @@ class UnderwritingAnalysis(BaseModel):
     historical_noi: Optional[float] = 0.0
     historical_total_expenses: float = 0.0
     historical_cap_rate: Optional[float] = 0.0
+    historical_periods: List[HistoricalSummary] = [] # T3, T6, T9, T12 snapshots
 
     # Sensitivity Analysis
     sensitivity_analysis: Optional[Dict[str, Any]] = None

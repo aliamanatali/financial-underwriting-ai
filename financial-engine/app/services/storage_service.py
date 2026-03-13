@@ -260,6 +260,62 @@ class StorageService:
         # 2. Fallback Strategy
         return _memory_storage.get(package_id)
     
+    async def update_deal_package_timestamp(self, package_id: str) -> bool:
+        """
+        Update the updated_at timestamp for a deal package.
+        """
+        now = datetime.utcnow().isoformat()
+        
+        # 1. MongoDB Strategy
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                await db.deal_packages.update_one(
+                    {"package_id": package_id},
+                    {"$set": {"updated_at": now}}
+                )
+                logger.info(f"Updated timestamp for deal package in MongoDB: {package_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to update deal package timestamp in MongoDB: {str(e)}")
+                return False
+
+        # 2. Fallback Strategy
+        if package_id in _memory_storage:
+            _memory_storage[package_id]["updated_at"] = now
+            return True
+        return False
+    
+    async def update_deal_package_status(self, package_id: str, status: str) -> bool:
+        """
+        Update the status and updated_at timestamp for a deal package.
+        """
+        now = datetime.utcnow().isoformat()
+        
+        # 1. MongoDB Strategy
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                await db.deal_packages.update_one(
+                    {"package_id": package_id},
+                    {"$set": {
+                        "normalization_status": status,
+                        "updated_at": now
+                    }}
+                )
+                logger.info(f"Updated status to {status} for deal package in MongoDB: {package_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to update deal package status in MongoDB: {str(e)}")
+                return False
+
+        # 2. Fallback Strategy
+        if package_id in _memory_storage:
+            _memory_storage[package_id]["normalization_status"] = status
+            _memory_storage[package_id]["updated_at"] = now
+            return True
+        return False
+    
     async def list_deal_packages(self, limit: Optional[int] = None, offset: int = 0, force_refresh: bool = False) -> tuple[List[dict], int]:
         """
         List deal packages from MongoDB with pagination support.

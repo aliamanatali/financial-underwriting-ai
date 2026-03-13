@@ -53,6 +53,109 @@ class SynthesisService:
         """Initialize the synthesis service."""
         pass
 
+    async def verify_fiscal_year(
+        self,
+        candidates: List[Dict[str, Any]],
+        gemini_service: Any
+    ) -> Dict[str, Any]:
+        """
+        Verify the primary Fiscal Year for analysis using an LLM agent.
+        Determines if the latest year is partial and if an older full year should be prioritized.
+        
+        Args:
+            candidates: List of dicts containing:
+                - year: int
+                - source: str (filename)
+                - item_count: int (number of line items for this year)
+                - text_context: str (context showing if it's T12, YTD, etc.)
+            gemini_service: Service to interact with LLM
+            
+        Returns:
+            Dict with "selected_year", "is_partial", "confidence", "reasoning"
+        """
+        if not candidates:
+            return {"selected_year": 0, "is_partial": False, "confidence": 0.0, "reasoning": "No candidates found"}
+
+        prompt = """
+        You are a real estate underwriting verification agent. Your goal is to determine the definitive PRIMARY FISCAL YEAR for a property's financial analysis.
+        
+        We often have data for multiple years (e.g., 2023 full year and 2024 partial/YTD). 
+        Underwriting standard is to use the most recent FULL year of data as the primary historical baseline, 
+        unless a partial year is sufficiently complete (e.g., T12 ending recently).
+        
+        Candidates found in documents:
+        """
+        
+        for idx, c in enumerate(candidates):
+            prompt += f"""
+            --- Candidate {idx + 1} ---
+            Year: {c.get('year')}
+            Source Document: {c.get('source')}
+            Items Extracted: {c.get('item_count')}
+            Context:
+            {c.get('text_context', '')[:1000]}
+            -----------------------
+            """
+            
+        prompt += """
+        
+        INSTRUCTIONS:
+        1. Identify the most appropriate Primary Fiscal Year.
+        2. PARTIAL YEAR LOGIC:
+           - If the most recent year (e.g. 2024) has very few items compared to the previous year (e.g. 2023), 
+             it is likely a partial/YTD statement or a few random invoices.
+           - If the most recent year is PARTIAL (e.g. "Jan-Feb 2024" or "YTD 2024"), and the previous year is FULL, 
+             select the PREVIOUS FULL YEAR as the primary baseline, but note that the recent year is partial.
+           - If the most recent year is a "T12" (Trailing 12 Months) even if it spans across years, the LATEST year is usually the anchor.
+        3. DECISION CRITERIA:
+           - Favor the year with the most complete set of operating expenses.
+           - If 2024 only has 5 items and 2023 has 50 items, 2023 is the winner.
+        
+        Return a JSON object:
+        {
+            "selected_year": int,
+            "is_partial": boolean,
+            "confidence": float (0.0 to 1.0),
+            "reasoning": "Explanation of why this year was chosen (e.g. '2024 is partial YTD with only 2 months of data, using 2023 as full year baseline')"
+        }
+        """
+        
+        try:
+            if hasattr(gemini_service, "generate_content_async"):
+                response = await gemini_service.generate_content_async(prompt)
+            else:
+                response = gemini_service.generate_content(prompt)
+            
+            # Clean and parse JSON
+            import json
+            import re
+            
+            cleaned_text = response.strip()
+            match = re.search(r"```json\s*([\s\S]*?)\s*```", cleaned_text, re.DOTALL)
+            if match:
+                cleaned_text = match.group(1)
+            else:
+                match = re.search(r"```\s*(.*?)```", cleaned_text, re.DOTALL)
+                if match:
+                    cleaned_text = match.group(1)
+            
+            cleaned_text = cleaned_text.strip()
+            if cleaned_text.startswith("json"):
+                cleaned_text = cleaned_text[4:]
+            
+            result = json.loads(cleaned_text)
+            
+            return {
+                "selected_year": int(result.get("selected_year", 0)),
+                "is_partial": bool(result.get("is_partial", False)),
+                "confidence": float(result.get("confidence", 0.0)),
+                "reasoning": result.get("reasoning", "")
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Fiscal Year Verification Agent: {e}")
+            return None
+
     async def verify_year_built(
         self,
         candidates: List[Dict[str, Any]],
@@ -520,8 +623,14 @@ class SynthesisService:
             source_doc = item.source_document
             doc_score = self._get_document_score(source_doc)
             
+            # Priority Boost: User-Verified items always win over AI extractions
+            if item.user_verified:
+                doc_score += 2000
+            
             # Get normalized value and raw text for matching
-            normalized_val = item.normalized_value.lower() if item.normalized_value else ""
+            # Priority: User Correction > Normalized Value
+            val_to_use = item.user_correction or item.normalized_value
+            normalized_val = val_to_use.lower() if val_to_use else ""
             raw_text = item.raw_text.lower() if item.raw_text else ""
             
             # Extract amount from metadata if available
@@ -931,10 +1040,17 @@ class SynthesisService:
         
         for item in normalized_items:
             # Check if this is a rent roll item
-            if item.field_type == "rent_roll_item" or (
+            # Support user re-categorization to/from rent roll
+            is_rent_roll = item.field_type == "rent_roll_item" or (
                 item.metadata and
                 item.metadata.get("is_rent_roll_item", False)
-            ):
+            )
+            
+            # If user corrected it to a Rent Roll category (though usually rent rolls are handled differently)
+            if item.user_correction == "Rent Roll":
+                is_rent_roll = True
+
+            if is_rent_roll:
                 try:
                     # Extract rent roll data from metadata
                     if item.metadata:
@@ -1004,11 +1120,15 @@ class SynthesisService:
             
         logger.info(f"Deduplicating {len(expenses)} expenses...")
         
+        # Sort expenses so that user-verified ones come first.
+        # This ensures that if a duplicate exists, we keep the one the user verified/edited.
+        sorted_expenses = sorted(expenses, key=lambda x: x.user_verified, reverse=True)
+        
         unique_expenses = []
         seen_hashes = set()
         duplicates_removed = 0
         
-        for exp in expenses:
+        for exp in sorted_expenses:
             # Create a hash based on key attributes to identify duplicates
             # 1. Amount (rounded to 2 decimals)
             # 2. Category
@@ -1016,7 +1136,7 @@ class SynthesisService:
             # 4. Normalized Text (alphanumeric only, first 30 chars)
             
             amount_key = round(exp.amount, 2)
-            cat_key = exp.mapped_category
+            cat_key = str(exp.mapped_category) # Ensure it's a string for the hash
             year_key = exp.expense_year or 0
             
             # Simple text normalization for fuzzy matching
@@ -1028,6 +1148,7 @@ class SynthesisService:
             if dedup_key in seen_hashes:
                 # This is a duplicate
                 duplicates_removed += 1
+                logger.info(f"Removing duplicate expense: {exp.original_text} (${exp.amount}) - Category: {cat_key} (Verified: {exp.user_verified})")
                 continue
                 
             seen_hashes.add(dedup_key)

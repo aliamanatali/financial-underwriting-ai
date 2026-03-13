@@ -50,6 +50,12 @@ const logInternalAuditReport = (data: UnderwritingAnalysis, packageId: string, s
     });
   }
 
+  // 3.5 Trailing Periods Summary
+  if (data.historical_periods && data.historical_periods.length > 0) {
+    console.log(`🕒 Trailing Periods Summary:`);
+    console.table(data.historical_periods);
+  }
+
   // 4. Financial Metrics
   console.log("📈 Financial Metrics:", {
     NOI: data.pro_forma_noi,
@@ -85,6 +91,7 @@ export default function AnalysisResultPage() {
   const [initialRentRollTab, setInitialRentRollTab] = useState<"details" | "omExport" | "unitBreakdown" | "unitBreakdownStabilized">("details");
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
   const [validationTrigger, setValidationTrigger] = useState<number>(0);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -467,7 +474,9 @@ export default function AnalysisResultPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setActiveTab('verification')}
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-neutral-600 hover:bg-neutral-100 transition-all border border-transparent hover:border-neutral-200"
+              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all border border-transparent hover:border-neutral-200 ${
+                activeTab === 'verification' ? 'text-neutral-900 bg-neutral-100' : 'text-neutral-600 hover:bg-neutral-100'
+              }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 11l3 3L22 4"></path>
@@ -522,10 +531,14 @@ export default function AnalysisResultPage() {
             {activeTab === "verification" && (
               <VerificationWidget
                 packageId={id}
+                view="both"
                 onAnalysisUpdate={(newAnalysis) => {
                     console.log("Updating analysis state from verification", newAnalysis);
                     setAnalysis(newAnalysis);
+                    setHasUnsavedChanges(false);
+                    setActiveTab("dashboard");
                 }}
+                onDataChange={() => setHasUnsavedChanges(true)}
               />
             )}
 
@@ -547,6 +560,21 @@ export default function AnalysisResultPage() {
           </div>
         </main>
       </div>
+
+      {activeTab === "verification" && hasUnsavedChanges && (
+        <div className="fixed bottom-[84px] right-6 z-[60] bg-white border border-neutral-200 text-neutral-800 px-4 py-3 rounded-xl shadow-2xl max-w-sm text-xs font-medium animate-in fade-in slide-in-from-bottom-4">
+          <div className="flex gap-2 items-start">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#FF5E00]">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <p className="leading-relaxed">
+              Changes have been made to the data. To generate an updated financial report, please scroll to the top and click 'Save and Regenerate'.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Chat Widget */}
       <ReportChatWidget documentId={id} />
