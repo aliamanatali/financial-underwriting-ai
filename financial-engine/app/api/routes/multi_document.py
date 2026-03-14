@@ -1784,89 +1784,52 @@ async def _analyze_deal_package_logic(
                     except: pass
                 return 0.0
 
-            # 1. Identify Candidates
-            for item in normalized_items:
-                # Check for Purchase Price items
-                is_pp = False
-                if item.normalized_value == "Purchase Price":
-                    is_pp = True
-                elif item.raw_text and ("purchase price" in item.raw_text.lower() or "sale price" in item.raw_text.lower() or "contract price" in item.raw_text.lower()):
-                    is_pp = True
-
-                # Exclude explicit Deposits/Earnest Money
-                if item.normalized_value == "Deposit" or (item.raw_text and ("deposit" in item.raw_text.lower() or "earnest money" in item.raw_text.lower())):
-                    is_pp = False
-                
-                if is_pp:
-                    doc_id = item.metadata.get("document_id")
-                    if not doc_id: continue
+            # 1. Identify Candidates from PSA/OM documents directly
+            # We want exact value from PSA document, so we feed complete context to LLM
+            for doc_type, docs in package.documents.items():
+                for doc in docs:
+                    filename = doc.filename.lower()
+                    is_psa = "psa" in filename or "purchase" in filename or "sale" in filename or "agreement" in filename
+                    is_om = "om" in filename or "offering" in filename or "memorandum" in filename
                     
-                    # Determine value
-                    val = 0.0
-                    if item.metadata and item.metadata.get("amount"):
-                        try: val = float(item.metadata.get("amount"))
-                        except: pass
-                    
-                    if val == 0.0 and item.raw_text:
-                        val = extract_price_from_text(item.raw_text)
-                    
-                    if val > 10000: # Filter out small amounts/noise
-                        # Fetch context robustly
+                    if is_psa or is_om:
+                        doc_id = doc.document_id
                         full_text = ""
-                        source_filename = item.source_document or "unknown.pdf"
-                        
-                        # 1. Try OCR Backend first (Fastest/Best)
                         try:
                             full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
                         except Exception as e:
                             logger.warning(f"Backend text fetch failed for {doc_id} in PP verify: {e}")
                         
-                        # 2. Fallback to Storage Service (GCP/Local) if backend failed
-                        # This handles cases where server restarted and cache is empty, or backend 404s
                         if not full_text:
                             try:
-                                # Try cache first
                                 content = None
                                 if doc_id in file_storage_cache:
                                     content = file_storage_cache[doc_id]["content"]
                                 else:
-                                    # Fetch from storage
-                                    ext = Path(source_filename).suffix
+                                    ext = Path(doc.filename).suffix
                                     storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
                                     content = await storage_service.get_document_file(storage_path)
                                 
-                                if content and source_filename.lower().endswith(".pdf"):
+                                if content and doc.filename.lower().endswith(".pdf"):
                                     import PyPDF2
                                     pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
                                     text_pages = []
-                                    # Extract text from first 20 pages (PSA/OM usually has price early)
+                                    # Extract text from first 20 pages
                                     for p_idx, page in enumerate(pdf_reader.pages[:20]):
                                         text_pages.append(page.extract_text())
                                     full_text = "\n".join(text_pages)
-                                    logger.info(f"Recovered text from storage for {source_filename} in PP verify ({len(full_text)} chars)")
                             except Exception as ex:
                                 logger.warning(f"Storage extraction failed for {doc_id} in PP verify: {ex}")
 
                         if full_text:
-                            # Extract relevant window (centered on raw_text match)
-                            # Expanded window to 5000 chars to capture more context
-                            window_text = full_text[:5000]
-                            
-                            # If we found the specific text, center on it
-                            if item.raw_text and item.raw_text in full_text:
-                                idx = full_text.find(item.raw_text)
-                                start = max(0, idx - 3000)
-                                end = min(len(full_text), idx + 3000)
-                                window_text = full_text[start:end]
-                            
+                            # Pass up to 15,000 characters for the LLM to find the exact price
+                            window_text = full_text[:15000]
                             pp_candidates.append({
-                                "value": val,
-                                "source": item.source_document,
+                                "value": 0.0,
+                                "source": doc.filename,
                                 "text_context": window_text,
                                 "document_id": doc_id
                             })
-                        else:
-                            logger.warning(f"Could not retrieve text context for Purchase Price candidate in {item.source_document} (ID: {doc_id})")
 
             # 2. Run Verification if candidates exist
             if pp_candidates:
@@ -1904,69 +1867,55 @@ async def _analyze_deal_package_logic(
             logger.info("Running Year Built Verification Agent...")
             yb_candidates = []
             
-            for item in normalized_items:
-                is_yb = False
-                if item.normalized_value == "Year Built":
-                    is_yb = True
-                elif item.raw_text and ("year built" in item.raw_text.lower() or "date of construction" in item.raw_text.lower()):
-                    is_yb = True
-                
-                if is_yb:
-                    doc_id = item.metadata.get("document_id")
-                    if not doc_id: continue
+            # Find all documents that mention Year Built and pass them to LLM
+            for doc_type, docs in package.documents.items():
+                for doc in docs:
+                    doc_id = doc.document_id
+                    full_text = ""
+                    try:
+                        full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
+                    except: pass
                     
-                    val = 0
-                    if item.metadata and item.metadata.get("amount"):
-                        try: val = int(float(item.metadata.get("amount")))
-                        except: pass
-                    
-                    # If val is 0, try regex on raw_text
-                    if val == 0 and item.raw_text:
-                        import re
-                        matches = re.findall(r'\b(18\d{2}|19\d{2}|20\d{2})\b', item.raw_text)
-                        if matches:
-                            try: val = int(matches[0])
-                            except: pass
-
-                    if val > 1800 and val < 2030:
-                        # Fetch context (Reuse logic)
-                        full_text = ""
-                        source_filename = item.source_document or "unknown.pdf"
-                        
+                    if not full_text:
                         try:
-                            full_text = await ingestion_service.ocr_backend_client.get_document_text(doc_id)
-                        except: pass
-                        
-                        if not full_text:
-                            try:
-                                content = None
-                                if doc_id in file_storage_cache:
-                                    content = file_storage_cache[doc_id]["content"]
-                                else:
-                                    ext = Path(source_filename).suffix
-                                    storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
-                                    content = await storage_service.get_document_file(storage_path)
-                                
-                                if content and source_filename.lower().endswith(".pdf"):
-                                    import PyPDF2
-                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                                    text_pages = []
-                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
-                                        text_pages.append(page.extract_text())
-                                    full_text = "\n".join(text_pages)
-                            except: pass
-                        
-                        if full_text:
-                            window_text = full_text[:6000]
-                            if item.raw_text and item.raw_text in full_text:
-                                idx = full_text.find(item.raw_text)
-                                start = max(0, idx - 3000)
-                                end = min(len(full_text), idx + 3000)
-                                window_text = full_text[start:end]
+                            content = None
+                            if doc_id in file_storage_cache:
+                                content = file_storage_cache[doc_id]["content"]
+                            else:
+                                ext = Path(doc.filename).suffix
+                                storage_path = f"deal-packages/{package_id}/documents/{doc_id}{ext}"
+                                content = await storage_service.get_document_file(storage_path)
                             
+                            if content and doc.filename.lower().endswith(".pdf"):
+                                import PyPDF2
+                                pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+                                text_pages = []
+                                for p_idx, page in enumerate(pdf_reader.pages[:20]):
+                                    text_pages.append(page.extract_text())
+                                full_text = "\n".join(text_pages)
+                        except: pass
+                    
+                    if full_text:
+                        lower_text = full_text.lower()
+                        if "year built" in lower_text or "built in" in lower_text or "constructed" in lower_text:
+                            # Center the context around the match
+                            idx = -1
+                            if "year built" in lower_text:
+                                idx = lower_text.find("year built")
+                            elif "built in" in lower_text:
+                                idx = lower_text.find("built in")
+                            elif "constructed" in lower_text:
+                                idx = lower_text.find("constructed")
+                            
+                            window_text = full_text[:10000]
+                            if idx != -1:
+                                start = max(0, idx - 5000)
+                                end = min(len(full_text), idx + 5000)
+                                window_text = full_text[start:end]
+                                
                             yb_candidates.append({
-                                "value": val,
-                                "source": item.source_document,
+                                "value": 0,
+                                "source": doc.filename,
                                 "text_context": window_text,
                                 "document_id": doc_id
                             })

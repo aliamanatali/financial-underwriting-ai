@@ -175,7 +175,7 @@ export default function PendingExpensesWidget({
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-8">
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center flex-wrap gap-4">
         <div className="flex items-center gap-4">
-          <h3 className="text-lg font-semibold text-slate-900">Proposals & Unpaid Bills</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Proposals, Unpaid Bills & Offers to Purchase</h3>
           <span className="text-sm text-slate-500">{localExpenses.length} items</span>
         </div>
         <div className="flex items-center gap-3">
@@ -446,7 +446,7 @@ export default function PendingExpensesWidget({
             </svg>
           </div>
           <h3 className="text-sm font-medium text-slate-900">No Pending Items Found</h3>
-          <p className="text-xs text-slate-500 mt-1">No proposals or unpaid bills were detected. You can add them manually.</p>
+          <p className="text-xs text-slate-500 mt-1">No proposals, unpaid bills, or offers to purchase were detected. You can add them manually.</p>
         </div>
       )}
 

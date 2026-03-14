@@ -229,7 +229,7 @@ class MultiDocumentExtractionService:
                 3. Property Characteristics (e.g., "Year Built", "Roof Age", "Unit Count", "Rentable Sq Ft")
                 4. Capital Expenditures (e.g., "New Roof", "HVAC Replacement")
                 5. Property Identity & Deal Terms (e.g., "Property Name", "Property Address", "Purchase Price", "Year Built")
-                6. Pending Expenses (e.g., "Proposals", "Quotes", "Unpaid Bills")
+                6. Pending Expenses (e.g., "Proposals", "Quotes", "Unpaid Bills", "Offer to Purchase")
                 
                 CRITICAL RULES TO AVOID ERRORS:
                 
@@ -256,8 +256,8 @@ class MultiDocumentExtractionService:
                    - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
                    - If only a total/annual column exists, use it for "amount" (T12).
                 
-                5. PENDING EXPENSES (PROPOSALS / UNPAID BILLS):
-                   - If an item is a "Proposal", "Quote", "Estimate", or an "Unpaid" bill with a "Balance Due", it is NOT a historical expense.
+                5. PENDING EXPENSES (PROPOSALS / UNPAID BILLS / OFFERS TO PURCHASE):
+                   - If an item is a "Proposal", "Quote", "Estimate", "Offer to Purchase", or an "Unpaid" bill with a "Balance Due", it is NOT a historical expense.
                    - These should be type: "pending_expense"
                    - This is for items that are not yet paid and need user approval.
                 
@@ -1041,7 +1041,7 @@ class MultiDocumentExtractionService:
 
             # Fix 5b: High dollar threshold heuristic for ambiguous items (e.g. > $15,000 single invoice usually CapEx)
             # This is risky without context, but for "Proposal" or "Modernization" it works.
-            elif any(keyword in raw_text for keyword in ["proposal", "modernization", "installation", "replacement"]):
+            elif any(keyword in raw_text for keyword in ["proposal", "modernization", "installation", "replacement", "offer to purchase"]):
                 amount = exp.get("amount", 0)
                 if amount and amount > 5000:
                     exp["type"] = "capex"
@@ -1254,7 +1254,7 @@ class MultiDocumentExtractionService:
             }
         
         # Handle pending expenses
-        if item_type == "pending_expense" or any(keyword in text_lower for keyword in ["proposal", "quote", "estimate", "unpaid", "due"]):
+        if item_type == "pending_expense" or any(keyword in text_lower for keyword in ["proposal", "quote", "estimate", "unpaid", "due", "offer to purchase"]):
             return {
                 "normalized_value": "Miscellaneous Expense",
                 "category_group": "Pending Expense",
