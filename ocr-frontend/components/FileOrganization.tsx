@@ -523,7 +523,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
       >
         <div className="flex flex-1 overflow-hidden">
             {/* Sidebar */}
-            <div className="w-72 bg-white border-r border-neutral-100 flex flex-col p-4 overflow-y-auto custom-scrollbar">
+            <div className="w-72 shrink-0 bg-white border-r border-neutral-100 flex flex-col p-4 overflow-y-auto custom-scrollbar">
                 <div className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-4 px-3">
                     Directories
                 </div>
@@ -567,7 +567,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 bg-white flex flex-col overflow-hidden">
+            <div className="flex-1 min-w-0 bg-white flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between">
                     <h3 className="font-semibold text-neutral-900">{activeCategory}</h3>
