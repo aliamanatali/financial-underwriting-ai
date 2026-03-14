@@ -92,6 +92,7 @@ export default function AnalysisResultPage() {
   const [initialRentRollEditMode, setInitialRentRollEditMode] = useState(false);
   const [validationTrigger, setValidationTrigger] = useState<number>(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -562,7 +563,7 @@ export default function AnalysisResultPage() {
       </div>
 
       {activeTab === "verification" && hasUnsavedChanges && (
-        <div className="fixed bottom-[84px] right-6 z-[60] bg-white border border-neutral-200 text-neutral-800 px-4 py-3 rounded-xl shadow-2xl max-w-sm text-xs font-medium animate-in fade-in slide-in-from-bottom-4">
+        <div className={`fixed right-6 z-[60] bg-white border border-neutral-200 text-neutral-800 px-4 py-3 rounded-xl shadow-2xl max-w-sm text-xs font-medium transition-all duration-300 ${isChatOpen ? 'bottom-[660px]' : 'bottom-[84px]'} animate-in fade-in slide-in-from-bottom-4`}>
           <div className="flex gap-2 items-start">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 mt-0.5 text-[#FF5E00]">
               <circle cx="12" cy="12" r="10"></circle>
@@ -577,7 +578,7 @@ export default function AnalysisResultPage() {
       )}
 
       {/* Chat Widget */}
-      <ReportChatWidget documentId={id} />
+      <ReportChatWidget documentId={id} onOpenChange={setIsChatOpen} />
 
       <style jsx global>{`
         .no-scrollbar::-webkit-scrollbar {

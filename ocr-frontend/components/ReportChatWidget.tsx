@@ -13,9 +13,10 @@ interface ChatMessage {
 interface ReportChatWidgetProps {
   documentId: string;
   isExpanded?: boolean;
+  onOpenChange?: (isOpen: boolean) => void;
 }
 
-export default function ReportChatWidget({ documentId, isExpanded = false }: ReportChatWidgetProps) {
+export default function ReportChatWidget({ documentId, isExpanded = false, onOpenChange }: ReportChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(isExpanded);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -92,7 +93,10 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setIsOpen(false)}
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenChange?.(false);
+                }}
                 className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"
               >
                 <ChevronDownIcon className="w-5 h-5" />
@@ -198,7 +202,10 @@ export default function ReportChatWidget({ documentId, isExpanded = false }: Rep
       {/* Floating Button (Visible when closed) */}
       {!isOpen && (
         <button
-          onClick={() => setIsOpen(true)}
+          onClick={() => {
+            setIsOpen(true);
+            onOpenChange?.(true);
+          }}
           className="flex items-center gap-2 px-4 py-3 bg-neutral-900 text-white rounded-full shadow-xl hover:bg-neutral-800 transition-all hover:scale-105 active:scale-95 group"
         >
           <SparklesIcon className="w-5 h-5 text-amber-400" />
