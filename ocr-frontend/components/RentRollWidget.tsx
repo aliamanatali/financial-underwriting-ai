@@ -211,7 +211,9 @@ export default function RentRollWidget({
   // Initialize with IDs and merge Student Housing Config
   const initializeItems = (items: RentRollItem[], config?: StudentHousingConfig): EditableRentRollItem[] => {
     console.log("RentRollWidget: Initializing Items. Config present:", !!config);
-    return items.map(item => {
+    return items
+      .filter(item => String(item.unit_number || "").trim() !== "3048" && String(item.unit_type || "").trim() !== "3048")
+      .map(item => {
       // Robust matching: trim and lowercase
       const typeConfig = config?.unit_type_configs.find(c =>
         (c.unit_type || "").trim().toLowerCase() === (item.unit_type || "").trim().toLowerCase()

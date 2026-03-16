@@ -194,12 +194,13 @@ class SynthesisService:
         """
         
         for idx, c in enumerate(candidates_list):
+            val_str = str(c['value']) if c.get('value', 0) > 0 else "Unknown (Extract from context)"
             prompt += f"""
             --- Candidate {idx + 1} ---
-            Extracted Year: {c['value']}
+            Extracted Year: {val_str}
             Source Document: {c['source']}
             Context:
-            {c['text_context'][:1000]}
+            {c['text_context'][:10000]}
             -----------------------
             """
             
@@ -302,12 +303,13 @@ class SynthesisService:
         """
         
         for idx, c in enumerate(candidates_list):
+            val_str = f"${c['value']:,.2f}" if c.get('value', 0) > 0 else "Unknown (Extract from context)"
             prompt += f"""
             --- Candidate {idx + 1} ---
-            Extracted Value: ${c['value']:,.2f}
+            Extracted Value: {val_str}
             Source Document: {c['source']}
             Context/Page Content:
-            {c['text_context'][:2000]}  # Truncated to avoid token limits
+            {c['text_context'][:15000]}  # Expanded window for complete PSA context
             -----------------------
             """
             
@@ -322,8 +324,11 @@ class SynthesisService:
            - Do NOT confuse the Deposit amount with the Purchase Price.
         4. SOURCE PRIORITY - MAIN AGREEMENT:
            - The "Main" Purchase and Sale Agreement (PSA) is the PRIMARY authority.
+           - If a document filename indicates it is a PSA (e.g. Purchase and Sale Agreement), YOU MUST USE THE PRICE FOUND THERE OVER ALL OTHERS.
            - Be cautious with "Amendments" or "Addenda" - they often discuss deposits or extensions, not necessarily the total price.
            - Always prefer the value defined in the "Purchase Price" section (often Section 2) of the Main PSA.
+           - Give MAXIMUM confidence (1.0) to Purchase Price found in a PSA document.
+           - Give high confidence to native textual documents over image data.
         5. IGNORE extracted values that are actually:
            - "Earnest Money Deposit" or "Deposit"
            - "Loan Amount" or "Debt"

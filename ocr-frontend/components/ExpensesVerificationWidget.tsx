@@ -351,7 +351,11 @@ const getCategoryGroup = (category: string): CategoryGroup => {
           <tbody className="bg-white divide-y divide-slate-200">
             {localExpenses.map((expense) => {
               const selectedItem = expense.occurrences.find(o => o.id === expense.selectedOccurrenceId) || expense.occurrences[0];
-              const isEdited = !!selectedItem?.user_correction || expense.selectedOccurrenceId !== expense.originalSelectedId;
+              const highestConfidenceItem = expense.occurrences.reduce((prev, current) =>
+                  (prev.confidence > current.confidence) ? prev : current
+              , expense.occurrences[0]);
+              const isDuplicateEdited = selectedItem.user_verified && selectedItem.id !== highestConfidenceItem.id;
+              const isEdited = !!selectedItem?.user_correction || isDuplicateEdited;
               
               return (
               <tr key={expense.id} className={`${isEdited ? 'bg-orange-50' : selectedItem?.user_verified ? 'bg-emerald-50/30' : 'hover:bg-slate-50'} transition-colors duration-150`}>

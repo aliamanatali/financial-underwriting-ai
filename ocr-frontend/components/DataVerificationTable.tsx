@@ -298,12 +298,18 @@ export default function DataVerificationTable({
                
                const normalizedValue = field.occurrences[0]?.normalized_value;
                let selectedId = normalizedValue ? selectedOccurrenceIds[normalizedValue] : undefined;
-               const isDuplicateEdited = selectedId !== undefined && selectedId !== field.id;
                selectedId = selectedId || field.id;
                
                if (!filteredOccurrences.some(o => o.id === selectedId) && filteredOccurrences.length > 0) {
                    selectedId = filteredOccurrences[0].id;
                }
+
+               const highestConfidenceItem = field.occurrences.reduce((prev, current) =>
+                   (prev.confidence > current.confidence) ? prev : current
+               , field.occurrences[0]);
+               
+               const selectedItem = field.occurrences.find(o => o.id === selectedId) || field.occurrences[0];
+               const isDuplicateEdited = selectedItem.user_verified && selectedItem.id !== highestConfidenceItem.id;
 
                return { ...field, occurrences: filteredOccurrences, id: selectedId, isDuplicateEdited };
             }).filter(field => {

@@ -276,7 +276,7 @@ function ProcessingContent() {
 
       {/* Content Wrapper */}
       <div
-        className={`flex flex-col flex-1 transition-all duration-300 h-screen relative z-10 bg-neutral-50/50 ${
+        className={`flex flex-col flex-1 min-w-0 transition-all duration-300 h-screen relative z-10 bg-neutral-50/50 ${
           sidebarExpanded ? "ml-64" : "ml-[72px]"
         }`}
       >
@@ -331,7 +331,7 @@ function ProcessingContent() {
         </header>
 
         {/* Main Workspace */}
-        <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar">
+        <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar min-w-0">
           <div className={`mx-auto flex flex-col gap-8 ${isReviewing ? 'max-w-[90%]' : 'max-w-5xl'}`}>
             
             {isReviewing && dealPackage ? (
