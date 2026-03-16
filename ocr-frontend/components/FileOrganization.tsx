@@ -14,7 +14,7 @@ import {
   DragOverEvent,
   DragEndEvent,
   useDroppable,
-} from "@dnd-kit/core";
+} from "@dnd-kit/core";  
 import { useDraggable } from "@dnd-kit/core";
 import { apiClient } from "@/lib/api";
 import { DealPackage } from "@/lib/types";
