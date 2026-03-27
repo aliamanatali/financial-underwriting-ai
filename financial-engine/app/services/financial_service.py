@@ -953,7 +953,6 @@ class FinancialService:
                 other_expenses_map[cat_name] = cat_total
         else:
              self.audit_log_service.add_log(analysis, "Data Warning", "No T12 Expenses Found", "Extraction", "Using only calculated Taxes & Mgmt Fee")
-             analysis.gating_reasons.append("CRITICAL: No T12 Expense Data extracted. Pro Forma expenses may be understated.")
         
         # Dynamic Estimation for Missing Expenses
         # If Payroll or Marketing is missing, we estimate them based on standard industry ratios
@@ -971,7 +970,6 @@ class FinancialService:
             if not has_payroll:
                 if is_flow_a:
                     logger.info("Flow A (OM_DRIVEN): Skipping Payroll estimation (Missing in OM).")
-                    analysis.gating_reasons.append("Warning: Payroll missing in OM")
                 else:
                     # Conservative estimate: $1,200 per unit
                     est_payroll = unit_count * 1200.0
@@ -982,7 +980,6 @@ class FinancialService:
             if not has_marketing:
                 if is_flow_a:
                     logger.info("Flow A (OM_DRIVEN): Skipping Marketing estimation (Missing in OM).")
-                    analysis.gating_reasons.append("Warning: Marketing missing in OM")
                 else:
                      # Conservative estimate: $200 per unit
                     est_marketing = unit_count * 200.0
@@ -1088,18 +1085,6 @@ class FinancialService:
 
         analysis.loan_amount = self._sanitize_value(loan_amount)
         self.audit_log_service.add_log(analysis, "Loan Amount", f"${loan_amount:,.0f}", "Calculation", method)
-
-        # Gating Logic
-        if loan_amount < params.min_loan_amount:
-            # Check if this is a hard fail or just a warning? Usually hard fail for lending criteria.
-            # We set status to FAIL but proceed with calcs.
-            analysis.pass_fail_status = "FAIL"
-            
-            # Check if calculation failed (0) vs just too small
-            if loan_amount == 0:
-                 analysis.gating_reasons.append(f"Loan Amount not determined (Purchase Price missing?). Please manually enter a Loan Amount > ${params.min_loan_amount:,.0f}")
-            else:
-                 analysis.gating_reasons.append(f"Loan Amount ${loan_amount:,.0f} < ${params.min_loan_amount:,.0f}")
 
         # 2. Debt Service (Interest Only - "Bridge Debt")
         # Formula: SOFR + Spread

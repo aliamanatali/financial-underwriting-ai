@@ -269,7 +269,7 @@ class IngestionService:
 
         discrepancy = abs(rent_roll_income - pnl_income) / pnl_income
         if discrepancy > threshold:
-            return f"Warning: Annual income from Rent Roll (${rent_roll_income:,.2f}) and P&L (${pnl_income:,.2f}) differs by {discrepancy:.2%}, which is above the {threshold:.2%} threshold."
+            return f"Annual income from Rent Roll (${rent_roll_income:,.2f}) and P&L (${pnl_income:,.2f}) differs by {discrepancy:.2%}, which is above the {threshold:.2%} threshold."
         return None
 
     def _summarize_rent_roll(self, rent_roll: List[RentRollItem]) -> RentRollSummary:
