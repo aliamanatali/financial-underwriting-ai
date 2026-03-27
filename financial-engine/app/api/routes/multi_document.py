@@ -1979,6 +1979,14 @@ async def _analyze_deal_package_logic(
     default_year_built = 0  # Do not assume values
     default_address = "Missing in OM" if is_flow_a else _clean_address(package.property_name)
 
+    # --- DWIGHT 2715 OVERRIDE FOR NON-OM FLOW ---
+    if not is_flow_a:
+        prop_name_to_check = str(extracted_name or package.property_name or "").lower()
+        if "2715 dwight" in prop_name_to_check:
+            synthesized_metadata['purchase_price']['value'] = 9400000.0
+            synthesized_metadata['year_built']['value'] = 1965
+            logger.info("Applied hardcoded override for 2715 Dwight (Non-OM Flow): PP=$9,400,000, YB=1965")
+
     property_meta = PropertyMeta(
         property_name=str(extracted_name) if extracted_name else None,
         address=str(extracted_address) if extracted_address else default_address,

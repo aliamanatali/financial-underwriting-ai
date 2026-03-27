@@ -648,6 +648,47 @@ class SynthesisService:
                     except (ValueError, TypeError):
                         amount = 0.0
             
+            # Fallback: Extract amount from raw_text if missing
+            if amount == 0.0 and item.raw_text:
+                import re
+                # Find numbers formatted with commas and decimals, e.g. "500,000", "1.5", "1,200.50"
+                # And words representing numbers like "Five Hundred Thousand"
+                
+                # First check for typical numeric digits
+                numbers = re.findall(r'[\d,]+\.?\d*', item.raw_text)
+                if numbers:
+                    if "year built" in normalized_val or "year built" in raw_text or "year constructed" in raw_text or "build year" in raw_text:
+                        for num_str in numbers:
+                            try:
+                                num = int(num_str.replace(',', '').split('.')[0]) # Handle 1980.0
+                                if 1800 < num < 2030:
+                                    amount = float(num)
+                                    break
+                            except:
+                                pass
+                    elif "purchase price" in normalized_val or "purchase price" in raw_text or "sales price" in raw_text or "contract price" in raw_text or "price" in normalized_val:
+                        max_price = 0.0
+                        for num_str in numbers:
+                            try:
+                                num = float(num_str.replace(',', ''))
+                                if num > max_price:
+                                    max_price = num
+                            except:
+                                pass
+                        if max_price > 0:
+                            amount = max_price
+                
+                # If still 0, check for written words in raw_text for common large numbers
+                if amount == 0.0 and ("purchase price" in normalized_val or "purchase price" in raw_text or "sales price" in raw_text or "contract price" in raw_text):
+                    text_lower = raw_text.lower()
+                    if "million" in text_lower or "thousand" in text_lower:
+                        # Simple heuristic for written numbers
+                        # If we have something like "Five Hundred Thousand Dollars ($500,000)" the regex above handles the number.
+                        # But if it's strictly "Five Hundred Thousand Dollars":
+                        # We can try to use a basic word-to-number mapping, but usually the number is in parentheses.
+                        # Let's at least log it so we know it happened.
+                        logger.debug(f"Possible written number in Purchase Price raw_text: {raw_text}")
+            
             # PROPERTY NAME (Collect for voting)
             if "property name" in normalized_val:
                 text_val = item.metadata.get("text_value") or item.raw_text
@@ -687,8 +728,8 @@ class SynthesisService:
                     continue
 
                 # Exclude small amounts that might be deposits or fees
-                # Increased threshold to $100k to avoid "Earnest Money Deposit" ($50k) errors
-                if amount > 100000 and doc_score > best_values["purchase_price"]["score"]:
+                # Lowered threshold to $10k to catch smaller properties, since Deposits are already filtered above
+                if amount > 10000 and doc_score > best_values["purchase_price"]["score"]:
                     best_values["purchase_price"] = {
                         "value": amount,
                         "source": source_doc,
