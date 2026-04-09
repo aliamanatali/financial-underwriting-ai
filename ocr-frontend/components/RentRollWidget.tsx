@@ -329,13 +329,6 @@ export default function RentRollWidget({
     const marketVal = parseFloat(String(item.market_rent));
     if (isNaN(marketVal) || marketVal <= 0) errors.market_rent = "Required";
     
-    // Stabilized rent validation: only required (> 0) if not vacant.
-    // If vacant, stabilized rent is allowed (and expected) to be 0.
-    const stabilizedVal = parseFloat(String(item.stabilized_rent));
-    if (!item.is_vacant && (isNaN(stabilizedVal) || stabilizedVal <= 0)) {
-        errors.stabilized_rent = "Required";
-    }
-
     const currentVal = parseFloat(String(item.current_rent));
     if (item.is_vacant) {
         if (!isNaN(currentVal) && currentVal > 0) {
@@ -561,7 +554,7 @@ export default function RentRollWidget({
       if (errorCount > 0) {
           console.log("RentRollWidget: Validation failed with", errorCount, "errors");
           setWarningMessage(
-              `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)`
+              `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Market Rents are set (> 0)`
           );
           setShowWarning(true);
           setIsSaving(false);
@@ -1031,17 +1024,6 @@ export default function RentRollWidget({
                  <th className="px-4 py-3 text-center">Current Rent</th>
                  <th className="px-4 py-3 text-center">
                    <div className="flex items-center justify-center gap-1">
-                     Stabilized Rent
-                     {isNonOMFlow && (
-                       <WidgetTooltip
-                         title="Stabilized Rent Assumption"
-                         description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
-                       />
-                     )}
-                   </div>
-                 </th>
-                 <th className="px-4 py-3 text-center">
-                   <div className="flex items-center justify-center gap-1">
                      Market Rent
                      {isNonOMFlow && (
                        <WidgetTooltip
@@ -1102,7 +1084,6 @@ export default function RentRollWidget({
                   <td className="px-4 py-3 text-center">Avg Unit Size</td>
                   <td colSpan={1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Current Rent</td>
-                  <td className="px-4 py-3 text-center">Stabilized Rent</td>
                   <td className="px-4 py-3 text-center">Market Rent</td>
                   <td colSpan={10}></td>
                 </tr>
@@ -1122,14 +1103,6 @@ export default function RentRollWidget({
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${Math.round(displaySummary.avg_rent_per_sf || 0)}</span></div>
-                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                     <div className="text-xs space-y-1">
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${Math.round(displaySummary.avg_stabilized_per_sf || 0)}</span></div>
                      </div>
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -1388,17 +1361,6 @@ export default function RentRollWidget({
                     <th className="px-6 py-3 text-center">Unit Count</th>
                     <th className="px-6 py-3 text-center">%</th>
                     <th className="px-6 py-3 text-center">Avg. Current Rent</th>
-                    <th className="px-6 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        Stabilized Rent
-                        {isNonOMFlow && (
-                          <WidgetTooltip
-                            title="Stabilized Rent Assumption"
-                            description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
-                          />
-                        )}
-                      </div>
-                    </th>
                     <th className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1">
                         Market Rent
@@ -1420,7 +1382,6 @@ export default function RentRollWidget({
                       <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
-                      <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{Math.round(group.avgSqFt)}</td>
                     </tr>
@@ -1433,7 +1394,6 @@ export default function RentRollWidget({
                     <td className="px-6 py-4 text-center text-neutral-900">
                       {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
                     </td>
-                    <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
                     <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
                     <td className="px-6 py-4 text-center text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
                   </tr>
@@ -1605,23 +1565,6 @@ function SortableRow({
           </div>
         ) : (
           formatCurrency(typeof item.current_rent === 'number' ? item.current_rent : parseFloat(item.current_rent) || 0)
-        )}
-      </td>
-      <td className="px-4 py-2.5 text-center text-neutral-600">
-        {isEditing ? (
-          <div className="w-20 mx-auto">
-            <input
-              type="text"
-              value={item.stabilized_rent}
-              onChange={(e) => handleNumericChange(item.id, "stabilized_rent", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
-                errors?.stabilized_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
-              }`}
-            />
-            {errors?.stabilized_rent && <div className="text-[10px] text-rose-600 mt-1">{errors.stabilized_rent}</div>}
-          </div>
-        ) : (
-          formatCurrency(typeof item.stabilized_rent === 'number' ? item.stabilized_rent : parseFloat(item.stabilized_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-600">
