@@ -256,14 +256,14 @@ export default function UnderwritingDashboard({
   const [isEditingPropertyDetails, setIsEditingPropertyDetails] = useState(false);
   const [isCommentaryExpanded, setIsCommentaryExpanded] = useState(true);
   const [selectedPeriod, setSelectedPeriod] = useState<string>("T12");
-  const [editParams, setEditParams] = useState<DealParameters>(
-    analysis.deal_parameters || {
-      growth_rate: 0.03,
-      exit_cap_rate: 0.06,
-      vacancy_rate: 0.05,
-      loan_amount: 5000000,
-    }
-  );
+  const [editParams, setEditParams] = useState<DealParameters>({
+    growth_rate: 0.03,
+    exit_cap_rate: 0.06,
+    vacancy_rate: 0.05,
+    ...(analysis.deal_parameters || {}),
+    // Use the backend-calculated loan_amount (from LTV) when no user override exists
+    loan_amount: analysis.deal_parameters?.loan_amount ?? analysis.loan_amount ?? undefined,
+  });
   const [editPropertyDetails, setEditPropertyDetails] = useState({
     year_built: analysis.property_meta?.year_built || 0,
     total_units: analysis.property_meta?.total_units || 0,
@@ -987,18 +987,18 @@ export default function UnderwritingDashboard({
             <div className="group pt-2 border-t border-neutral-100">
               <div className="flex justify-between items-baseline mb-2">
                 <label className="text-xs font-medium text-neutral-600">Loan Amount</label>
-                <span className="text-sm font-semibold text-neutral-900">{formatCurrency(editParams.loan_amount ?? 5000000)}</span>
+                <span className="text-sm font-semibold text-neutral-900">{formatCurrency(editParams.loan_amount ?? analysis.loan_amount ?? 0)}</span>
               </div>
               <input
                 type="range"
                 min="0"
                 max="10000000"
                 step="50000"
-                value={editParams.loan_amount ?? 5000000}
+                value={editParams.loan_amount ?? analysis.loan_amount ?? 0}
                 onChange={(e) => handleParamChange('loan_amount', e.target.value)}
                 className="w-full h-1.5 bg-neutral-100 rounded-full appearance-none cursor-pointer slider-thumb"
                 style={{
-                  background: `linear-gradient(to right, #171717 0%, #171717 ${((editParams.loan_amount ?? 5000000) / 10000000) * 100}%, #f5f5f5 ${((editParams.loan_amount ?? 5000000) / 10000000) * 100}%, #f5f5f5 100%)`
+                  background: `linear-gradient(to right, #171717 0%, #171717 ${((editParams.loan_amount ?? analysis.loan_amount ?? 0) / 10000000) * 100}%, #f5f5f5 ${((editParams.loan_amount ?? analysis.loan_amount ?? 0) / 10000000) * 100}%, #f5f5f5 100%)`
                 }}
               />
               <div className="flex justify-between text-[9px] text-neutral-400 mt-1.5">
@@ -1112,6 +1112,60 @@ export default function UnderwritingDashboard({
                     {((adjustedProFormaGPR - ((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier)) / (((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier) || 1) * 100).toFixed(1)}%
                   </td>
                 </tr>
+                {/* EGI Waterfall: Loss to Lease */}
+                {(analysis.loss_to_lease || 0) > 0 && (
+                  <tr className="group hover:bg-neutral-50/50 transition-colors">
+                    <td className="pl-10 pr-6 py-2.5 text-xs text-neutral-500">
+                      Less: Loss to Lease
+                    </td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">—</td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">
+                      ({formatCurrency((analysis.loss_to_lease || 0) * periodMultiplier)})
+                    </td>
+                    <td className="px-6 py-2.5" />
+                  </tr>
+                )}
+                {/* EGI Waterfall: Vacancy Loss */}
+                {(analysis.vacancy_loss || 0) > 0 && (
+                  <tr className="group hover:bg-neutral-50/50 transition-colors">
+                    <td className="pl-10 pr-6 py-2.5 text-xs text-neutral-500">
+                      Less: Vacancy Loss
+                    </td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">—</td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">
+                      ({formatCurrency((analysis.vacancy_loss || 0) * periodMultiplier)})
+                    </td>
+                    <td className="px-6 py-2.5" />
+                  </tr>
+                )}
+                {/* EGI Waterfall: Other Income */}
+                {(analysis.other_income || 0) > 0 && (
+                  <tr className="group hover:bg-neutral-50/50 transition-colors">
+                    <td className="pl-10 pr-6 py-2.5 text-xs text-neutral-500">
+                      Plus: Other Income
+                    </td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">—</td>
+                    <td className="px-6 py-2.5 text-right text-xs text-neutral-500">
+                      {formatCurrency((analysis.other_income || 0) * periodMultiplier)}
+                    </td>
+                    <td className="px-6 py-2.5" />
+                  </tr>
+                )}
+                {/* EGI Subtotal */}
+                {(analysis.effective_gross_income || 0) > 0 && (
+                  <tr className="group hover:bg-neutral-50 transition-colors border-t border-neutral-100">
+                    <td className="px-6 py-3 text-sm text-neutral-700 font-medium">
+                      Effective Gross Income
+                    </td>
+                    <td className="px-6 py-3 text-right text-sm text-neutral-700 font-medium">
+                      {formatCurrency(historicalNOI + historicalTotalExpenses)}
+                    </td>
+                    <td className="px-6 py-3 text-right text-sm text-neutral-700 font-medium">
+                      {formatCurrency((analysis.effective_gross_income || 0) * periodMultiplier)}
+                    </td>
+                    <td className="px-6 py-3" />
+                  </tr>
+                )}
                 <tr className="group hover:bg-neutral-50 transition-colors">
                   <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
                     Total Expenses

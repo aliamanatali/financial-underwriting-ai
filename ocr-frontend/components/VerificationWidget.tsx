@@ -406,7 +406,6 @@ export default function VerificationWidget({ packageId, view = "both", onAnalysi
         growth_rate: 0.03,
         exit_cap_rate: 0.06,
         vacancy_rate: 0.03,
-        loan_amount: 5000000,
         min_unit_count: 15,
         max_unit_count: 80,
         max_build_year: 1970,

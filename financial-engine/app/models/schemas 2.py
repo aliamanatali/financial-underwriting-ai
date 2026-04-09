@@ -80,7 +80,7 @@ class DealParameters(BaseModel):
     growth_rate: float = 0.03
     exit_cap_rate: float = 0.06 
     vacancy_rate: float = 0.03
-    loan_amount: float = 5_000_000
+    loan_amount: Optional[float] = None
     min_unit_count: int = 15
     max_unit_count: int = 80
     max_build_year: int = 1970
@@ -246,7 +246,7 @@ class UnderwritingAnalysis(BaseModel):
 #     growth_rate: float = 0.03
 #     exit_cap_rate: float = 0.06 
 #     vacancy_rate: float = 0.03
-#     loan_amount: float = 5_000_000
+#     loan_amount: Optional[float] = None
 #     min_unit_count: int = 15
 #     max_unit_count: int = 80
 #     max_build_year: int = 1970

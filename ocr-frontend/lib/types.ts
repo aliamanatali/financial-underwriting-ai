@@ -321,10 +321,17 @@ export interface UnderwritingAnalysis {
   historical_cap_rate?: number;
   historical_total_expenses?: number;
   pro_forma_expenses?: number;
+  gross_potential_rent?: number;
+  loss_to_lease?: number;
+  vacancy_loss?: number;
+  other_income?: number;
+  effective_gross_income?: number;
   historical_periods?: HistoricalSummary[];
   irr?: number;
   moic?: number;
   cash_on_cash_return?: number;
+  loan_amount?: number;
+  equity_invested?: number;
   dscr?: number;
   debt_yield?: number;
   annual_debt_service?: number;
