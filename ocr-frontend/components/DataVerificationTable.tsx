@@ -516,9 +516,11 @@ export default function DataVerificationTable({
                                                 let displayVal = occ.raw_text || "Empty Value";
                                                 // If it's a purely numeric field and raw_text is uninformative, append the amount
                                                 if (occ.metadata?.amount !== undefined && occ.metadata.amount !== 0 && occ.metadata.amount !== "") {
-                                                    const formattedAmount = typeof occ.metadata.amount === 'number' && occ.metadata.amount > 1000
+                                                    const isYearBuilt = occ.normalized_value === 'Year Built';
+                                                    const isNonCurrency = isYearBuilt || ['Total Units', 'Rentable Square Feet', 'Occupancy Rate'].includes(occ.normalized_value || '');
+                                                    const formattedAmount = typeof occ.metadata.amount === 'number' && occ.metadata.amount > 1000 && !isNonCurrency
                                                         ? `$${occ.metadata.amount.toLocaleString()}`
-                                                        : String(occ.metadata.amount);
+                                                        : (typeof occ.metadata.amount === 'number' && occ.metadata.amount > 1000 && !isYearBuilt ? occ.metadata.amount.toLocaleString() : String(occ.metadata.amount));
                                                     
                                                     // Only append if raw_text doesn't already contain the number
                                                     if (!displayVal.includes(String(occ.metadata.amount))) {
@@ -593,9 +595,16 @@ export default function DataVerificationTable({
                                 ) : (
                                     item.metadata?.amount !== undefined ? (
                                         <span className="text-slate-900 font-semibold">
-                                            {typeof item.metadata.amount === 'number' && item.metadata.amount > 1000 ?
-                                                `$${item.metadata.amount.toLocaleString()}` :
-                                                item.metadata.amount}
+                                            {(() => {
+                                                const isYearBuilt = item.normalized_value === 'Year Built';
+                                                const isNonCurrency = isYearBuilt || ['Total Units', 'Rentable Square Feet', 'Occupancy Rate'].includes(item.normalized_value || '');
+                                                if (typeof item.metadata.amount === 'number' && item.metadata.amount > 1000) {
+                                                    if (isYearBuilt) return String(item.metadata.amount);
+                                                    if (isNonCurrency) return item.metadata.amount.toLocaleString();
+                                                    return `$${item.metadata.amount.toLocaleString()}`;
+                                                }
+                                                return item.metadata.amount;
+                                            })()}
                                         </span>
                                     ) : <span className="text-slate-400 text-xs">-</span>
                                 )}

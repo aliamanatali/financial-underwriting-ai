@@ -338,15 +338,7 @@ class FinancialService:
         # Ensure parameters exist, else use defaults
         params = analysis.deal_parameters or DealParameters()
         
-        # 1. Unit Count Check
-        # FIX: Use Rent Roll count as primary source of truth (Document Metadata is often wrong)
-        unit_count = len(analysis.rent_roll) if analysis.rent_roll else (analysis.property_meta.total_units or 0)
-
-        if not (params.min_unit_count <= unit_count <= params.max_unit_count):
-            status = "FAIL"
-            reasons.append(f"Unit count FAIL: {unit_count} units is outside range {params.min_unit_count}-{params.max_unit_count}.")
-        
-        # 2. Loan Amount Check (Preliminary, based on Purchase Price if available)
+        # 1. Loan Amount Check (Preliminary, based on Purchase Price if available)
         # Note: True Loan Amount is calculated in Step 4, but we can check rough sizing here.
         purchase_price = analysis.property_meta.purchase_price or 0
         
@@ -371,12 +363,6 @@ class FinancialService:
              status = "FAIL"
              reasons.append(f"Loan amount FAIL: Could not calculate loan (missing Purchase Price) and no manual Loan Amount provided.")
         
-        # 3. Vintage Check
-        year_built = analysis.property_meta.year_built or 0
-        if year_built > 0 and year_built < params.max_build_year and not analysis.property_meta.is_renovated:
-            status = "FAIL"
-            reasons.append(f"Property vintage FAIL: Built in {year_built}. Criteria requires 1970-2005 or renovated.")
-
         # FINAL OVERRIDE: Never block analysis completely on data checks.
         # We want to see the report even if it's "bad".
         if status == "FAIL":

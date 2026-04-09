@@ -725,13 +725,6 @@ export default function UnderwritingDashboard({
                 {analysis.conclusion?.investment_checklist && (
                   <>
                     <div className="flex items-start justify-between gap-4">
-                      <span className="text-xs text-neutral-600">Is the property a multifamily investment?</span>
-                      <div className="relative group/source inline-block">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.is_multifamily}</span>
-                        <SourceTooltip source={analysis.conclusion.investment_checklist.is_multifamily_source} />
-                      </div>
-                    </div>
-                    <div className="flex items-start justify-between gap-4">
                       <span className="text-xs text-neutral-600 shrink-0">Is it within 6 blocks of campus?</span>
                       <div className="relative group/source flex-1 text-right">
                         <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-neutral-100 text-neutral-600 inline-block text-left cursor-help">{analysis.conclusion.investment_checklist.near_campus}</span>
@@ -750,13 +743,6 @@ export default function UnderwritingDashboard({
                       <div className="relative group/source inline-block">
                         <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.is_mismanaged}</span>
                         <SourceTooltip source={analysis.conclusion.investment_checklist.is_mismanaged_source} />
-                      </div>
-                    </div>
-                    <div className="flex items-start justify-between gap-4">
-                      <span className="text-xs text-neutral-600">Diligence items remaining?</span>
-                      <div className="relative group/source inline-block">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 whitespace-nowrap cursor-help">{analysis.conclusion.investment_checklist.diligence_issues}</span>
-                        <SourceTooltip source={analysis.conclusion.investment_checklist.diligence_issues_source} />
                       </div>
                     </div>
                   </>

@@ -2331,7 +2331,7 @@ async def _analyze_deal_package_logic(
         "Deal Viability Status",
         viability_check["status"],
         "Gating Logic",
-        "Checked: Units, Loan Amount, Vintage vs. Criteria",
+        "Checked: Loan Amount vs. Criteria",
         1.0,
         {"reasons": viability_check["reasons"]}
     )
