@@ -269,6 +269,7 @@ export default function UnderwritingDashboard({
     total_units: analysis.property_meta?.total_units || 0,
     purchase_price: analysis.property_meta?.purchase_price || 0,
     current_loan_balance: analysis.property_meta?.current_loan_balance || 0,
+    building_size: analysis.property_meta?.building_size || 0,
   });
   const [isSavingProperty, setIsSavingProperty] = useState(false);
 
@@ -402,6 +403,7 @@ export default function UnderwritingDashboard({
           total_units: editPropertyDetails.total_units,
           purchase_price: editPropertyDetails.purchase_price,
           current_loan_balance: editPropertyDetails.current_loan_balance,
+          building_size: editPropertyDetails.building_size,
         }),
       });
       
@@ -430,6 +432,7 @@ export default function UnderwritingDashboard({
       total_units: analysis.property_meta?.total_units || 0,
       purchase_price: analysis.property_meta?.purchase_price || 0,
       current_loan_balance: analysis.property_meta?.current_loan_balance || 0,
+      building_size: analysis.property_meta?.building_size || 0,
     });
     setIsEditingPropertyDetails(false);
   };
@@ -562,7 +565,7 @@ export default function UnderwritingDashboard({
           )}
         </div>
         
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-px bg-neutral-200 rounded-lg overflow-hidden border border-neutral-200">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-px bg-neutral-200 rounded-lg overflow-hidden border border-neutral-200">
           <div className="bg-white p-4 flex flex-col gap-1">
             <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Year Built</span>
             {isEditingPropertyDetails ? (
@@ -623,19 +626,43 @@ export default function UnderwritingDashboard({
             <span className="text-sm font-semibold text-neutral-900">{formatCurrency(pricePerUnit)}</span>
           </div>
           <div className="bg-white p-4 flex flex-col gap-1">
-            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">Existing Loan</span>
+            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium flex items-center">
+              Gross Sq Ft
+              <WidgetTooltip
+                title="Gross Square Footage (GSF)"
+                description="Total building area extracted from the Offering Memorandum or property overview."
+                formulas={[{ label: "Source", formula: "Extracted from document headers (PropertyMeta)" }]}
+                className="text-neutral-400 ml-1 hover:text-neutral-700"
+              />
+            </span>
             {isEditingPropertyDetails ? (
               <input
                 type="text"
-                inputMode="decimal"
+                inputMode="numeric"
                 pattern="[0-9]*"
                 className="text-sm font-semibold text-neutral-900 bg-white border border-neutral-300 rounded px-2 py-1 focus:outline-none focus:border-neutral-900"
-                value={editPropertyDetails.current_loan_balance}
-                onChange={(e) => handlePropertyDetailChange('current_loan_balance', e.target.value)}
+                value={editPropertyDetails.building_size || ''}
+                onChange={(e) => handlePropertyDetailChange('building_size', e.target.value)}
               />
             ) : (
-              <span className="text-sm font-semibold text-neutral-900">{formatCurrency(analysis.property_meta.current_loan_balance || 0)}</span>
+              <span className="text-sm font-semibold text-neutral-900">
+                {analysis.property_meta?.building_size ? analysis.property_meta.building_size.toLocaleString() : "-"}
+              </span>
             )}
+          </div>
+          <div className="bg-white p-4 flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium flex items-center">
+              Net Rentable Sq Ft
+              <WidgetTooltip
+                title="Net Rentable Square Footage (NRSF)"
+                description="Total livable or leasable space, calculated directly from the rent roll."
+                formulas={[{ label: "Calculation", formula: "Sum of unit_size for all extracted Rent Roll units" }]}
+                className="text-neutral-400 ml-1 hover:text-neutral-700"
+              />
+            </span>
+            <span className="text-sm font-semibold text-neutral-900">
+              {(analysis.rent_roll || []).reduce((acc, item) => acc + (Number(item.unit_size) || 0), 0).toLocaleString()}
+            </span>
           </div>
         </div>
       </div>
@@ -1339,16 +1366,16 @@ export default function UnderwritingDashboard({
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
                         {analysis.gating_reasons && analysis.gating_reasons.length > 0
-                          ? `Failed gating criteria: ${analysis.gating_reasons.join('; ')}`
-                          : 'All investment criteria met successfully.'}
+                          ? `The deal failed to meet the required gating criteria. Specifically: ${analysis.gating_reasons.join('; ')}. This indicates that fundamental investment parameters are not currently satisfied based on the provided financials.`
+                          : 'The property meets all preliminary investment criteria and financial thresholds. The provided documentation and current pro forma projections align with the strategic investment mandate.'}
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
                         {analysis.pass_fail_status === 'PASS'
-                          ? 'Deal proceeds to underwriting and due diligence.'
-                          : 'Immediate rejection unless mitigating factors or waivers are applied.'}
+                          ? 'The deal has been cleared to proceed to the formal underwriting and comprehensive due diligence phase. Teams can allocate resources to verify property condition, finalize debt structuring, and prepare investment committee memos.'
+                          : 'The transaction is flagged for immediate rejection. Deal teams must halt further resource allocation unless formal waivers are obtained or structural changes (e.g., price reduction, equity injection) are negotiated to mitigate the identified risks.'}
                       </p>
                     </div>
                   </div>
@@ -1367,13 +1394,13 @@ export default function UnderwritingDashboard({
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        Adjustments made to market rents, vacancy, and expense normalization.
+                        Pro forma NOI diverges from T-12 historicals due to automated normalization adjustments. The AI engine recalibrated projected revenues based on current market rents and stabilized vacancy assumptions, while simultaneously standardizing operating expenses (such as property taxes, insurance, and management fees) to reflect institutional operational standards.
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {noiChange >= 0 ? 'Increased' : 'Decreased'} NOI directly affects the valuation and loan amount sizing.
+                        {noiChange >= 0 ? 'An increased pro forma NOI enhances the underlying asset valuation, potentially allowing for maximum leverage and more favorable loan sizing. This provides a stronger foundation for target yield metrics.' : 'A decreased pro forma NOI directly reduces the capitalized valuation of the asset and compresses the maximum allowable loan amount sizing. Investors may need to renegotiate the purchase price or inject additional equity to maintain target leverage ratios.'}
                       </p>
                     </div>
                   </div>
@@ -1393,16 +1420,16 @@ export default function UnderwritingDashboard({
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
                         {(analysis.dscr || 0) >= 1.25
-                          ? 'Net Operating Income adequately covers the proposed debt service.'
-                          : 'Net Operating Income is insufficient to cover the proposed debt service.'}
+                          ? 'The projected stabilized Net Operating Income (NOI) provides a sufficient buffer to comfortably cover the proposed annualized debt service obligations, meeting or exceeding standard lender underwriting minimums (typically 1.20x - 1.25x).'
+                          : 'The projected stabilized Net Operating Income (NOI) falls below the minimum threshold required to safely service the proposed debt load. This indicates that operational cash flow is currently insufficient to meet periodic principal and interest payments without significant risk of shortfall.'}
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
                         {(analysis.dscr || 0) >= 1.25
-                          ? 'Acceptable risk profile for lenders and investors.'
-                          : 'High risk of default; requires lower loan amount or increased equity.'}
+                          ? 'The property presents an acceptable risk profile for debt financing. The healthy cash flow buffer supports favorable loan terms, protects investor distributions, and ensures compliance with standard debt yield and DSCR covenants.'
+                          : 'The severe default risk will likely trigger loan rejection under current terms. To proceed, the sponsor must structurally de-risk the deal by either negotiating a lower purchase price, significantly reducing the requested loan amount, securing lower interest rates, or injecting additional upfront equity.'}
                       </p>
                     </div>
                   </div>
@@ -1421,13 +1448,13 @@ export default function UnderwritingDashboard({
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        Based on purchase price of {formatCurrency(purchasePrice)} and Pro Forma NOI.
+                        The Entry Cap Rate is derived by dividing the stabilized Pro Forma Net Operating Income (NOI) by the stated purchase price of {formatCurrency(purchasePrice)}. This metric isolates the asset's unleveraged initial rate of return based purely on its expected operational cash generation capabilities.
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        Reflects the market pricing and initial yield. Compare with market benchmark of {formatPercent(analysis.deal_parameters?.exit_cap_rate || 0.06)}.
+                        This yield reflects the upfront market pricing relative to current operational performance. Investors should compare this entry yield against the established market exit benchmark of {formatPercent(analysis.deal_parameters?.exit_cap_rate || 0.06)} to gauge potential cap rate compression or expansion risk, which directly drives the terminal asset value and overall IRR viability.
                       </p>
                     </div>
                   </div>

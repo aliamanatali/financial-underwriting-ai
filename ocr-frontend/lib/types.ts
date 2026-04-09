@@ -129,6 +129,7 @@ export interface PropertyMeta {
   purchase_price: number;
   total_units: number;
   current_loan_balance?: number;
+  building_size?: number;
 }
 
 export interface RentRollItem {

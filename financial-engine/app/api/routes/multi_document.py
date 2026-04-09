@@ -2074,6 +2074,9 @@ async def _analyze_deal_package_logic(
         if "current_loan_balance" in package.manual_overrides:
             property_meta.current_loan_balance = float(package.manual_overrides["current_loan_balance"])
             logger.info(f"Applied manual override for current_loan_balance: {property_meta.current_loan_balance}")
+        if "building_size" in package.manual_overrides:
+            property_meta.building_size = int(package.manual_overrides["building_size"])
+            logger.info(f"Applied manual override for building_size: {property_meta.building_size}")
             
     historical_expenses: List[StandardizedExpense] = []
     

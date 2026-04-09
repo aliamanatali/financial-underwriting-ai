@@ -81,7 +81,8 @@ class GeminiClient:
         prompt: str,
         pdf_data: Optional[bytes] = None,
         use_fast_model: bool = False,
-        mime_type: str = "application/pdf"
+        mime_type: str = "application/pdf",
+        use_google_search: bool = False
     ) -> str:
         """
         Generates content using the Gemini model asynchronously, with optional PDF/Image data.
@@ -89,6 +90,10 @@ class GeminiClient:
         """
         # 1. Check Cache
         cache_key = self._generate_cache_key(prompt, pdf_data, use_fast_model)
+        # Add search flag to cache key to prevent collision
+        if use_google_search:
+            cache_key += "_search"
+            
         if redis_client.client:
             try:
                 cached_response = await redis_client.get(cache_key)
@@ -108,6 +113,11 @@ class GeminiClient:
         
         for attempt in range(self.max_retries):
             try:
+                # Configure generation with optional search grounding
+                config = types.GenerateContentConfig(temperature=0.0)
+                if use_google_search:
+                    config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
                 if pdf_data:
                     # Create parts for multimodal input
                     parts = [
@@ -118,7 +128,7 @@ class GeminiClient:
                         self.client.aio.models.generate_content(
                             model=model_name,
                             contents=parts,
-                            config=types.GenerateContentConfig(temperature=0.0)
+                            config=config
                         ),
                         timeout=self.timeout
                     )
@@ -127,7 +137,7 @@ class GeminiClient:
                         self.client.aio.models.generate_content(
                             model=model_name,
                             contents=prompt,
-                            config=types.GenerateContentConfig(temperature=0.0)
+                            config=config
                         ),
                         timeout=self.timeout
                     )
@@ -270,7 +280,8 @@ class GeminiClient:
         pydantic_schema: Optional[Type[BaseModel]] = None,
         expect_list: bool = True,
         use_fast_model: bool = False,
-        mime_type: str = "application/pdf"
+        mime_type: str = "application/pdf",
+        use_google_search: bool = False
     ) -> Any:
         """
         Generates structured data asynchronously. Returns List[Dict] if expect_list=True, else Dict.
@@ -282,11 +293,12 @@ class GeminiClient:
             expect_list: If True, ensures output is a list. If False, expects a single dict.
             use_fast_model: If True, uses the faster, cheaper model.
             mime_type: MIME type of the file (pdf or image)
+            use_google_search: If True, uses Google Search grounding
         
         Returns:
             List[Dict] if expect_list=True, Dict otherwise
         """
-        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model, mime_type=mime_type)
+        response_text = await self.generate_content_async(prompt, pdf_data, use_fast_model=use_fast_model, mime_type=mime_type, use_google_search=use_google_search)
         
         if response_text.startswith("An error occurred:"):
             logger.error(f"Gemini API Error in structured data generation: {response_text}")
