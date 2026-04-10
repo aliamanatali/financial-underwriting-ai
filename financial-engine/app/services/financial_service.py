@@ -1068,6 +1068,11 @@ class FinancialService:
                 logger.warning(f"Purchase Price missing. Using Implied Value ${implied_value:,.0f} for Loan calc.")
                 # We won't overwrite extracted Purchase Price to preserve data integrity,
                 # but we will use this implied loan amount.
+                
+                # FIX: We MUST update total_project_cost if we used implied value for loan!
+                # Otherwise equity_invested becomes negative and Cash-on-Cash drops to 0.
+                total_project_cost = implied_value + params.closing_costs + params.renovation_budget
+                analysis.total_project_cost = self._sanitize_value(total_project_cost)
 
         analysis.loan_amount = self._sanitize_value(loan_amount)
         self.audit_log_service.add_log(analysis, "Loan Amount", f"${loan_amount:,.0f}", "Calculation", method)
@@ -1171,10 +1176,11 @@ class FinancialService:
         cash_flows.append(year_5_cf)
         
         # 4. MOIC
-        # Formula: Sum(Positive Cash Flows) / Equity Invested
-        # Note: cash_flows[0] is negative equity.
+        # Formula: Sum(Positive Cash Flows) / Abs(Sum(Negative Cash Flows))
+        # Note: cash_flows[0] is negative equity. Any other negative CFs are capital calls.
         total_inflows = sum(cf for cf in cash_flows if cf > 0)
-        moic = total_inflows / equity_invested if equity_invested > 0 else 0
+        total_outflows = abs(sum(cf for cf in cash_flows if cf < 0))
+        moic = total_inflows / total_outflows if total_outflows > 0 else 0
         analysis.moic = self._sanitize_value(moic)
         
         # 5. IRR
@@ -1203,7 +1209,7 @@ class FinancialService:
         analysis.irr = self._sanitize_value(irr)
         
         self.audit_log_service.add_log(analysis, "IRR", f"{irr:.2%}", "Numpy Financial", "IRR of 5-Year Cash Flows")
-        self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Equity Invested")
+        self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Total Outflows (Incl. Cap Calls)")
 
     def _calculate_irr_simulation(self, analysis: UnderwritingAnalysis, growth_rate: float, exit_cap_rate: float) -> float:
         """

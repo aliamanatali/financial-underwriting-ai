@@ -1185,14 +1185,20 @@ export default function UnderwritingDashboard({
                     <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900">
-                    <span className="relative group/explanation cursor-help inline-block">
-                      ({formatCurrency(historicalTotalExpenses)})
+                    <span className="relative group/explanation cursor-help inline-flex flex-col items-end">
+                      <span>({formatCurrency(historicalTotalExpenses)})</span>
+                      <span className="text-[10px] text-neutral-400 font-normal mt-0.5">
+                        {((historicalTotalExpenses / (((analysis.rent_roll_summary?.total_annual_rent || 0) * periodMultiplier) || 1)) * 100).toFixed(1)}% of GPR
+                      </span>
                       <ExplanationTooltip metadata={analysis.explainability?.["Historical Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
                   <td className="px-6 py-3.5 text-right text-neutral-900">
-                    <span className="relative group/explanation cursor-help inline-block">
-                      ({formatCurrency(adjustedProFormaExpenses)})
+                    <span className="relative group/explanation cursor-help inline-flex flex-col items-end">
+                      <span>({formatCurrency(adjustedProFormaExpenses)})</span>
+                      <span className="text-[10px] text-neutral-400 font-normal mt-0.5">
+                        {((adjustedProFormaExpenses / (adjustedProFormaGPR || 1)) * 100).toFixed(1)}% of GPR
+                      </span>
                       <ExplanationTooltip metadata={analysis.explainability?.["Total Operating Expenses"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                     </span>
                   </td>
