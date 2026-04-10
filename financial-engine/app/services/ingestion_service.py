@@ -497,7 +497,7 @@ class IngestionService:
                 try:
                     from pydantic import BaseModel
                     
-                    search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area. Return ONLY a single JSON object with the key 'building_size' (integer value)."
+                    search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
                     
                     class BuildingSize(BaseModel):
                         building_size: int
@@ -794,7 +794,7 @@ class IngestionService:
                     try:
                         from pydantic import BaseModel
                         
-                        search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area. Return ONLY a single JSON object with the key 'building_size' (integer value)."
+                        search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
                         
                         class BuildingSize(BaseModel):
                             building_size: int

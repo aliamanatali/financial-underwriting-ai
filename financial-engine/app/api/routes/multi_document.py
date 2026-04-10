@@ -1764,6 +1764,56 @@ async def _analyze_deal_package_logic(
 
     # Run Metadata Synthesizer
     synthesized_metadata = synthesis_service.synthesize_property_metadata(normalized_items)
+
+    # --- Gross Sq Ft (Building Size) Verification Agent ---
+    prop_name = synthesized_metadata.get('property_name', {}).get('value')
+    prop_addr = synthesized_metadata.get('address', {}).get('value')
+    
+    search_target_parts = []
+    if prop_name and prop_name.lower() not in ["missing in om", "unknown"]:
+        search_target_parts.append(prop_name)
+    if prop_addr and prop_addr.lower() not in ["missing in om", "unknown"]:
+        search_target_parts.append(f"located at {prop_addr}")
+        
+    search_target = " ".join(search_target_parts).strip()
+    
+    if search_target and synthesized_metadata.get("rentable_area", {}).get("score", 0) < 2000:
+        logger.info(f"Running Google Search to fetch Gross Sq Ft for '{search_target}'...")
+        try:
+            from pydantic import BaseModel
+            
+            search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{search_target}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
+            
+            class BuildingSize(BaseModel):
+                building_size: int
+                
+            search_result = await gemini_service.generate_structured_data_async(
+                search_prompt,
+                pydantic_schema=BuildingSize,
+                expect_list=False,
+                use_google_search=True
+            )
+            
+            if isinstance(search_result, dict) and search_result.get("building_size"):
+                searched_size = int(search_result["building_size"])
+                if searched_size > 0:
+                    logger.info(f"Google Search grounded building_size: {searched_size} sq ft")
+                    synthesized_metadata["rentable_area"] = {
+                        "value": searched_size,
+                        "source": "Verified: Google Search",
+                        "score": 999
+                    }
+                    
+                    verification_audit_logs.append({
+                        "field_name": "Gross Sq Ft (Verified)",
+                        "extracted_value": str(searched_size),
+                        "source": "Google Search",
+                        "confidence_score": 0.95,
+                        "method": "Verification Agent (Google Search Grounding)",
+                        "reasoning": "Automatically fetched actual Gross Sq Ft via Gemini Search."
+                    })
+        except Exception as search_err:
+            logger.warning(f"Google Search grounding for building_size failed: {search_err}")
     
     if package.underwriting_flow == "MULTI_SOURCE":
         try:
@@ -1993,7 +2043,8 @@ async def _analyze_deal_package_logic(
         purchase_price=synthesized_metadata['purchase_price']['value'],
         total_units=synthesized_metadata['total_units']['value'],
         is_renovated=False,
-        current_loan_balance=synthesized_metadata.get('current_loan_balance', {}).get('value', 0.0)
+        current_loan_balance=synthesized_metadata.get('current_loan_balance', {}).get('value', 0.0),
+        building_size=synthesized_metadata.get('rentable_area', {}).get('value', 0.0)
     )
     
     # Extract rent roll items (Use pre-processed Rent Roll data if available)

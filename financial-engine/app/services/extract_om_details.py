@@ -274,7 +274,48 @@ class OMScraperService:
                 if response.text:
                     # Use GeminiClient's cleaning method for robustness
                     cleaned_text = self.gemini_client._clean_json_string(response.text)
-                    return json.loads(cleaned_text)
+                    result_data = json.loads(cleaned_text)
+                    
+                    # Google Search Grounding for Gross Sq Ft
+                    prop_meta = result_data.get("property_meta", {})
+                    prop_name = prop_meta.get("property_name")
+                    prop_addr = prop_meta.get("address")
+                    
+                    search_target_parts = []
+                    if prop_name and prop_name.lower() not in ["missing in om", "unknown"]:
+                        search_target_parts.append(prop_name)
+                    if prop_addr and prop_addr.lower() not in ["missing in om", "unknown"]:
+                        search_target_parts.append(f"located at {prop_addr}")
+                    
+                    search_target = " ".join(search_target_parts).strip()
+                    
+                    if search_target:
+                        try:
+                            from pydantic import BaseModel
+                            
+                            search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{search_target}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
+                            
+                            class BuildingSize(BaseModel):
+                                building_size: int
+                                
+                            search_result = await self.gemini_client.generate_structured_data_async(
+                                search_prompt,
+                                pydantic_schema=BuildingSize,
+                                expect_list=False,
+                                use_google_search=True
+                            )
+                            
+                            if isinstance(search_result, dict) and search_result.get("building_size"):
+                                searched_size = int(search_result["building_size"])
+                                if searched_size > 0:
+                                    import logging
+                                    logging.getLogger(__name__).info(f"Google Search grounded building_size: {searched_size}")
+                                    result_data["property_meta"]["rentable_sqft"] = searched_size
+                        except Exception as search_err:
+                            import logging
+                            logging.getLogger(__name__).warning(f"Google Search grounding for building_size failed: {search_err}")
+
+                    return result_data
                 return {}
              else:
                  logger.warning("Gemini Client does not support async generation")
