@@ -996,27 +996,69 @@ export default function UnderwritingDashboard({
               </div>
             </div>
 
-            {/* Loan Amount Panel */}
+            {/* Cost to Loan Ratio Panel */}
             <div className="group pt-2 border-t border-neutral-100">
               <div className="flex justify-between items-baseline mb-2">
-                <label className="text-xs font-medium text-neutral-600">Loan Amount</label>
-                <span className="text-sm font-semibold text-neutral-900">{formatCurrency(editParams.loan_amount ?? analysis.loan_amount ?? 0)}</span>
+                <label className="text-xs font-medium text-neutral-600">Cost to Loan Ratio (%)</label>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs text-neutral-500">{formatCurrency(editParams.loan_amount ?? analysis.loan_amount ?? 0)}</span>
+                  <span className="text-sm font-semibold text-neutral-900">
+                    {(() => {
+                      const currentPurchasePrice = isEditingPropertyDetails ? editPropertyDetails.purchase_price : (analysis.property_meta?.purchase_price || 0);
+                      const currentLoanAmt = editParams.loan_amount ?? analysis.loan_amount ?? 0;
+                      let ratio = 65;
+                      if (currentPurchasePrice > 0 && currentLoanAmt > 0) {
+                        ratio = (currentLoanAmt / currentPurchasePrice) * 100;
+                      }
+                      return ratio.toFixed(1);
+                    })()}%
+                  </span>
+                </div>
               </div>
               <input
                 type="range"
                 min="0"
-                max="10000000"
-                step="50000"
-                value={editParams.loan_amount ?? analysis.loan_amount ?? 0}
-                onChange={(e) => handleParamChange('loan_amount', e.target.value)}
+                max="100"
+                step="1"
+                value={(() => {
+                  const currentPurchasePrice = isEditingPropertyDetails ? editPropertyDetails.purchase_price : (analysis.property_meta?.purchase_price || 0);
+                  const currentLoanAmt = editParams.loan_amount ?? analysis.loan_amount ?? 0;
+                  let ratio = 65;
+                  if (currentPurchasePrice > 0 && currentLoanAmt > 0) {
+                    ratio = (currentLoanAmt / currentPurchasePrice) * 100;
+                  }
+                  return ratio;
+                })()}
+                onChange={(e) => {
+                  const ratio = parseFloat(e.target.value);
+                  const currentPurchasePrice = isEditingPropertyDetails ? editPropertyDetails.purchase_price : (analysis.property_meta?.purchase_price || 0);
+                  const newLoanAmt = currentPurchasePrice * (ratio / 100);
+                  handleParamChange('loan_amount', newLoanAmt.toString());
+                }}
                 className="w-full h-1.5 bg-neutral-100 rounded-full appearance-none cursor-pointer slider-thumb"
                 style={{
-                  background: `linear-gradient(to right, #171717 0%, #171717 ${((editParams.loan_amount ?? analysis.loan_amount ?? 0) / 10000000) * 100}%, #f5f5f5 ${((editParams.loan_amount ?? analysis.loan_amount ?? 0) / 10000000) * 100}%, #f5f5f5 100%)`
+                  background: `linear-gradient(to right, #171717 0%, #171717 ${(() => {
+                    const currentPurchasePrice = isEditingPropertyDetails ? editPropertyDetails.purchase_price : (analysis.property_meta?.purchase_price || 0);
+                    const currentLoanAmt = editParams.loan_amount ?? analysis.loan_amount ?? 0;
+                    let ratio = 65;
+                    if (currentPurchasePrice > 0 && currentLoanAmt > 0) {
+                      ratio = (currentLoanAmt / currentPurchasePrice) * 100;
+                    }
+                    return ratio;
+                  })()}%, #f5f5f5 ${(() => {
+                    const currentPurchasePrice = isEditingPropertyDetails ? editPropertyDetails.purchase_price : (analysis.property_meta?.purchase_price || 0);
+                    const currentLoanAmt = editParams.loan_amount ?? analysis.loan_amount ?? 0;
+                    let ratio = 65;
+                    if (currentPurchasePrice > 0 && currentLoanAmt > 0) {
+                      ratio = (currentLoanAmt / currentPurchasePrice) * 100;
+                    }
+                    return ratio;
+                  })()}%, #f5f5f5 100%)`
                 }}
               />
               <div className="flex justify-between text-[9px] text-neutral-400 mt-1.5">
-                <span>$0</span>
-                <span>$10M</span>
+                <span>0%</span>
+                <span>100%</span>
               </div>
             </div>
 
