@@ -18,128 +18,37 @@ export default function ExportButtons({ analysis, onAnalysisUpdate }: ExportButt
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const validateStudentHousingConfig = (analysis: UnderwritingAnalysis): boolean => {
-    // If no config object exists at all, it's invalid
-    if (!analysis.student_housing_config?.unit_type_configs) {
-        return false;
-    }
-
-    const configs = analysis.student_housing_config.unit_type_configs;
-
-    // Get all unique unit types from the rent roll that MUST be configured
-    const rentRollUnitTypes = Array.from(new Set(analysis.rent_roll.map(r => r.unit_type)));
-    
-    // Iterate over every REQUIRED unit type to ensure it has a valid config
-    for (const unitType of rentRollUnitTypes) {
-        const config = configs.find(c => c.unit_type === unitType);
-
-        // 1. Missing Config Check
-        if (!config) {
-            console.log(`Export Validation Failed: No config found for unit type "${unitType}"`);
-            return false;
-        }
-
-        // 2. Strict Bed & Price Check based on Occupancy Type
-        const occupancy = config.occupancy_type;
-        
-        if (!occupancy) {
-             console.log(`Export Validation Failed: Missing occupancy type for unit type "${unitType}"`);
-             return false;
-        }
-
-        if (occupancy === "Single") {
-            if (!config.beds_single || config.beds_single <= 0) {
-                console.log(`Export Validation Failed: Single occupancy requires 'beds_single' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-            if (!config.market_rent_single || config.market_rent_single <= 0) {
-                console.log(`Export Validation Failed: Single occupancy requires 'market_rent_single' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-        } else if (occupancy === "Double") {
-            if (!config.beds_double || config.beds_double <= 0) {
-                console.log(`Export Validation Failed: Double occupancy requires 'beds_double' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-            if (!config.market_rent_double || config.market_rent_double <= 0) {
-                console.log(`Export Validation Failed: Double occupancy requires 'market_rent_double' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-        } else if (occupancy === "Mixed") {
-            // For Mixed, we require both Single and Double configurations to be present
-            if (!config.beds_single || config.beds_single <= 0) {
-                console.log(`Export Validation Failed: Mixed occupancy requires 'beds_single' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-            if (!config.market_rent_single || config.market_rent_single <= 0) {
-                console.log(`Export Validation Failed: Mixed occupancy requires 'market_rent_single' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-            if (!config.beds_double || config.beds_double <= 0) {
-                console.log(`Export Validation Failed: Mixed occupancy requires 'beds_double' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-            if (!config.market_rent_double || config.market_rent_double <= 0) {
-                console.log(`Export Validation Failed: Mixed occupancy requires 'market_rent_double' > 0 for unit type "${unitType}"`);
-                return false;
-            }
-        } else {
-             // Unknown occupancy type
-             console.log(`Export Validation Failed: Unknown occupancy type "${occupancy}" for unit type "${unitType}"`);
-             return false;
-        }
-    }
-
-    return true;
-  };
-
   const handleExport = async (type: "excel" | "memo" | "om-proforma" | "rent-roll") => {
     
-    // Validation for Excel Export regarding Student Housing / Unit Stabilized Info
-    // Applies only to standalone Rent Roll Export
-    if (type === "rent-roll") {
-        const isValid = validateStudentHousingConfig(analysis);
-        
-        if (!isValid) {
-            // Construct redirect URL
-            // Redirect to dashboard -> Rent Roll Widget -> Unit Breakdown Stabilized Tab -> Edit Mode
-            // Add a timestamp to ensure the URL changes and triggers effects even if we are already on the dashboard (though we are on export tab here)
-            const redirectUrl = `/analysis/${analysis.document_id}?tab=dashboard&rentRollTab=unitBreakdownStabilized&rentRollEditMode=true&validationTrigger=${Date.now()}`;
-            
-            setError("Missing Unit Stabilized Information. Redirecting to configuration...");
-            
-            // Short delay to let user see error
-            setTimeout(() => {
-                router.push(redirectUrl);
-            }, 1000);
-            
-            return;
-        }
-    }
-
     setIsExporting(type as "excel" | "memo" | "om-proforma");
     setError(null);
     setSuccess(null);
 
+    // Remove stabilized_rent from rent_roll for export payload
+    const exportPayload = { ...analysis };
+    if (exportPayload.rent_roll) {
+        exportPayload.rent_roll = exportPayload.rent_roll.map(({ stabilized_rent, ...rest }: any) => rest);
+    }
+
     try {
       if (type === "excel") {
         // Download Standard Underwriting Model
-        await apiClient.downloadExport(analysis, "excel");
+        await apiClient.downloadExport(exportPayload, "excel");
         
         // Also download OM Proforma if available
-        if (analysis.om_proforma && analysis.om_proforma.length > 0) {
-            await apiClient.downloadExport(analysis, "om-proforma");
+        if (exportPayload.om_proforma && exportPayload.om_proforma.length > 0) {
+            await apiClient.downloadExport(exportPayload, "om-proforma");
         }
         
         setSuccess("Excel models downloaded successfully!");
       } else if (type === "om-proforma") {
          // Deprecated standalone button logic - kept for type safety but unreachable via UI
-         if (analysis.om_proforma && analysis.om_proforma.length > 0) {
-          await apiClient.downloadExport(analysis, "om-proforma");
+         if (exportPayload.om_proforma && exportPayload.om_proforma.length > 0) {
+          await apiClient.downloadExport(exportPayload, "om-proforma");
           setSuccess("OM Proforma extracted data downloaded successfully!");
         }
       } else {
-        await apiClient.downloadExport(analysis, type);
+        await apiClient.downloadExport(exportPayload, type);
         setSuccess("Investment memo downloaded successfully!");
       }
     } catch (err) {

@@ -620,68 +620,7 @@ export default function RentRollWidget({
     }
   };
 
-  const validateConfigForExport = (): boolean => {
-      // Logic mirrors the strict checks in ExportButtons.tsx
-      if (!studentHousingConfig?.unit_type_configs) return false;
-
-      // Get unique unit types from current items
-      const unitTypes = Array.from(new Set(items.map(i => i.unit_type)));
-      
-      for (const unitType of unitTypes) {
-          // Check against the merged item state first (as it reflects unsaved edits or current view)
-          // OR check against the config object.
-          // Since we are exporting what is currently in 'items' (plus config for fields not in items),
-          // we should verify the data we are about to export.
-          
-          // However, handleExport constructs exportData using studentHousingConfig.
-          // We should validate the studentHousingConfig we are about to send (or the items if merged).
-          // Let's check the items directly as they are the source of truth for the export payload
-          
-          // Actually, handleExport uses 'items' for rent_roll lines, but 'studentHousingConfig' for the config object.
-          // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
-          // So we must validate 'studentHousingConfig'.
-          
-          const config = studentHousingConfig.unit_type_configs.find(c => (c.unit_type || "").trim() === (unitType || "").trim());
-          
-          if (!config) {
-              console.log(`Validation Failed: No config for ${unitType}`);
-              return false;
-          }
-          
-          if (!config.bed_count || config.bed_count <= 0) {
-               console.log(`Validation Failed: Invalid bed count for ${unitType}`);
-               return false;
-          }
-          
-          const occupancy = config.occupancy_type;
-          if (!occupancy) {
-               console.log(`Validation Failed: No occupancy for ${unitType}`);
-               return false;
-          }
-          
-          if (occupancy === "Single") {
-              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
-          } else if (occupancy === "Double") {
-              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
-          } else if (occupancy === "Mixed") {
-              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
-              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
-          }
-      }
-      return true;
-  };
-
   const handleExport = async () => {
-    // Validate before export
-    if (!validateConfigForExport()) {
-        setWarningMessage("Cannot export Rent Roll.\n\nUnit Breakdown Stabilized information is incomplete.\nPlease ensure Bed Counts, Occupancy Types, and corresponding Prices are fully configured for all unit types.");
-        setShowWarning(true);
-        // Switch to the tab to help user
-        setActiveTab("unitBreakdownStabilized");
-        setIsEditing(true);
-        return;
-    }
-
     // Construct the full analysis object needed for export
     // The backend expects an UnderwritingAnalysis object
     // Start with the full analysis object if available, or a minimal one
@@ -702,11 +641,10 @@ export default function RentRollWidget({
     const exportData = {
         ...baseAnalysis,
         document_id: packageId,
-        rent_roll: visibleItems.map(({ id, ...rest }) => ({
+        rent_roll: visibleItems.map(({ id, stabilized_rent, ...rest }) => ({
             ...rest,
             unit_size: parseFloat(String(rest.unit_size)) || 0,
             current_rent: parseFloat(String(rest.current_rent)) || 0,
-            stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
             market_rent: parseFloat(String(rest.market_rent)) || 0,
         })),
         rent_roll_summary: summary || localSummary,

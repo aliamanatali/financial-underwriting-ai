@@ -356,6 +356,7 @@ export default function FilePreviewModal({ isOpen, onClose, fileId, fileName, pa
                     <div className="w-full h-full bg-white shadow-lg rounded-lg overflow-hidden flex flex-col">
                         <div className="ag-theme-alpine flex-1 w-full">
                             <AgGridReact
+                                theme="legacy"
                                 rowData={excelData}
                                 columnDefs={excelColumns}
                                 defaultColDef={{

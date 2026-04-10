@@ -145,6 +145,11 @@ export default function RentRollExportModal({
         student_housing_config: config,
       };
 
+      // Strip stabilized_rent
+      if (exportPayload.rent_roll) {
+          exportPayload.rent_roll = exportPayload.rent_roll.map(({ stabilized_rent, ...rest }: any) => rest);
+      }
+
       // 1. Save the updated configuration to the backend first
       // This ensures persistence for future sessions
       await apiClient.updateAnalysis(analysis.document_id, exportPayload);
