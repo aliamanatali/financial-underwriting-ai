@@ -631,7 +631,7 @@ export default function UnderwritingDashboard({
               <WidgetTooltip
                 title="Gross Square Footage (GSF)"
                 description="Total building area extracted from the Offering Memorandum or property overview."
-                formulas={[{ label: "Source", formula: "Extracted from document headers (PropertyMeta)" }]}
+                formulas={[{ label: "Source", formula: "Extracted from Google Search" }]}
                 className="text-neutral-400 ml-1 hover:text-neutral-700"
               />
             </span>
