@@ -1256,8 +1256,16 @@ export default function UnderwritingDashboard({
                   </td>
                 </tr>
                 <tr className="bg-neutral-50/30 font-semibold border-t border-neutral-200">
-                  <td className="px-6 py-4 text-neutral-900 group/explanation relative cursor-help">
-                    Net Operating Income
+                  <td className="px-6 py-4 text-neutral-900 group/explanation relative">
+                    <div className="flex items-center">
+                      Net Operating Income
+                      <WidgetTooltip 
+                        title="Net Operating Income (NOI)"
+                        description="Total Revenue minus Operating Expenses (excludes debt service)."
+                        formulas={[{ label: "NOI", formula: "Gross Revenue - Total Expenses" }]}
+                        className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+                      />
+                    </div>
                     <ExplanationTooltip metadata={analysis.explainability?.["Net Operating Income (NOI)"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-4 text-right text-rose-600">
@@ -1275,8 +1283,16 @@ export default function UnderwritingDashboard({
                   <td className="px-6 py-4 text-right text-emerald-600 text-xs">{noiChangePercent.toFixed(1)}%</td>
                 </tr>
                 <tr className="group hover:bg-neutral-50 transition-colors">
-                  <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative cursor-help">
-                    Cap Rate
+                  <td className="px-6 py-3.5 text-neutral-600 font-medium group/explanation relative">
+                    <div className="flex items-center">
+                      Cap Rate
+                      <WidgetTooltip 
+                        title="Capitalization Rate"
+                        description="The rate of return on a real estate investment property based on the income that the property is expected to generate."
+                        formulas={[{ label: "Cap Rate", formula: "Net Operating Income / Asset Value" }]}
+                        className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+                      />
+                    </div>
                     <ExplanationTooltip metadata={analysis.explainability?.["Entry Cap Rate"]} analysis={analysis} selectedPeriod={selectedPeriod} />
                   </td>
                   <td className="px-6 py-3.5 text-right text-rose-600 font-medium">
@@ -1319,7 +1335,13 @@ export default function UnderwritingDashboard({
         <div className="grid grid-cols-2 gap-6">
           <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
             <div className="text-slate-700 text-xs mb-2 flex items-center uppercase tracking-wide font-semibold">
-              NOI Upside <InfoTooltip term="Upside" />
+              NOI Upside
+              <WidgetTooltip 
+                title="NOI Upside"
+                description="The difference between the projected Pro Forma Net Operating Income and the historical Net Operating Income."
+                formulas={[{ label: "NOI Upside", formula: "Pro Forma NOI - Historical NOI" }]}
+                className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+              />
             </div>
             <p className={`text-3xl font-extrabold ${noiChange >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {formatCurrency(noiChange)}
@@ -1330,7 +1352,13 @@ export default function UnderwritingDashboard({
           </div>
           <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
             <div className="text-slate-700 text-xs mb-2 flex items-center uppercase tracking-wide font-semibold">
-              Cap Rate Upside <InfoTooltip term="Upside" />
+              Cap Rate Upside
+              <WidgetTooltip 
+                title="Cap Rate Upside"
+                description="The difference between the projected Pro Forma Cap Rate and the historical Cap Rate."
+                formulas={[{ label: "Cap Rate Upside", formula: "Pro Forma Cap Rate - Historical Cap Rate" }]}
+                className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+              />
             </div>
             <p className={`text-3xl font-extrabold ${capRateChange >= 0 ? 'text-[#FF5E00]' : 'text-rose-600'}`}>
               {(capRateChange * 100).toFixed(2)}%
@@ -1407,30 +1435,36 @@ export default function UnderwritingDashboard({
 
                 {/* Detailed Analysis Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Deal Viability */}
+                {/* Risk Profile */}
                 <div className="bg-white rounded-lg p-4 border border-neutral-200 shadow-sm">
-                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide">Deal Viability</h4>
+                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide flex items-center">
+                    Risk Profile
+                    <WidgetTooltip 
+                      title="Risk Profile & Debt Yield"
+                      description="Assesses structural risk by comparing Net Operating Income against the total loan amount (Debt Yield)."
+                      formulas={[{ label: "Debt Yield", formula: "Net Operating Income / Loan Amount" }]}
+                      className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+                    />
+                  </h4>
                   <div className="space-y-3">
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">AI Decision</span>
-                      <p className={`text-xs font-semibold mt-1 ${analysis.pass_fail_status === 'PASS' ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {analysis.pass_fail_status === 'PASS' ? 'Approved' : 'Declined / Requires Waiver'}
+                      <p className={`text-xs font-semibold mt-1 ${(analysis.debt_yield || 0) >= 0.08 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {(analysis.debt_yield || 0) >= 0.08 ? 'Moderate/Low Risk' : 'Elevated Risk Profile'}
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {analysis.gating_reasons && analysis.gating_reasons.length > 0
-                          ? `The deal failed to meet the required gating criteria. Specifically: ${analysis.gating_reasons.join('; ')}. This indicates that fundamental investment parameters are not currently satisfied based on the provided financials.`
-                          : 'The property meets all preliminary investment criteria and financial thresholds. The provided documentation and current pro forma projections align with the strategic investment mandate.'}
+                        Risk is evaluated based on the current projected Debt Yield of {((analysis.debt_yield || 0) * 100).toFixed(2)}%. A strong debt yield indicates that the property's Net Operating Income represents a sufficient percentage of the outstanding loan balance, mitigating default risks independent of interest rate fluctuations.
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {analysis.pass_fail_status === 'PASS'
-                          ? 'The deal has been cleared to proceed to the formal underwriting and comprehensive due diligence phase. Teams can allocate resources to verify property condition, finalize debt structuring, and prepare investment committee memos.'
-                          : 'The transaction is flagged for immediate rejection. Deal teams must halt further resource allocation unless formal waivers are obtained or structural changes (e.g., price reduction, equity injection) are negotiated to mitigate the identified risks.'}
+                        {(analysis.debt_yield || 0) >= 0.08
+                          ? 'The robust debt yield metric strongly supports refinancing or exit flexibility. The asset can likely absorb market cap rate expansions or minor income disruptions without violating typical lender covenants.'
+                          : 'The lower debt yield suggests the deal is highly sensitive to exit cap rate expansion or income shortfalls. Refinancing at maturity may be challenging, potentially requiring sponsor capital calls to pay down principal.'}
                       </p>
                     </div>
                   </div>
@@ -1438,7 +1472,15 @@ export default function UnderwritingDashboard({
 
                 {/* Operational Efficiency (NOI) */}
                 <div className="bg-white rounded-lg p-4 border border-neutral-200 shadow-sm">
-                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide">Operational Efficiency (NOI)</h4>
+                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide flex items-center">
+                    Operational Efficiency (NOI)
+                    <WidgetTooltip 
+                      title="Net Operating Income (NOI)"
+                      description="Total Revenue minus Operating Expenses (excludes debt service)."
+                      formulas={[{ label: "NOI", formula: "Gross Revenue - Total Expenses" }]}
+                      className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+                    />
+                  </h4>
                   <div className="space-y-3">
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">AI Decision</span>
@@ -1492,7 +1534,15 @@ export default function UnderwritingDashboard({
 
                 {/* Valuation (Cap Rate) */}
                 <div className="bg-white rounded-lg p-4 border border-neutral-200 shadow-sm">
-                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide">Valuation (Cap Rate)</h4>
+                  <h4 className="text-xs font-bold text-neutral-900 mb-3 uppercase tracking-wide flex items-center">
+                    Valuation (Cap Rate)
+                    <WidgetTooltip 
+                      title="Capitalization Rate"
+                      description="The rate of return on a real estate investment property based on the income that the property is expected to generate."
+                      formulas={[{ label: "Cap Rate", formula: "Net Operating Income / Asset Value" }]}
+                      className="ml-1.5 text-neutral-400 hover:text-neutral-700 cursor-help"
+                    />
+                  </h4>
                   <div className="space-y-3">
                     <div>
                       <span className="text-[10px] text-neutral-500 uppercase tracking-wide font-medium">AI Decision</span>

@@ -21,9 +21,7 @@ class FinancialService:
             reasons.append(f"Unit count FAIL: {unit_count} units is outside the range of {params.min_unit_count}-{params.max_unit_count} units.")
         
         loan_amount = analysis.property_meta.current_loan_balance or params.loan_amount
-        if loan_amount < 5_000_000:
-            status = "FAIL"
-            reasons.append(f"Loan amount FAIL: ${loan_amount:,.0f} is below minimum of $5,000,000.")
+        # Removed loan amount FAIL gating logic
         
         year_built = analysis.property_meta.year_built
         if year_built < params.max_build_year and not analysis.property_meta.is_renovated:
