@@ -355,13 +355,11 @@ class FinancialService:
             else:
                 estimated_loan = purchase_price * params.ltv
                 
-            if estimated_loan < params.min_loan_amount:
-                status = "FAIL"
-                reasons.append(f"Loan amount FAIL: Estimated loan ${estimated_loan:,.0f} is below minimum of ${params.min_loan_amount:,.0f}.")
+            # Removed loan amount FAIL gating logic
         elif explicit_loan is None and purchase_price == 0:
              # Case where we have NO info to estimate loan
-             status = "FAIL"
-             reasons.append(f"Loan amount FAIL: Could not calculate loan (missing Purchase Price) and no manual Loan Amount provided.")
+             # Removed loan amount FAIL gating logic
+             pass
         
         # FINAL OVERRIDE: Never block analysis completely on data checks.
         # We want to see the report even if it's "bad".
