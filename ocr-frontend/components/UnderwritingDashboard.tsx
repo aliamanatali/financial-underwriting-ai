@@ -384,6 +384,13 @@ export default function UnderwritingDashboard({
       ...prev,
       [key]: numValue
     }));
+
+    if (key === 'purchase_price') {
+      setEditParams(prev => ({
+        ...prev,
+        loan_amount: numValue * 0.65
+      }));
+    }
   };
 
   const handleSavePropertyDetails = async () => {
