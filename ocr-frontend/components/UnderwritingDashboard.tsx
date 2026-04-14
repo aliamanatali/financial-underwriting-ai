@@ -311,8 +311,9 @@ export default function UnderwritingDashboard({
     setEditParams(analysis.deal_parameters || editParams);
   };
 
-  const getStatusDisplay = (status: string) => {
-    if (status === "PASS") {
+  const getStatusDisplay = (commentary?: string) => {
+    const isRejected = commentary && /(reject|fail)/i.test(commentary);
+    if (!isRejected) {
       return {
         text: "CRITERIA MET",
         color: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -745,9 +746,9 @@ export default function UnderwritingDashboard({
               </div>
               <p className="text-xs text-neutral-500">Analysis based on Offering Memorandum and Rent Roll.</p>
             </div>
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${getStatusDisplay(analysis.pass_fail_status).color}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${analysis.pass_fail_status === 'PASS' ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
-              <span className="text-[11px] font-semibold uppercase tracking-wide">Qualification Status: {getStatusDisplay(analysis.pass_fail_status).text}</span>
+            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border ${getStatusDisplay(analysis.analyst_commentary).color}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${!/(reject|fail)/i.test(analysis.analyst_commentary || "") ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
+              <span className="text-[11px] font-semibold uppercase tracking-wide">Qualification Status: {getStatusDisplay(analysis.analyst_commentary).text}</span>
             </div>
           </div>
 

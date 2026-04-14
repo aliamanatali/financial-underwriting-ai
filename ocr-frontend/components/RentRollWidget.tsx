@@ -295,6 +295,7 @@ export default function RentRollWidget({
 
   // Map of Row ID -> { fieldName: errorMessage }
   const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>({});
+  const [initialPayloadStr, setInitialPayloadStr] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -475,8 +476,55 @@ export default function RentRollWidget({
     handleItemChangeById(id, field, numericValue);
   };
 
+  const generatePayload = (currentItems: EditableRentRollItem[]) => {
+      const cleanItems: RentRollItem[] = currentItems.map(({ id, ...rest }) => ({
+        ...rest,
+        unit_size: parseFloat(String(rest.unit_size)) || 0,
+        current_rent: parseFloat(String(rest.current_rent)) || 0,
+        stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+        market_rent: parseFloat(String(rest.market_rent)) || 0,
+        deposit: parseFloat(String(rest.deposit)) || 0,
+      }));
+
+      const uniqueUnitTypes = Array.from(new Set(currentItems.map(i => i.unit_type)));
+      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
+          const item = currentItems.find(i => i.unit_type === unitType);
+          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
+            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
+          );
+          
+          if (item) {
+              return {
+                  unit_type: unitType,
+                  beds_single: item.beds_single ?? existingConfig?.beds_single,
+                  beds_double: item.beds_double ?? existingConfig?.beds_double,
+                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
+                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
+                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
+                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
+                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
+              };
+          }
+          return existingConfig || {
+              unit_type: unitType,
+              bed_count: 1,
+              occupancy_type: "Single",
+              unit_config_label: "Single"
+          };
+      });
+
+      return {
+          rent_roll: cleanItems,
+          student_housing_config: {
+              ...(studentHousingConfig || { unit_type_configs: [] }),
+              unit_type_configs: newUnitTypeConfigs
+          }
+      };
+  };
+
   const handleEdit = () => {
     setIsEditing(true);
+    setInitialPayloadStr(JSON.stringify(generatePayload(items)));
     // Validate all items when entering edit mode
     const initialErrors: Record<string, Record<string, string>> = {};
       items.forEach(item => {
@@ -511,15 +559,6 @@ export default function RentRollWidget({
   const handleSave = async () => {
     console.log("RentRollWidget: handleSave started");
     setIsSaving(true);
-
-    const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
-      ...rest,
-      unit_size: parseFloat(String(rest.unit_size)) || 0,
-      current_rent: parseFloat(String(rest.current_rent)) || 0,
-      stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
-      market_rent: parseFloat(String(rest.market_rent)) || 0,
-      deposit: parseFloat(String(rest.deposit)) || 0,
-    }));
 
     if (activeTab === 'details') {
       let errorCount = 0;
@@ -565,45 +604,15 @@ export default function RentRollWidget({
     setRowErrors({});
 
     try {
-      const payload: any = { rent_roll: cleanItems };
+      const payload: any = generatePayload(items);
+      const currentPayloadStr = JSON.stringify(payload);
       
-      // Construct unit_type_configs from current items to ensure we capture all unit types
-      // even if they weren't in the original config or if it was empty.
-      const uniqueUnitTypes = Array.from(new Set(items.map(i => i.unit_type)));
-      
-      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
-          const item = items.find(i => i.unit_type === unitType);
-          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
-            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
-          );
-          
-          if (item) {
-              // Priority: Item values > Existing Config > Defaults
-              return {
-                  unit_type: unitType,
-                  beds_single: item.beds_single ?? existingConfig?.beds_single,
-                  beds_double: item.beds_double ?? existingConfig?.beds_double,
-                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
-                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
-                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
-                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
-                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
-              };
-          }
-          return existingConfig || {
-              unit_type: unitType,
-              bed_count: 1,
-              occupancy_type: "Single",
-              unit_config_label: "Single"
-          };
-      });
-
-      const updatedConfig = {
-          ...(studentHousingConfig || { unit_type_configs: [] }),
-          unit_type_configs: newUnitTypeConfigs
-      };
-      
-      payload.student_housing_config = updatedConfig;
+      if (initialPayloadStr === currentPayloadStr) {
+          console.log("RentRollWidget: No changes detected, skipping update");
+          setIsEditing(false);
+          setIsSaving(false);
+          return;
+      }
 
       console.log("RentRollWidget: Sending update payload", payload);
       await apiClient.updateManualOverrides(packageId, payload);

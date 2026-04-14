@@ -404,8 +404,9 @@ export default function AnalysisResultPage() {
     );
   }
 
-  const getStatusDisplay = (status: string) => {
-    if (status === "PASS") {
+  const getStatusDisplay = (commentary?: string) => {
+    const isRejected = commentary && /(reject|fail)/i.test(commentary);
+    if (!isRejected) {
       return {
         text: "CRITERIA MET",
         color: "bg-emerald-50 text-emerald-700 border-emerald-100",
@@ -463,8 +464,8 @@ export default function AnalysisResultPage() {
                 <h1 className="text-sm font-semibold text-neutral-900">
                   {analysis.property_meta?.address || 'Financial Analysis'}
                 </h1>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${getStatusDisplay(analysis.pass_fail_status).color}`}>
-                  {getStatusDisplay(analysis.pass_fail_status).text}
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${getStatusDisplay(analysis.analyst_commentary).color}`}>
+                  {getStatusDisplay(analysis.analyst_commentary).text}
                 </span>
               </div>
             </div>
