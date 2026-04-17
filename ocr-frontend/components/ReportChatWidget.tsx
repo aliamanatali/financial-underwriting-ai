@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MessageCircleIcon, XIcon, SendIcon, SparklesIcon, ChevronDownIcon, ChevronUpIcon } from "@/assets/icons";
+import { SparklesIcon, ChevronDownIcon, ChevronUpIcon, SendIcon } from "@/assets/icons";
 import { apiClient } from "@/lib/api";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -23,13 +23,9 @@ export default function ReportChatWidget({ documentId, isExpanded = false, onOpe
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isOpen]);
+  useEffect(() => { scrollToBottom(); }, [messages, isOpen]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,37 +38,31 @@ export default function ReportChatWidget({ documentId, isExpanded = false, onOpe
 
     try {
       const stream = apiClient.chatWithReportStream(documentId, [...messages, userMessage]);
-      
       let fullResponse = "";
       let isFirstChunk = true;
 
       for await (const chunk of stream) {
         fullResponse += chunk;
-
         if (isFirstChunk) {
-            isFirstChunk = false;
-            setIsLoading(false);
-            setMessages((prev) => [...prev, { role: "assistant", content: fullResponse }]);
+          isFirstChunk = false;
+          setIsLoading(false);
+          setMessages((prev) => [...prev, { role: "assistant", content: fullResponse }]);
         } else {
-            setMessages((prev) => {
-              const newMessages = [...prev];
-              const lastMsg = newMessages[newMessages.length - 1];
-              if (lastMsg.role === "assistant") {
-                lastMsg.content = fullResponse;
-              }
-              return newMessages;
-            });
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const last = newMessages[newMessages.length - 1];
+            if (last.role === "assistant") last.content = fullResponse;
+            return newMessages;
+          });
         }
       }
-    } catch (error) {
-      console.error("Chat error:", error);
+    } catch {
       setMessages((prev) => {
-          const newMessages = [...prev];
-          const lastMsg = newMessages[newMessages.length - 1];
-          if (lastMsg.role === "assistant" && !lastMsg.content) {
-             lastMsg.content = "I apologize, but I encountered an error processing your request. Please try again.";
-          }
-          return newMessages;
+        const newMessages = [...prev];
+        const last = newMessages[newMessages.length - 1];
+        if (last.role === "assistant" && !last.content)
+          last.content = "I apologize — I encountered an error. Please try again.";
+        return newMessages;
       });
     } finally {
       setIsLoading(false);
@@ -80,77 +70,63 @@ export default function ReportChatWidget({ documentId, isExpanded = false, onOpe
   };
 
   return (
-    <div className={`fixed bottom-6 right-6 z-50 flex flex-col items-end transition-all duration-300 ${isOpen ? 'w-[400px]' : 'w-auto'}`}>
-      
+    <div className={`fixed bottom-6 right-6 z-50 flex flex-col items-end transition-all duration-300 ${isOpen ? "w-[400px]" : "w-auto"}`}>
+
       {/* Chat Window */}
       {isOpen && (
-        <div className="w-full h-[600px] bg-white rounded-2xl shadow-2xl border border-neutral-200 flex flex-col overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-300 mb-4">
+        <div className="w-full h-[600px] bg-white rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.6)] border border-[#E2E8F0] flex flex-col overflow-hidden mb-4">
+
           {/* Header */}
-          <div className="h-14 bg-neutral-900 flex items-center justify-between px-4 shrink-0">
-            <div className="flex items-center gap-2 text-white">
-              <SparklesIcon className="w-5 h-5 text-amber-400" />
-              <h3 className="font-medium">Financial Assistant</h3>
+          <div className="h-14 bg-[#F1F5F9] border-b border-[#E2E8F0] flex items-center justify-between px-4 shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-[rgba(249,115,22,0.12)] rounded-lg">
+                <SparklesIcon className="w-4 h-4 text-[#F97316]" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-[#0F172A] leading-tight">Financial Assistant</h3>
+                <p className="text-[9px] text-[#64748B] uppercase tracking-widest">AI Powered</p>
+              </div>
             </div>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  onOpenChange?.(false);
-                }}
-                className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"
-              >
-                <ChevronDownIcon className="w-5 h-5" />
-              </button>
-            </div>
+            <button
+              onClick={() => { setIsOpen(false); onOpenChange?.(false); }}
+              className="p-1.5 text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-lg transition-colors"
+              aria-label="Collapse chat"
+            >
+              <ChevronDownIcon className="w-5 h-5" />
+            </button>
           </div>
 
-          {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-neutral-50/50">
+          {/* Messages area */}
+          <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3 bg-[#F8FAFC]">
             {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-neutral-500">
-                <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mb-3">
-                  <SparklesIcon className="w-6 h-6 text-amber-600" />
+              <div className="h-full flex flex-col items-center justify-center text-center p-6">
+                <div className="w-12 h-12 bg-[rgba(249,115,22,0.12)] rounded-full flex items-center justify-center mb-3 border border-[rgba(249,115,22,0.2)]">
+                  <SparklesIcon className="w-6 h-6 text-[#F97316]" />
                 </div>
-                <p className="text-xs font-medium text-neutral-900 mb-1">
-                  How can I help with this report?
+                <p className="text-xs font-semibold text-[#0F172A] mb-1">How can I help with this report?</p>
+                <p className="text-xs text-[#64748B] max-w-[200px] leading-relaxed">
+                  Ask about key metrics, risks, or get a deal summary.
                 </p>
-                <p className="text-xs text-neutral-400 max-w-[200px]">
-                  Ask about key metrics, risks, or get a summary of the deal.
-                </p>
-                <div className="mt-6 grid grid-cols-1 gap-2 w-full">
-                  <button 
-                    onClick={() => {
-                        setInputValue("Summarize the key risks in this deal");
-                    }}
-                    className="text-xs bg-white border border-neutral-200 p-2 rounded-lg hover:border-amber-400 hover:text-amber-700 transition-colors text-left"
-                  >
-                    "Summarize the key risks"
-                  </button>
-                  <button 
-                     onClick={() => {
-                        setInputValue("Explain the pro forma assumptions");
-                    }}
-                    className="text-xs bg-white border border-neutral-200 p-2 rounded-lg hover:border-amber-400 hover:text-amber-700 transition-colors text-left"
-                  >
-                    "Explain pro forma assumptions"
-                  </button>
+                <div className="mt-5 flex flex-col gap-2 w-full">
+                  {["Summarize the key risks in this deal", "Explain the pro forma assumptions", "What is the IRR and why?"].map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => setInputValue(q)}
+                      className="text-xs bg-white border border-[#E2E8F0] hover:border-[#F97316]/40 hover:text-[#F97316] p-2.5 rounded-lg transition-colors text-left text-[#475569]"
+                    >
+                      &ldquo;{q}&rdquo;
+                    </button>
+                  ))}
                 </div>
               </div>
             ) : (
               messages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex ${
-                    msg.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-                >
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-xs ${
-                      msg.role === "user"
-                        ? "bg-neutral-900 text-white rounded-tr-none"
-                        : "bg-white border border-neutral-200 text-neutral-800 shadow-sm rounded-tl-none"
-                    }`}
-                  >
+                <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-[rgba(249,115,22,0.12)] text-[#0F172A] border border-[rgba(249,115,22,0.2)] rounded-tr-none"
+                      : "bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0] rounded-tl-none"
+                  }`}>
                     {msg.role === "assistant" ? (
                       <MarkdownRenderer content={msg.content} />
                     ) : (
@@ -160,13 +136,15 @@ export default function ReportChatWidget({ documentId, isExpanded = false, onOpe
                 </div>
               ))
             )}
+
+            {/* Typing indicator */}
             {isLoading && (
               <div className="flex justify-start">
-                <div className="bg-white border border-neutral-200 rounded-2xl rounded-tl-none px-4 py-3 shadow-sm">
+                <div className="bg-[#F1F5F9] border border-[#E2E8F0] rounded-2xl rounded-tl-none px-4 py-3">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                    <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                    <div className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"></div>
+                    <span className="w-1.5 h-1.5 bg-[#CBD5E1] rounded-full animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-1.5 h-1.5 bg-[#CBD5E1] rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-1.5 h-1.5 bg-[#CBD5E1] rounded-full animate-bounce" />
                   </div>
                 </div>
               </div>
@@ -174,43 +152,43 @@ export default function ReportChatWidget({ documentId, isExpanded = false, onOpe
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
-          <div className="p-4 bg-white border-t border-neutral-100">
+          {/* Input area */}
+          <div className="p-3 bg-white border-t border-[#E2E8F0]">
             <form onSubmit={handleSubmit} className="relative">
               <input
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="Ask about this report..."
-                className="w-full pl-4 pr-12 py-3 bg-neutral-50 border border-neutral-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-900 transition-all text-xs"
+                placeholder="Ask about this report…"
+                className="w-full pl-4 pr-12 py-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-1 focus:ring-[#F97316]/40 focus:border-[#F97316]/40 transition-all"
               />
               <button
                 type="submit"
                 disabled={!inputValue.trim() || isLoading}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-neutral-900 text-white rounded-lg hover:bg-neutral-800 disabled:opacity-50 disabled:hover:bg-neutral-900 transition-colors"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-[#F97316] hover:bg-[#EA6C0A] text-white rounded-lg disabled:opacity-30 disabled:pointer-events-none transition-all"
+                aria-label="Send message"
               >
                 <SendIcon className="w-4 h-4" />
               </button>
             </form>
-            <div className="text-[10px] text-center text-neutral-400 mt-2">
-                AI can make mistakes. Verify important financial data.
-            </div>
+            <p className="text-[9px] text-center text-[#64748B] mt-2">
+              AI can make mistakes. Always verify financial data.
+            </p>
           </div>
         </div>
       )}
 
-      {/* Floating Button (Visible when closed) */}
+      {/* Floating toggle button */}
       {!isOpen && (
         <button
-          onClick={() => {
-            setIsOpen(true);
-            onOpenChange?.(true);
-          }}
-          className="flex items-center gap-2 px-4 py-3 bg-neutral-900 text-white rounded-full shadow-xl hover:bg-neutral-800 transition-all hover:scale-105 active:scale-95 group"
+          onClick={() => { setIsOpen(true); onOpenChange?.(true); }}
+          className="flex items-center gap-2 pl-3.5 pr-4 py-2.5 bg-[#0F172A] hover:bg-[#1E293B] text-white rounded-full shadow-[0_4px_20px_rgba(0,0,0,0.3)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.35)] transition-all hover:scale-105 active:scale-95"
         >
-          <SparklesIcon className="w-5 h-5 text-amber-400" />
-          <span className="font-medium pr-1">Ask AI Assistant</span>
-          <ChevronUpIcon className="w-4 h-4 text-neutral-400 group-hover:text-white transition-colors" />
+          <div className="w-6 h-6 bg-white/15 rounded-full flex items-center justify-center shrink-0">
+            <SparklesIcon className="w-3.5 h-3.5 text-white" />
+          </div>
+          <span className="font-semibold text-sm">Ask AI Assistant</span>
+          <ChevronUpIcon className="w-4 h-4 text-white/60" />
         </button>
       )}
     </div>

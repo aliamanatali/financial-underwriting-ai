@@ -261,44 +261,44 @@ export default function SourceDocumentViewer({
   const highlightStyle = getHighlightStyle();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/30 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-xl shadow-[0_8px_40px_rgba(0,0,0,0.14)] border border-[#E2E8F0] w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] bg-[#F8FAFC]">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">{filename}</h3>
-            <p className="text-sm text-gray-500">
+            <h3 className="text-sm font-semibold text-[#0F172A]">{filename}</h3>
+            <p className="text-xs text-[#64748B] mt-0.5">
               Page {pageNumber} of {numPages || "--"}
             </p>
-            <p className="text-xs text-amber-600 mt-1 italic">
-              Please note: The highlighted source may be slightly misaligned but will be close to the actual written source.
+            <p className="text-[11px] text-[#D97706] mt-1 italic">
+              Highlight may be slightly offset from the exact source location.
             </p>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 bg-white rounded-lg border border-[#E2E8F0] p-1">
               <button
                 onClick={() => setScale((s) => Math.max(0.5, s - 0.1))}
-                className="p-1.5 hover:bg-gray-100 rounded text-gray-600"
+                className="p-1.5 hover:bg-[#F1F5F9] rounded text-[#475569] transition-colors"
                 title="Zoom Out"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
-              <span className="text-xs font-medium w-12 text-center">
+              <span className="text-xs font-medium w-10 text-center text-[#475569]">
                 {Math.round(scale * 100)}%
               </span>
               <button
                 onClick={() => setScale((s) => Math.min(3, s + 0.1))}
-                className="p-1.5 hover:bg-gray-100 rounded text-gray-600"
+                className="p-1.5 hover:bg-[#F1F5F9] rounded text-[#475569] transition-colors"
                 title="Zoom In"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
               </button>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-gray-200 rounded-full text-gray-500 transition-colors"
+              className="p-2 hover:bg-[#F1F5F9] rounded-lg text-[#64748B] hover:text-[#0F172A] transition-colors"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
           </div>
         </div>
@@ -306,7 +306,7 @@ export default function SourceDocumentViewer({
         {/* Document Content */}
         <div
           ref={scrollContainerRef}
-          className={`flex-1 overflow-auto bg-gray-100 p-4 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+          className={`flex-1 overflow-auto bg-[#F1F5F9] p-4 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUpOrLeave}
@@ -324,14 +324,14 @@ export default function SourceDocumentViewer({
                     {downloadUrl && <a
                      href={downloadUrl}
                      download={filename}
-                     className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline"
+                     className="text-[#F97316] hover:text-[#EA6C0A] text-sm font-medium underline"
                     >
                      Try Direct Download
                     </a>}
                   </div>
                 ) : !pdfBlobUrl ? (
                    <div className="flex items-center justify-center h-96 w-[600px] bg-white">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#E2E8F0] border-t-[#F97316]"></div>
                   </div>
                 ) : (
                   <Document
@@ -340,7 +340,7 @@ export default function SourceDocumentViewer({
                     onLoadError={onDocumentLoadError}
                     loading={
                       <div className="flex items-center justify-center h-96 w-[600px] bg-white">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+                        <div className="animate-spin rounded-full h-8 w-8 border-2 border-[#E2E8F0] border-t-[#F97316]"></div>
                       </div>
                     }
                     error={
@@ -350,7 +350,7 @@ export default function SourceDocumentViewer({
                         {downloadUrl && <a
                          href={downloadUrl}
                          download={filename}
-                         className="text-indigo-600 hover:text-indigo-800 text-sm font-medium underline"
+                         className="text-[#F97316] hover:text-[#EA6C0A] text-sm font-medium underline"
                        >
                          Try Direct Download
                        </a>}
@@ -400,7 +400,7 @@ export default function SourceDocumentViewer({
                 {downloadUrl && <a
                   href={downloadUrl}
                   download={filename}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-sm"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-[#F97316] text-white rounded-lg hover:bg-[#EA6C0A] transition-colors font-medium shadow-sm"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Download File

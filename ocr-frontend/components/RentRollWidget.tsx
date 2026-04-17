@@ -1295,8 +1295,7 @@ export default function RentRollWidget({
       {/* Rent Roll Summary Table */}
       {activeTab === 'details' && (
         <div className="mt-8">
-          <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
-          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
             <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
               <h3 className="text-white font-medium">Rent Roll Summary</h3>
             </div>
