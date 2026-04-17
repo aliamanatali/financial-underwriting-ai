@@ -71,7 +71,7 @@ export default function DealHistoryTable() {
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
 
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage] = useState(12);
+  const [itemsPerPage, setItemsPerPage] = useState(5);
   const [totalPackages, setTotalPackages] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [cache, setCache] = useState<Record<string, { data: unknown; timestamp: number }>>({});
@@ -158,6 +158,13 @@ export default function DealHistoryTable() {
   const getTotalDocuments = (pkg: DealPackage) => {
     if (!pkg.documents) return 0;
     return Object.values(pkg.documents).reduce((sum, docs) => sum + docs.length, 0);
+  };
+
+  const handleItemsPerPageChange = (newSize: number) => {
+    setItemsPerPage(newSize);
+    setCache({});
+    setCurrentPage(1);
+    fetchPackages(1, newSize);
   };
 
   const filteredPackages = packages.filter((pkg) => {
@@ -384,13 +391,20 @@ export default function DealHistoryTable() {
           {/* ── Table footer / Pagination ─────────────────── */}
           {totalPackages > 0 && (
             <div className="flex items-center justify-between px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
-              {/* Left: record range */}
-              <p className="text-[11px] text-[#94A3B8]">
-                <span className="font-medium text-[#475569]">{startItem}–{endItem}</span>
-                <span> of </span>
-                <span className="font-medium text-[#475569]">{totalPackages}</span>
-                <span> results</span>
-              </p>
+              {/* Left: per-page selector */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-[#94A3B8]">Show</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                  className="h-7 px-1.5 rounded-lg border border-[#E2E8F0] bg-white text-[11px] font-medium text-[#475569] hover:border-[#CBD5E1] focus:outline-none focus:ring-1 focus:ring-[#F97316]/50 focus:border-[#F97316]/40 cursor-pointer transition-all appearance-none pr-5 bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%20fill%3D%22none%22%3E%3Cpath%20d%3D%22M1%201l4%204%204-4%22%20stroke%3D%22%2394A3B8%22%20stroke-width%3D%221.5%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_6px_center] bg-no-repeat"
+                >
+                  {[5, 10, 25, 50].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-[#94A3B8]">per page</span>
+              </div>
 
               {/* Right: nav */}
               <div className="flex items-center gap-1">
