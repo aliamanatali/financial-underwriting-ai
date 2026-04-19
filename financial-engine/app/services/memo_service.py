@@ -26,7 +26,7 @@ class PDF(FPDF):
         self.set_text_color(0, 0, 0)
 
 class MemoService:
-    def __init__(self, gemini_service: "GeminiService" = None, openai_service: "OpenAIClient" = None):
+    def __init__(self, gemini_service: "GeminiClient" = None, openai_service: "OpenAIClient" = None):
         self.gemini_service = gemini_service
         self.openai_service = openai_service
 

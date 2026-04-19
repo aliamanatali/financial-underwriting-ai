@@ -32,7 +32,7 @@ from app.models.schemas import (
 )
 from app.services.ingestion_service import IngestionService
 from app.services.normalization_service import NormalizationService
-from app.services.gemini_service import GeminiService
+from app.services.gemini_client import GeminiClient
 from app.services.multi_document_extraction_service import MultiDocumentExtractionService
 from app.services.storage_service import storage_service
 from app.services.explainability_service import ExplainabilityService
@@ -365,7 +365,7 @@ async def list_deal_packages(
 async def normalize_package_documents(
     package_id: str,
     document_type: Optional[DocumentType] = None,
-    gemini_service: GeminiService = Depends(get_gemini_service),
+    gemini_service: GeminiClient = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
@@ -1413,7 +1413,7 @@ async def get_package_analysis(package_id: str):
 async def analyze_deal_package(
     package_id: str,
     request: Request,
-    gemini_service: GeminiService = Depends(get_gemini_service),
+    gemini_service: GeminiClient = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
@@ -1473,7 +1473,7 @@ async def analyze_deal_package(
 async def _analyze_deal_package_logic(
     package_id: str,
     deal_parameters: Dict[str, Any],
-    gemini_service: GeminiService,
+    gemini_service: GeminiClient,
     openai_service: Any,
     progress_service: ProgressService,
     explainability_service: ExplainabilityService,

@@ -2,7 +2,6 @@ from fastapi import FastAPI
 import logging
 import app.config  # Ensures config is loaded first
 from app.api.routes import analysis, ingest, exports, multi_document, progress, chat
-from app.api.routes import analysis, ingest, exports, multi_document, progress
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.db.redis import redis_client

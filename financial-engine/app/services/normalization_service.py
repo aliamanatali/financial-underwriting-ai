@@ -397,29 +397,53 @@ class NormalizationService:
                 capex_keywords = [
                     "well drilling", "drilling", "pump replacement",
                     "guard rail", "railing", "balcony repair", "staircase", "landing",
-                    "roofing", "roof repair", "roof replacement", "shingles",
+                    "roofing", "roof replacement", "shingles",
                     "construction", "renovation", "remodel", "upgrades",
-                    "permit", "plan check", "architect", "engineering",
+                    "plan check", "architect", "engineering",
                     "asphalt", "paving", "concrete", "foundation",
                     "hvac replacement", "boiler replacement", "capital"
                 ]
-                
+                # "roof repair" is handled separately below — bare keyword catches
+                # both full repairs (CapEx) and patching jobs (OpEx).
+                roof_repair_maintenance_qualifiers = [
+                    "minor", "patch", "small", "touch-up", "touch up",
+                    "seal", "sealant", "caulk", "leak repair"
+                ]
+                # Permits are only CapEx when combined with capital-work qualifiers.
+                permit_capex_qualifiers = [
+                    "construction", "renovation", "upgrade", "installation",
+                    "replacement", "new", "capital", "electrical"
+                ]
+
                 if any(k in desc_lower for k in capex_keywords):
-                     # Be careful with "Repair" - generic repairs are OpEx. Specific large replacements are CapEx.
-                     # "Roof Repair" can be OpEx, but often large amounts > $2000 are CapEx.
-                     # For now, we trust the specific list above (e.g. "Roofing" is usually the trade name for replacement).
-                     # "Guard railings" $145k is definitely CapEx.
                      logger.warning(f"Reclassifying CapEx item to Capital Reserves: {desc} - {expense.get('amount')}")
                      forced_category = ExpenseCategory.CAPITAL_RESERVES
+                elif "roof repair" in desc_lower or "roof rebuild" in desc_lower:
+                     # Only CapEx if NOT accompanied by maintenance qualifiers
+                     is_maintenance = any(q in desc_lower for q in roof_repair_maintenance_qualifiers)
+                     if not is_maintenance:
+                         logger.warning(f"Reclassifying roof repair to Capital Reserves: {desc} - {expense.get('amount')}")
+                         forced_category = ExpenseCategory.CAPITAL_RESERVES
+                elif "permit" in desc_lower and any(q in desc_lower for q in permit_capex_qualifiers):
+                     logger.warning(f"Reclassifying qualified permit to Capital Reserves: {desc} - {expense.get('amount')}")
+                     forced_category = ExpenseCategory.CAPITAL_RESERVES
 
-                # 4. Exclude Non-Operating Items (Loans, Depreciation, Security Deposits)
+                # 4a. Deposits are balance-sheet items, not operating expenses.
+                deposit_keywords = [
+                    "security deposit", "tenant deposit", "earnest money",
+                    "escrow deposit", "refund", "return of deposit"
+                ]
+                if any(k in desc_lower for k in deposit_keywords):
+                     logger.info(f"Reclassifying Deposit/Refund item: {desc}")
+                     forced_category = ExpenseCategory.DEPOSIT
+
+                # 4b. Exclude other Non-Operating Items (Loans, Depreciation)
                 non_op_keywords = [
                     "depreciation", "amortization", "interest expense", "loan interest",
                     "loan principal", "mortgage", "lender", "bank fee", "financing",
-                    "security deposit", "tenant deposit", "refund", "return of deposit",
                     "legal settlement", "attorney fee - purchase", "closing cost"
                 ]
-                if any(k in desc_lower for k in non_op_keywords):
+                if not forced_category and any(k in desc_lower for k in non_op_keywords):
                      if "interest" in desc_lower and "income" in desc_lower:
                          # Interest Income -> Other Income (Revenue)
                          pass

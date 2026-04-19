@@ -1217,15 +1217,6 @@ class MultiDocumentExtractionService:
             # Fallback for all
             return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
 
-    async def normalize_expense_category(self, raw_text: str, item_type: str = "expense") -> Dict[str, Any]:
-        """
-        Use Gemini AI to map a raw description to a standard category and group.
-        Kept for backward compatibility or single-item usage.
-        """
-        # Create a single item list and use batch processing
-        batch_result = await self.normalize_expenses_batch([{"raw_text": raw_text, "type": item_type}])
-        return batch_result[0] if batch_result else self._fallback_categorization(raw_text)
-    
     def _fallback_categorization(self, expense_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         Simple keyword-based categorization fallback when Gemini is unavailable.

@@ -419,6 +419,7 @@ class FinancialService:
                     ExpenseCategory.YEAR_BUILT,
                     ExpenseCategory.PURCHASE_PRICE,
                     ExpenseCategory.PRICE_PER_UNIT,
+                    ExpenseCategory.DEPOSIT, # Earnest money, security deposits — balance sheet items, not OpEx
                     ExpenseCategory.UNCATEGORIZED, # Exclude Uncategorized (often bad extractions or revenue deductions)
                     ExpenseCategory.ACCOUNTS_RECEIVABLE,
                     # FIX: Exclude Revenue Items from Expense Sum
@@ -426,7 +427,10 @@ class FinancialService:
                     ExpenseCategory.GROSS_POTENTIAL_RENT,
                     ExpenseCategory.REIMBURSEMENTS,
                 ]:
-                    logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
+                    if expense.mapped_category == ExpenseCategory.UNCATEGORIZED:
+                        logger.warning(f"DROPPED UNCATEGORIZED T12 expense: '{expense.original_text}' (${expense.amount:,.2f}) — review normalization if this is a real operating expense")
+                    else:
+                        logger.info(f"Removing Non-Operating Item: {expense.mapped_category} - {expense.original_text} (${expense.amount:,.2f})")
                     continue
                 
                 # 2. STRING CHECK (Case-insensitive)
