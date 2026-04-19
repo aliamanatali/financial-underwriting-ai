@@ -52,10 +52,31 @@ from app.services.synthesis_service import SynthesisService
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
 
-# In-memory file storage cache for processing session (backed by GCP storage)
-# We keep file content cache to avoid repeated downloads during the same processing session
-# but we remove the metadata cache (deal_packages_cache) to ensure consistency.
+# In-memory file storage cache for processing session (backed by GCP storage).
+# Keyed by document_id. Entries hold raw file bytes and must be evicted after
+# the package's analysis completes — leaving them resident was the main driver
+# of the April 2026 production OOM (4GB exceeded). See _evict_package_from_cache.
 file_storage_cache = {}
+
+
+def _evict_package_from_cache(package) -> int:
+    """Remove all file bytes belonging to this package from file_storage_cache.
+
+    Called at the end of normalize_package_documents (both success and failure
+    paths) so a large deal's raw bytes don't stay resident across requests.
+    Returns the number of entries evicted for logging.
+    """
+    evicted = 0
+    try:
+        for _, doc_list in (package.documents or {}).items():
+            for doc_meta in doc_list or []:
+                doc_id = getattr(doc_meta, "document_id", None)
+                if doc_id and doc_id in file_storage_cache:
+                    del file_storage_cache[doc_id]
+                    evicted += 1
+    except Exception as e:
+        logger.warning(f"Cache eviction error (non-fatal): {e}")
+    return evicted
 
 # Initialize services
 zip_service = ZipProcessingService()
@@ -532,18 +553,32 @@ async def normalize_package_documents(
     remaining_financial_docs = [d for d in financial_docs if d.get("document_category") != DocumentType.OFFERING_MEMORANDUM]
     
     # NEW: Determine Underwriting Flow (Flow A vs Flow B)
-    if om_documents:
-        # Flow A: OM-Driven (Single Source of Truth)
-        logger.info("OM Detected. Enforcing Flow A: OM-Driven. Ignoring non-OM documents.")
+    if len(om_documents) == 1:
+        # Flow A: OM-Driven (Single Source of Truth). Only when exactly one OM is
+        # present — two or more OM classifications usually indicate a false positive
+        # (e.g., a flyer or appraisal misclassified alongside the real OM), and the
+        # "single source of truth" premise no longer holds. Fall back to MULTI_SOURCE
+        # so every document contributes and cross-validates.
+        logger.info("Single OM detected. Enforcing Flow A: OM-Driven. Ignoring non-OM documents.")
         package.underwriting_flow = "OM_DRIVEN"
-        
+
         # Strictly ignore other files
         rent_roll_docs = []
         remaining_financial_docs = []
-        
+
     else:
-        # Flow B: Non-OM (Multi-Source Aggregation)
-        logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
+        # Flow B: Non-OM (Multi-Source Aggregation).
+        # Fires when (a) zero OMs were detected, or (b) more than one document was
+        # classified as OM — the latter implies misclassification, and aggregating
+        # across all sources is safer than trusting any single one as authoritative.
+        if len(om_documents) > 1:
+            logger.info(
+                f"{len(om_documents)} documents classified as OM — likely "
+                "misclassification. Falling back to Flow B: Multi-Source Aggregation "
+                "so all sources cross-validate."
+            )
+        else:
+            logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
         package.underwriting_flow = "MULTI_SOURCE"
 
     # Shared State for Parallel Progress Tracking
@@ -748,6 +783,7 @@ async def normalize_package_documents(
          logger.error(f"Error in parallel processing: {e}")
          await progress_service.update_progress(package_id, 0, f"Processing failed: {str(e)}")
          await storage_service.update_deal_package_status(package_id, "failed")
+         _evict_package_from_cache(package)
          raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
 
     # Consolidate normalized_data for backward compatibility / Verification UI
@@ -806,7 +842,11 @@ async def normalize_package_documents(
         )
         
         logger.info(f"Financial report generated successfully for package {package_id}")
-        
+
+        evicted = _evict_package_from_cache(package)
+        if evicted:
+            logger.info(f"Evicted {evicted} file-cache entries for package {package_id}")
+
         # Return a combined result so frontend gets both the analysis AND the normalized items for verification
         return {
             "analysis": analysis_result.model_dump(),
@@ -815,14 +855,15 @@ async def normalize_package_documents(
             "verified_items": 0,
             "confidence_average": 0.0
         }
-        
+
     except Exception as e:
         logger.error(f"Error generating financial report: {str(e)}", exc_info=True)
         # If analysis fails, still return normalization result and mark as completed
         # (normalization succeeded even if report generation failed)
         await storage_service.update_deal_package_status(package_id, "completed")
         await progress_service.update_progress(package_id, 100, "Normalization complete. Analysis generation failed.")
-        
+        _evict_package_from_cache(package)
+
         result = DocumentNormalizationResult(
             document_id="multiple",
             document_type=document_type or DocumentType.FINANCIALS,
@@ -2117,15 +2158,30 @@ async def _analyze_deal_package_logic(
             logger.error(f"Error in Verification Agents: {e}")
             # Continue without failing the whole analysis
 
-    # Note: If rent roll has more units than found in expenses/OM, update it
+    # In MULTI_SOURCE (non-OM) flow the rent roll IS the ground truth for unit
+    # count — the displayed rent-roll tab renders exactly these rows, so the
+    # header "Total Units" must match. Previously this only upgraded the count
+    # when the rent roll had MORE units than the synthesized metadata, leaving
+    # stale higher counts from OM cover pages / prior manual overrides in place
+    # when the rent roll actually had fewer rows. Now: if a rent roll exists in
+    # non-OM flow, take its length verbatim.
     if rent_roll_items:
         rr_units = len(rent_roll_items)
-        if rr_units > synthesized_metadata['total_units']['value']:
-             synthesized_metadata['total_units'] = {
-                 "value": rr_units,
-                 "source": "Rent Roll Data",
-                 "score": 90
-             }
+        if package.underwriting_flow == "MULTI_SOURCE":
+            synthesized_metadata['total_units'] = {
+                "value": rr_units,
+                "source": "Rent Roll Data (row count)",
+                "score": 999,
+            }
+        elif rr_units > synthesized_metadata['total_units']['value']:
+            # OM flow — keep prior "upgrade-only" behaviour so OM-proforma unit
+            # counts (which may legitimately exceed rent-roll rows when units
+            # are being delivered / added) aren't clobbered.
+            synthesized_metadata['total_units'] = {
+                "value": rr_units,
+                "source": "Rent Roll Data",
+                "score": 90,
+            }
     
     logger.info("=== SYNTHESIZED METADATA ===")
     logger.info(f"Purchase Price: ${synthesized_metadata['purchase_price']['value']:,.2f} (from {synthesized_metadata['purchase_price']['source']})")
@@ -2372,11 +2428,13 @@ async def _analyze_deal_package_logic(
     # Apply Manual Overrides for GPR/Rent
     if package.manual_overrides:
         if "total_units" in package.manual_overrides:
-             # If manual override exists, it takes precedence if extraction failed
+             # The manual override is a fallback for when extraction produced
+             # no rent roll at all. Once we have actual rent-roll rows, the
+             # row count (already assigned to total_units above) is the ground
+             # truth — don't overwrite it with a stale manual value.
              manual_units = int(package.manual_overrides["total_units"])
-             if total_units == 0 or total_units != manual_units:
+             if total_units == 0:
                  total_units = manual_units
-                 # Adjust occupancy if needed (assume 95% if no data?)
                  if occupied_units == 0:
                      occupied_units = int(total_units * 0.95)
                      occupancy_rate = 0.95

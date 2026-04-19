@@ -82,8 +82,12 @@ function ProcessingContent() {
 
         const status = data.normalization_status;
 
-        // Explicit handling for every possible normalization_status
-        if (status === "completed") {
+        // Explicit handling for every possible normalization_status.
+        // When a re-analyze was just triggered, the backend flips status to
+        // "in_progress" synchronously before returning — but there's still a
+        // brief window where the MongoDB read races the flip. Skip the
+        // completed-redirect in that case so we don't bounce the user back.
+        if (status === "completed" && !reanalyzeLevel) {
           console.log("Package already completed, redirecting to analysis page...");
           router.push(`/analysis/${packageId}`);
           return true;

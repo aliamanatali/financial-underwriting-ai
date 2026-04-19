@@ -1048,16 +1048,16 @@ class FinancialService:
                     # Update trackers
                     if any(i.mapped_category == ExpenseCategory.PAYROLL for i in verified_in_cat):
                         has_payroll = True
-                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in verified_in_cat):
+                    if any(i.mapped_category == ExpenseCategory.ADVERTISING_MARKETING for i in verified_in_cat):
                         has_marketing = True
                 else:
                     # No verified items, sum up unverified ones
                     cat_total = sum(i.amount for i in items)
-                    
+
                     # Update trackers
                     if any(i.mapped_category == ExpenseCategory.PAYROLL for i in items):
                         has_payroll = True
-                    if any("Marketing" in str(i.mapped_category) or "Advertising" in str(i.mapped_category) for i in items):
+                    if any(i.mapped_category == ExpenseCategory.ADVERTISING_MARKETING for i in items):
                         has_marketing = True
 
                 other_expenses_map[cat_name] = cat_total

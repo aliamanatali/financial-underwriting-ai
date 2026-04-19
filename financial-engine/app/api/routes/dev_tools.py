@@ -100,6 +100,13 @@ async def reanalyze_package(
                 ),
             )
 
+    # Flip status + seed progress synchronously BEFORE returning, so the frontend
+    # never races the background task. Without this, the analysis page can redirect
+    # the user back to /analysis (status still shows "completed" from the prior run)
+    # before _run_reanalyze gets a chance to flip it to "in_progress".
+    await storage_service.update_deal_package_status(package_id, "in_progress")
+    await progress_service.update_progress(package_id, 1, f"Dev re-analyze queued (level {level})")
+
     # Kick off the work in the background so the HTTP response returns immediately
     asyncio.create_task(
         _run_reanalyze(
@@ -253,7 +260,11 @@ async def _re_normalize(
             if item.raw_text and item.raw_text in result_by_desc:
                 updated = result_by_desc[item.raw_text]
                 if hasattr(updated, "mapped_category") and updated.mapped_category:
-                    item.normalized_value = str(updated.mapped_category)
+                    # ExpenseCategory inherits from (str, Enum), but str(member)
+                    # returns "ExpenseCategory.CONTRACT_SERVICES" (the enum repr),
+                    # not the value "Contract Services". Use .value.
+                    mc = updated.mapped_category
+                    item.normalized_value = mc.value if hasattr(mc, "value") else str(mc)
                 if hasattr(updated, "confidence") and updated.confidence is not None:
                     item.confidence = updated.confidence
                 if hasattr(updated, "category_group") and updated.category_group:
@@ -345,12 +356,16 @@ async def _re_extract_from_documents(
 
     await progress_service.update_progress(package_id, 15, f"Loaded {len(financial_docs) + len(rent_roll_docs)} documents")
 
-    # Determine flow
-    if om_docs:
+    # Determine flow — exactly one OM triggers OM-Driven; zero or multiple OMs
+    # fall back to MULTI_SOURCE (multiple OM classifications usually indicate a
+    # false positive from a flyer/appraisal misclassified alongside the real OM).
+    if len(om_docs) == 1:
         package.underwriting_flow = "OM_DRIVEN"
         rent_roll_docs = []
         financial_docs = [d for d in financial_docs if d.get("document_category") == DocumentType.OFFERING_MEMORANDUM]
     else:
+        if len(om_docs) > 1:
+            logger.info(f"[Dev reanalyze] {len(om_docs)} OMs detected — falling back to MULTI_SOURCE.")
         package.underwriting_flow = "MULTI_SOURCE"
 
     # Progress adapter that scales percentages into the 15-45% range

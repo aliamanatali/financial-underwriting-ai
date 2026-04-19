@@ -1601,10 +1601,18 @@ class MultiDocumentExtractionService:
                     await update_progress(filename, "failed", category)
                     return [placeholder_expense], local_om_results
 
-        # Execute all document processing in parallel
-        tasks = [process_single_document(idx, doc) for idx, doc in enumerate(documents)]
-        
-        # Use gather to wait for all
+        # Execute document processing in parallel, but cap concurrency so a
+        # 40-file deal package doesn't fan out to 40 simultaneous in-memory
+        # file copies + Gemini prompt/response buffers. 4 matches the OCR
+        # backend's Gemini semaphore — tuned for ~4GB heap budgets. Was the
+        # #2 driver of the April 2026 production OOM.
+        extract_sem = asyncio.Semaphore(4)
+
+        async def _bounded(idx, doc):
+            async with extract_sem:
+                return await process_single_document(idx, doc)
+
+        tasks = [_bounded(idx, doc) for idx, doc in enumerate(documents)]
         results = await asyncio.gather(*tasks)
         
         # Flatten results

@@ -70,8 +70,7 @@ export default function AnalysisResultPage() {
   const [validationTrigger, setValidationTrigger] = useState<number>(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [showReanalyzeMenu, setShowReanalyzeMenu] = useState(false);
-  const reanalyzeMenuRef = useRef<HTMLDivElement>(null);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
   const devReanalyzeEnabled = process.env.NEXT_PUBLIC_ENABLE_REANALYZE === "true";
 
   useEffect(() => {
@@ -94,26 +93,19 @@ export default function AnalysisResultPage() {
     if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
   };
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (reanalyzeMenuRef.current && !reanalyzeMenuRef.current.contains(e.target as Node)) {
-        setShowReanalyzeMenu(false);
-      }
-    };
-    if (showReanalyzeMenu) document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showReanalyzeMenu]);
-
-  const handleDevReanalyze = async (level: 1 | 2 | 3 | 4) => {
-    setShowReanalyzeMenu(false);
+  const handleDevReanalyze = async () => {
+    if (isReanalyzing) return;
+    setIsReanalyzing(true);
     try {
-      // Fire the re-analyze (returns instantly — work runs in background)
-      await apiClient.devReanalyze(id, level);
+      // Fire a full re-extraction (level 4). Returns instantly — work runs in background.
+      await apiClient.devReanalyze(id, 4);
     } catch (err) {
       console.error("Failed to start re-analyze:", err);
+      setIsReanalyzing(false);
+      return;
     }
     // Redirect to processing page to show progress via SSE
-    router.push(`/processing/${id}?reanalyze=${level}`);
+    router.push(`/processing/${id}?reanalyze=4`);
   };
 
   const handleReanalyze = async (newParams: DealParameters) => {
@@ -350,40 +342,25 @@ export default function AnalysisResultPage() {
               })}
 
               {devReanalyzeEnabled && (
-                <div className="relative" ref={reanalyzeMenuRef}>
-                  <button
-                    onClick={() => setShowReanalyzeMenu(!showReanalyzeMenu)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-[#7C3AED] text-[#7C3AED] hover:bg-[rgba(124,58,237,0.08)]"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
-                    Re-Analyze
-                  </button>
-                  {showReanalyzeMenu && (
-                    <div className="absolute right-0 mt-1 w-72 bg-white border border-[#E2E8F0] rounded-lg shadow-lg z-50 py-1">
-                      <div className="px-3 py-1.5 text-[10px] font-semibold text-[#64748B] uppercase tracking-wide border-b border-[#E2E8F0]">Dev Re-Analyze Level</div>
-                      {([
-                        { level: 1 as const, label: "Financial Model Only", desc: "Fastest. No LLM calls." },
-                        { level: 2 as const, label: "Normalize + Model", desc: "Uses cached classifications." },
-                        { level: 3 as const, label: "Normalize (Fresh) + Model", desc: "Busts cache, fresh LLM." },
-                        { level: 4 as const, label: "Full Re-Extraction", desc: "Re-extract from stored docs." },
-                      ]).map(({ level, label, desc }) => (
-                        <button
-                          key={level}
-                          onClick={() => handleDevReanalyze(level)}
-                          className="w-full text-left px-3 py-2 hover:bg-[#F1F5F9] transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full bg-[rgba(124,58,237,0.12)] text-[#7C3AED] text-[10px] font-bold flex items-center justify-center shrink-0">{level}</span>
-                            <div>
-                              <div className="text-xs font-medium text-[#0F172A]">{label}</div>
-                              <div className="text-[10px] text-[#64748B]">{desc}</div>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                <button
+                  onClick={handleDevReanalyze}
+                  disabled={isReanalyzing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-[#7C3AED] text-[#7C3AED] hover:bg-[rgba(124,58,237,0.08)] disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isReanalyzing ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                      Starting…
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
+                      Re-Analyze
+                    </>
                   )}
-                </div>
+                </button>
               )}
 
               <button

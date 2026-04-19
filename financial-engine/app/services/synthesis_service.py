@@ -1181,7 +1181,11 @@ class SynthesisService:
             # 4. Normalized Text (alphanumeric only, first 30 chars)
             
             amount_key = round(exp.amount, 2)
-            cat_key = str(exp.mapped_category) # Ensure it's a string for the hash
+            # Use .value so dedupe keys are stable across runs — str(enum) returns
+            # "ExpenseCategory.X" while other call-sites use the value "X", causing
+            # the same logical category to produce two different hash keys.
+            _mc = exp.mapped_category
+            cat_key = _mc.value if hasattr(_mc, "value") else str(_mc)
             year_key = exp.expense_year or 0
             
             # Simple text normalization for fuzzy matching
