@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
+from starlette.concurrency import run_in_threadpool
 from app.models.schemas import RentRollItem, PropertyMeta, UnderwritingAnalysis, StandardizedExpense, ExpenseCategory, AuditLog, RentRollSummary
 from app.services.normalization_service import NormalizationService
 from app.services.gemini_client import GeminiClient
@@ -318,12 +319,29 @@ class IngestionService:
     async def extract_rent_roll_from_excel(self, excel_content: bytes, total_units: int = 0, filename: str = None, target_property_address: Optional[str] = None) -> List[RentRollItem]:
         """
         Extracts the rent roll from an Excel file (bytes).
-        Async version that works with file content in memory.
+
+        The body is pure synchronous pandas parsing (no awaits), and on large
+        rent rolls it can block the event loop for seconds — which is what
+        made the dashboard tab hang while an analysis was running. Dispatching
+        the whole sync body through run_in_threadpool keeps the loop free to
+        service other requests.
         """
+        return await run_in_threadpool(
+            self._extract_rent_roll_from_excel_sync,
+            excel_content, total_units, filename, target_property_address,
+        )
+
+    def _extract_rent_roll_from_excel_sync(
+        self,
+        excel_content: bytes,
+        total_units: int = 0,
+        filename: str = None,
+        target_property_address: Optional[str] = None,
+    ) -> List[RentRollItem]:
         import logging
         import io
         logger = logging.getLogger(__name__)
-        
+
         try:
             # Load Excel File
             xls = pd.ExcelFile(io.BytesIO(excel_content))

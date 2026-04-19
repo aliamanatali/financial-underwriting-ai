@@ -78,6 +78,24 @@ def _evict_package_from_cache(package) -> int:
         logger.warning(f"Cache eviction error (non-fatal): {e}")
     return evicted
 
+
+def _parse_pdf_text_sync(content: bytes, max_pages: int) -> str:
+    """Synchronous PyPDF2 text extraction. Designed to be dispatched via
+    run_in_threadpool — PDF parsing is CPU-bound and will block the event
+    loop if awaited directly, which starves the dashboard/progress endpoints
+    while analyses are running.
+    """
+    import PyPDF2
+    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+    pages = []
+    for page in pdf_reader.pages[:max_pages]:
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception:
+            pages.append("")
+    return "\n".join(pages)
+
+
 # Initialize services
 zip_service = ZipProcessingService()
 TEMP_UPLOAD_DIR = "temp_uploads"
@@ -1783,13 +1801,7 @@ async def _analyze_deal_package_logic(
                             content = await storage_service.get_document_file(storage_path)
 
                         if content and source_filename.lower().endswith(".pdf"):
-                            import PyPDF2
-                            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                            text_pages = []
-                            # Extract text from first 25 pages for generic audit (faster than 40)
-                            for p_idx, page in enumerate(pdf_reader.pages[:25]):
-                                text_pages.append(page.extract_text())
-                            full_text = "\n".join(text_pages)
+                            full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 25)
                             logger.info(f"Recovered text from storage for {source_filename} in generic audit ({len(full_text)} chars)")
                     except Exception as ex:
                         logger.warning(f"Storage extraction failed for {doc_id} in generic audit: {ex}")
@@ -2001,13 +2013,7 @@ async def _analyze_deal_package_logic(
                                     content = await storage_service.get_document_file(storage_path)
                                 
                                 if content and doc.filename.lower().endswith(".pdf"):
-                                    import PyPDF2
-                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                                    text_pages = []
-                                    # Extract text from first 20 pages
-                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
-                                        text_pages.append(page.extract_text())
-                                    full_text = "\n".join(text_pages)
+                                    full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 20)
                             except Exception as ex:
                                 logger.warning(f"Storage extraction failed for {doc_id} in PP verify: {ex}")
 
@@ -2093,12 +2099,7 @@ async def _analyze_deal_package_logic(
                                 content = await storage_service.get_document_file(storage_path)
                             
                             if content and doc.filename.lower().endswith(".pdf"):
-                                import PyPDF2
-                                pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                                text_pages = []
-                                for p_idx, page in enumerate(pdf_reader.pages[:20]):
-                                    text_pages.append(page.extract_text())
-                                full_text = "\n".join(text_pages)
+                                full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 20)
                         except: pass
                     
                     if full_text:
