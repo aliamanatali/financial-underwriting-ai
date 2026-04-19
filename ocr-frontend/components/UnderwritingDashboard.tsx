@@ -1076,6 +1076,24 @@ export default function UnderwritingDashboard({
               </div>
             </div>
 
+            {/* Interest Rate (Read-Only) */}
+            <div className="group pt-2 border-t border-neutral-100">
+              <div className="flex justify-between items-baseline">
+                <label className="text-xs font-medium text-neutral-600 flex items-center gap-1">
+                  Interest Rate (IO)
+                  <span className="text-[9px] text-[#94A3B8] font-normal">(SOFR + Spread)</span>
+                </label>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-[10px] text-[#94A3B8]">
+                    {((analysis.deal_parameters?.sofr_rate ?? 0.053) * 100).toFixed(1)}% + {((analysis.deal_parameters?.bridge_spread ?? 0.02) * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-sm font-semibold text-[#0F172A]">
+                    {(((analysis.deal_parameters?.sofr_rate ?? 0.053) + (analysis.deal_parameters?.bridge_spread ?? 0.02)) * 100).toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+
               {/* Upside Potential Analysis */}
               <div className="mt-6 pt-5 border-t border-neutral-100">
                 <h4 className="text-xs font-semibold text-slate-900 mb-3 flex items-center gap-1.5 uppercase tracking-wide">
@@ -1527,9 +1545,11 @@ export default function UnderwritingDashboard({
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.debt_yield || 0) >= 0.08
-                          ? 'The robust debt yield metric strongly supports refinancing or exit flexibility. The asset can likely absorb market cap rate expansions or minor income disruptions without violating typical lender covenants.'
-                          : 'The lower debt yield suggests the deal is highly sensitive to exit cap rate expansion or income shortfalls. Refinancing at maturity may be challenging, potentially requiring sponsor capital calls to pay down principal.'}
+                        {(analysis.debt_yield || 0) >= 0.10
+                          ? 'The strong debt yield metric supports refinancing or exit flexibility. The asset can absorb market cap rate expansions or income disruptions without violating typical lender covenants.'
+                          : (analysis.debt_yield || 0) >= 0.08
+                          ? 'The debt yield meets minimum institutional thresholds but offers limited cushion. The asset should perform adequately under stable market conditions but may face refinancing friction if NOI declines.'
+                          : `A debt yield of ${((analysis.debt_yield || 0) * 100).toFixed(2)}% falls below the standard institutional minimum of 8%, making the deal sensitive to exit cap rate expansion or income shortfalls. Refinancing at maturity may be challenging, potentially requiring sponsor capital calls to pay down principal.`}
                       </p>
                     </div>
                   </div>
@@ -1574,23 +1594,27 @@ export default function UnderwritingDashboard({
                   <div className="space-y-3">
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">AI Decision</span>
-                      <p className={`text-xs font-semibold mt-1 ${(analysis.dscr || 0) >= 1.25 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {(analysis.dscr || 0) >= 1.25 ? 'Adequate' : 'Low'} DSCR of {(analysis.dscr || 0).toFixed(2)}x
+                      <p className={`text-xs font-semibold mt-1 ${(analysis.dscr || 0) >= 1.20 ? 'text-emerald-700' : (analysis.dscr || 0) >= 1.0 ? 'text-amber-700' : 'text-rose-700'}`}>
+                        {(analysis.dscr || 0) >= 1.20 ? 'Adequate' : (analysis.dscr || 0) >= 1.0 ? 'Tight' : 'Low'} DSCR of {(analysis.dscr || 0).toFixed(2)}x
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.dscr || 0) >= 1.25
+                        {(analysis.dscr || 0) >= 1.20
                           ? 'The projected stabilized Net Operating Income (NOI) provides a sufficient buffer to comfortably cover the proposed annualized debt service obligations, meeting or exceeding standard lender underwriting minimums (typically 1.20x - 1.25x).'
+                          : (analysis.dscr || 0) >= 1.0
+                          ? 'The projected stabilized Net Operating Income (NOI) covers the proposed debt service but with a limited margin of safety. Cash flow is positive but leaves minimal buffer against income disruptions or unexpected expenses.'
                           : 'The projected stabilized Net Operating Income (NOI) falls below the minimum threshold required to safely service the proposed debt load. This indicates that operational cash flow is currently insufficient to meet periodic principal and interest payments without significant risk of shortfall.'}
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.dscr || 0) >= 1.25
+                        {(analysis.dscr || 0) >= 1.20
                           ? 'The property presents an acceptable risk profile for debt financing. The healthy cash flow buffer supports favorable loan terms, protects investor distributions, and ensures compliance with standard debt yield and DSCR covenants.'
+                          : (analysis.dscr || 0) >= 1.0
+                          ? 'The deal services its debt but with limited headroom. Lenders may require additional reserves, a lower LTV, or rate protection to offset the thin coverage margin. Operational discipline is critical to avoid covenant breaches.'
                           : 'The severe default risk will likely trigger loan rejection under current terms. To proceed, the sponsor must structurally de-risk the deal by either negotiating a lower purchase price, significantly reducing the requested loan amount, securing lower interest rates, or injecting additional upfront equity.'}
                       </p>
                     </div>

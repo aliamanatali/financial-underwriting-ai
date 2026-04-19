@@ -374,44 +374,60 @@ async def normalize_package_documents(
     """
     Normalize documents in a package and automatically generate financial report.
     """
-    await progress_service.update_progress(package_id, 5, "Initializing normalization...")
-    
     # Load from storage service
     package_data = await storage_service.get_deal_package(package_id)
     if not package_data:
         raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
     package = DealPackage(**package_data)
-    
+
+    # Dedup guard: reject if already in progress
+    if package.normalization_status == "in_progress":
+        current_progress = await progress_service.get_current_progress(package_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Normalization already in progress for this package.",
+                "progress": current_progress
+            }
+        )
+
+    # Set status to in_progress immediately — only write the status field
+    package.normalization_status = "in_progress"
+    await storage_service.update_deal_package_status(package_id, "in_progress")
+
+    await progress_service.update_progress(package_id, 5, "Initializing normalization...")
+    await progress_service.update_progress(package_id, 7, "Loading package data...")
+
     # Initialize extraction service
     extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
-    
+
     # Collect documents to process
     documents_to_process = []
-    
+
     # Determine which document types to process
     if document_type:
         target_types = [document_type]
     else:
         # If no specific type is provided, process all available document types in the package
         target_types = list(package.documents.keys())
-        
+
         # If package has no documents at all, raise error
         if not target_types:
             raise HTTPException(
                 status_code=400,
                 detail=f"No documents found in package {package_id}"
             )
-            
+
     # Helper to load file content
     async def load_file_content(doc_metadata):
         doc_id = doc_metadata.document_id
         if doc_id in file_storage_cache:
             return file_storage_cache[doc_id]
-        
+
         filename = doc_metadata.filename
         extension = Path(filename).suffix
         storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
-        
+
         try:
             content = await storage_service.get_document_file(storage_path)
             if content:
@@ -427,22 +443,40 @@ async def normalize_package_documents(
             logger.error(f"Error retrieving document {doc_id}: {str(e)}")
         return None
 
+    # Count total documents across all target types for progress scaling
+    total_docs_to_load = sum(
+        len(package.documents.get(dt, []))
+        for dt in target_types
+    )
+
     # Collect documents by category for segmented processing
     rent_roll_docs = []
     financial_docs = [] # T12, Tax, Utilities, etc.
     om_docs = []
-    
+
     documents_count = 0
-    
+    docs_loaded = 0
+
     for doc_type in target_types:
         if doc_type not in package.documents:
             continue
-        
+
         for doc_metadata in package.documents[doc_type]:
             file_data = await load_file_content(doc_metadata)
+            docs_loaded += 1
+
+            # Emit classification progress: scale from 8% to 18% across all files
+            if total_docs_to_load > 0:
+                classification_pct = 8 + int((docs_loaded / total_docs_to_load) * 10)  # 8 -> 18
+                await progress_service.update_progress(
+                    package_id, classification_pct,
+                    f"Classifying documents ({docs_loaded}/{total_docs_to_load})...",
+                    details={"current_file": doc_metadata.filename, "file_index": docs_loaded, "total_files": total_docs_to_load}
+                )
+
             if not file_data:
                 continue
-                
+
             filename = file_data["filename"]
             # Determine file type
             if filename.endswith((".xlsx", ".xls")):
@@ -487,7 +521,8 @@ async def normalize_package_documents(
         )
     
     logger.info(f"Processing {documents_count} documents: {len(rent_roll_docs)} Rent Rolls, {len(financial_docs)} Financials/Other")
-    
+
+    await progress_service.update_progress(package_id, 19, f"Classification complete. {documents_count} documents ready.")
     await progress_service.update_progress(package_id, 20, f"Processing {documents_count} documents folder by folder...")
     
     # --- Simplified Parallel Processing with Basic Progress Aggregation ---
@@ -547,7 +582,12 @@ async def normalize_package_documents(
             unified_details = {
                 "completed_files": list(global_completed_files),
                 "active_files": list(global_active_files.values()),
-                "status": "processing"
+                "status": "processing",
+                "category_progress": {
+                    "om": round(task_progress["om"], 1),
+                    "rr": round(task_progress["rr"], 1),
+                    "fin": round(task_progress["fin"], 1),
+                }
             }
             
             # Send Update
@@ -707,16 +747,28 @@ async def normalize_package_documents(
     except Exception as e:
          logger.error(f"Error in parallel processing: {e}")
          await progress_service.update_progress(package_id, 0, f"Processing failed: {str(e)}")
+         await storage_service.update_deal_package_status(package_id, "failed")
          raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
 
     # Consolidate normalized_data for backward compatibility / Verification UI
     package.normalized_data = package.financials_data
-    
+
     package.normalization_status = "in_progress"
-    
-    # Update cache and persist to GCP
-    package_dict = package.model_dump()
-    await storage_service.save_deal_package(package_dict)
+
+    # Partial update: only persist extraction results, not the full document
+    financials_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.financials_data]
+    rent_roll_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.rent_roll_data]
+    om_proforma_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.om_proforma_data]
+    await storage_service.partial_update_deal_package(package_id, {
+        "financials_data": financials_dump,
+        "normalized_data": financials_dump,
+        "rent_roll_data": rent_roll_dump,
+        "om_proforma_data": om_proforma_dump,
+        "normalization_status": "in_progress",
+        "primary_fiscal_year": package.primary_fiscal_year,
+        "is_partial_year": package.is_partial_year,
+        "underwriting_flow": package.underwriting_flow,
+    })
     
     await progress_service.update_progress(package_id, 60, "Normalization complete. Generating financial report...")
     
@@ -766,7 +818,9 @@ async def normalize_package_documents(
         
     except Exception as e:
         logger.error(f"Error generating financial report: {str(e)}", exc_info=True)
-        # If analysis fails, still return normalization result
+        # If analysis fails, still return normalization result and mark as completed
+        # (normalization succeeded even if report generation failed)
+        await storage_service.update_deal_package_status(package_id, "completed")
         await progress_service.update_progress(package_id, 100, "Normalization complete. Analysis generation failed.")
         
         result = DocumentNormalizationResult(
@@ -778,6 +832,27 @@ async def normalize_package_documents(
             confidence_average=0.0
         )
         return result
+
+
+@router.post("/packages/{package_id}/reset-status")
+async def reset_package_status(package_id: str):
+    """
+    Reset a failed package's normalization status back to pending so it can be retried.
+    Only allows resetting from 'failed' status.
+    """
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+
+    package = DealPackage(**package_data)
+    if package.normalization_status not in ("failed",):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot reset package with status '{package.normalization_status}'. Only 'failed' packages can be reset."
+        )
+
+    await storage_service.update_deal_package_status(package_id, "pending")
+    return {"message": "Status reset to pending", "package_id": package_id}
 
 
 class VerifyItemRequest(BaseModel):
@@ -810,11 +885,13 @@ async def verify_normalized_item(
     if hasattr(package, 'financials_data') and package.financials_data:
         lists_to_update.append(package.financials_data)
         
+    verified_item_raw_text = None  # Captured for cache invalidation on correction
     logger.info(f"Updating item {item_id} in package {package_id}. Correction: {user_correction}, Payload: {payload}")
     for data_list in lists_to_update:
       for item in data_list:
         if item.id == item_id:
             logger.info(f"Found item {item_id}. Original amount: {item.metadata.get('amount') if item.metadata else 'N/A'}")
+            verified_item_raw_text = item.raw_text
             item.user_verified = True
             if user_correction is not None:
                 item.user_correction = user_correction
@@ -858,15 +935,26 @@ async def verify_normalized_item(
             
     if not item_found:
         raise HTTPException(status_code=404, detail=f"Item {item_id} not found in package")
-        
+
+    # Cache invalidation: when a user CORRECTS a category (not just confirms),
+    # purge the stale mapping so future deals re-evaluate via LLM instead of
+    # serving the old wrong answer from cache.
+    if user_correction is not None and verified_item_raw_text:
+        from app.services.normalization_service import NormalizationService
+        try:
+            await NormalizationService.invalidate_cache_entry(verified_item_raw_text)
+            logger.info(f"Cache invalidated for corrected item: '{verified_item_raw_text}' → '{user_correction}'")
+        except Exception as e:
+            logger.error(f"Failed to invalidate cache for '{verified_item_raw_text}': {e}")
+
     # Recalculate progress
     total_items = len(package.normalized_data)
     verified_items = sum(1 for item in package.normalized_data if item.user_verified)
     package.verification_progress = (verified_items / total_items) * 100 if total_items > 0 else 0
-    
+
     # Save changes
     await storage_service.save_deal_package(package.model_dump())
-    
+
     return {
         "item_id": item_id,
         "verified": True,
@@ -1622,11 +1710,19 @@ async def _analyze_deal_package_logic(
             # Semaphore to avoid overwhelming LLM API with too many parallel batches
             audit_sem = asyncio.Semaphore(5)
 
+            # Skip non-text file types for contextual verification
+            _PROCESSABLE_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.txt', '.csv'}
+
             async def process_doc_audit(doc_id, items):
                 nonlocal verified_items_results
                 # Fetch document text once
                 full_text = ""
                 source_filename = items[0].source_document or "unknown.pdf"
+
+                # Skip non-text file types (images, videos, etc.)
+                ext = Path(source_filename).suffix.lower()
+                if ext not in _PROCESSABLE_EXTENSIONS:
+                    return
 
                 # 1. Try OCR Backend first (Fastest/Best)
                 try:
@@ -1710,9 +1806,13 @@ async def _analyze_deal_package_logic(
                         if res_list:
                             verified_items_results.extend(res_list)
 
-            # Parallelize across documents
+            # Parallelize across documents (with 120s timeout to prevent hanging on large packages)
             doc_audit_tasks = [process_doc_audit(doc_id, items) for doc_id, items in items_by_doc.items()]
-            await asyncio.gather(*doc_audit_tasks)
+            logger.info(f"Running contextual audit on {len(doc_audit_tasks)} document groups...")
+            try:
+                await asyncio.wait_for(asyncio.gather(*doc_audit_tasks), timeout=120)
+            except asyncio.TimeoutError:
+                logger.warning(f"Contextual verification timed out after 120s ({len(verified_items_results)} items verified so far)")
 
             # 2. Apply Verification Results
             # Create map for fast lookup
@@ -1915,10 +2015,26 @@ async def _analyze_deal_package_logic(
             # --- Year Built Verification Agent ---
             logger.info("Running Year Built Verification Agent...")
             yb_candidates = []
-            
-            # Find all documents that mention Year Built and pass them to LLM
+
+            # File extensions that can contain text about year built
+            _TEXT_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.txt', '.csv'}
+            # Document types worth searching for year built
+            _YB_RELEVANT_DOC_TYPES = {
+                DocumentType.OFFERING_MEMORANDUM, DocumentType.FINANCIALS,
+                DocumentType.DISCLOSURES, DocumentType.BUILDING_PLANS,
+                DocumentType.TAX_BILLS, DocumentType.LEASES,
+            }
+
+            # Find all text-based documents that mention Year Built and pass them to LLM
             for doc_type, docs in package.documents.items():
+                # Skip image/utility/rent roll categories - unlikely to contain year built
+                if doc_type not in _YB_RELEVANT_DOC_TYPES:
+                    continue
                 for doc in docs:
+                    # Skip non-text file types (images, videos, etc.)
+                    ext = Path(doc.filename).suffix.lower()
+                    if ext not in _TEXT_DOC_EXTENSIONS:
+                        continue
                     doc_id = doc.document_id
                     full_text = ""
                     try:
@@ -2134,7 +2250,7 @@ async def _analyze_deal_package_logic(
     # Parse normalized items for expenses only (property metadata already synthesized)
     for item in normalized_items:
         # Check if this is an expense item
-        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group in ["Operating Expense", "Tax & Insurance"]):
+        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group in ["Operating Expense", "Tax & Insurance", "Revenue"]):
             try:
                 # Parse the category
                 # Fallback to Other OpEx if unknown

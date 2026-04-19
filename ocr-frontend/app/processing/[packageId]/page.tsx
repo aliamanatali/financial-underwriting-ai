@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import Sidebar from "@/components/Sidebar";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -16,26 +16,58 @@ interface DocumentCategory {
   completedCount: number;
   status: 'completed' | 'processing' | 'queued';
   fileNames: string[];
+  categoryProgress?: number; // 0-100 per-category percentage from backend
 }
 
 function ProcessingContent() {
   const { user } = useAuth();
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const packageId = params.packageId as string;
+  const reanalyzeLevel = searchParams.get("reanalyze") ? parseInt(searchParams.get("reanalyze")!, 10) as 1 | 2 | 3 | 4 : null;
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
-  const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: "Starting normalization..." });
+  const [progress, setProgress] = useState<FinancialAnalysisProgress>({ percentage: 0, message: reanalyzeLevel ? `Re-analyzing (level ${reanalyzeLevel})...` : "Starting normalization..." });
   const [dealPackage, setDealPackage] = useState<DealPackage | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([]);
   const [activeFiles, setActiveFiles] = useState<string[]>([]);
-  const [isReviewing, setIsReviewing] = useState(true);
+  const [isReviewing, setIsReviewing] = useState(!reanalyzeLevel);
   const [startProcessing, setStartProcessing] = useState(false);
+  // "attach_only" means we connect to SSE but don't POST /normalize (resuming in-progress work)
+  const [attachOnly, setAttachOnly] = useState(false);
+  const [processingFailed, setProcessingFailed] = useState(false);
+  const [failedMessage, setFailedMessage] = useState("");
 
   const toggleSidebar = () => {
     setSidebarExpanded(!sidebarExpanded);
   };
 
-  // Fetch package details
+  // Build categories from package documents data
+  const buildCategories = (documents: Record<string, any[]>): DocumentCategory[] => {
+    return Object.entries(documents).map(([type, docs]) => {
+      let docArray = Array.isArray(docs) ? docs : [];
+
+      // Filter out system files and unsupported types that won't be processed
+      docArray = docArray.filter((d: any) => {
+         const lowerName = d.filename.toLowerCase();
+         return !lowerName.endsWith('thumbs.db') &&
+                !lowerName.endsWith('desktop.ini') &&
+                !lowerName.endsWith('.ds_store') &&
+                !d.filename.startsWith('.') &&
+                !d.filename.includes('__MACOSX');
+      });
+
+      return {
+        name: type,
+        count: docArray.length,
+        completedCount: 0,
+        status: 'queued' as const,
+        fileNames: docArray.map((d: any) => d.filename)
+      };
+    });
+  };
+
+  // Fetch package details and determine what screen to show
   const fetchPackage = useCallback(async () => {
     try {
       const response = await fetch(
@@ -46,56 +78,63 @@ function ProcessingContent() {
         const data = await response.json();
         console.log("Fetched package data for processing:", data);
         setDealPackage(data);
-        
-        // Build categories from documents
-        const cats: DocumentCategory[] = Object.entries(data.documents).map(([type, docs]) => {
-          let docArray = Array.isArray(docs) ? docs : [];
-          
-          // Filter out system files and unsupported types that won't be processed
-          // This prevents "0/1 processed" for ignored files like Thumbs.db
-          docArray = docArray.filter((d: any) => {
-             const lowerName = d.filename.toLowerCase();
-             return !lowerName.endsWith('thumbs.db') &&
-                    !lowerName.endsWith('desktop.ini') &&
-                    !lowerName.endsWith('.ds_store') &&
-                    !d.filename.startsWith('.') &&
-                    !d.filename.includes('__MACOSX');
-          });
+        setCategories(buildCategories(data.documents));
 
-          return {
-            name: type,
-            count: docArray.length,
-            completedCount: 0,
-            status: 'queued' as const,
-            fileNames: docArray.map((d: any) => d.filename)
-          };
-        });
-        setCategories(cats);
-        
-        // Check if package is already normalized
-        if (data.normalization_status === "completed" || data.normalization_status === "in_progress") {
-          // Note: If in_progress, we might want to attach to stream instead of redirecting
-          // But if it's "completed", we redirect.
-          if (data.normalization_status === "completed") {
-              console.log("Package already normalized, redirecting to analysis page...");
-              router.push(`/analysis/${packageId}`);
-              return true; 
+        const status = data.normalization_status;
+
+        // Explicit handling for every possible normalization_status
+        if (status === "completed") {
+          console.log("Package already completed, redirecting to analysis page...");
+          router.push(`/analysis/${packageId}`);
+          return true;
+        }
+
+        if (status === "in_progress") {
+          console.log("Package in progress, attaching to existing SSE stream...");
+          // Fetch current progress from Redis to initialize state before SSE connects
+          try {
+            const currentProgress = await apiClient.getCurrentProgress(packageId);
+            if (currentProgress && currentProgress.percentage > 0) {
+              setProgress(currentProgress);
+              console.log(`Resuming at ${currentProgress.percentage}%: ${currentProgress.message}`);
+            } else {
+              setProgress({ percentage: 0, message: "Resuming..." });
+            }
+          } catch {
+            setProgress({ percentage: 0, message: "Resuming..." });
           }
-          // If in progress, skip review and go straight to processing
           setIsReviewing(false);
+          setAttachOnly(true);
+          setStartProcessing(true);
+          return false;
+        }
+
+        if (status === "failed") {
+          console.log("Package processing previously failed.");
+          setProcessingFailed(true);
+          setFailedMessage("Previous processing attempt failed. You can retry.");
+          setIsReviewing(false);
+          return false;
+        }
+
+        if (reanalyzeLevel) {
+          // Re-analyze was triggered by the analysis page — just attach to SSE
+          // (the background task may not have updated the status yet)
+          setIsReviewing(false);
+          setAttachOnly(true);
           setStartProcessing(true);
         } else if (!startProcessing) {
-          // Pending status - show review screen
+          // status === "pending" (or any unknown value) → show review screen
           setIsReviewing(true);
         }
-        
-        return false; // Signal to continue
+
+        return false;
       }
     } catch (err) {
       console.error("Failed to fetch package:", err);
     }
     return false;
-  }, [packageId, router, startProcessing]);
+  }, [packageId, router, startProcessing, reanalyzeLevel]);
 
   useEffect(() => {
     if (!dealPackage) {
@@ -103,12 +142,31 @@ function ProcessingContent() {
     }
   }, [dealPackage, fetchPackage]);
 
+  // Retry handler for failed state
+  const handleRetry = async () => {
+    setProcessingFailed(false);
+    setFailedMessage("");
+    // Reset status to pending in backend so dedup guard allows re-run
+    try {
+      await fetch(
+        `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}/reset-status`,
+        { method: "POST" }
+      );
+    } catch {
+      // If reset endpoint doesn't exist, the normalize endpoint will handle it
+    }
+    setProgress({ percentage: 0, message: "Starting normalization..." });
+    setAttachOnly(false);
+    // Toggle off then on to ensure the useEffect re-fires even if startProcessing was already true
+    setStartProcessing(false);
+    setTimeout(() => setStartProcessing(true), 0);
+  };
+
   const handleReviewComplete = async (updatedFiles?: Record<string, DocumentFile[]>) => {
       // Force refresh of package data before starting
       await fetchPackage();
 
       // If we have updated files from the review component, update categories to reflect user's changes
-      // This ensures the summary matches exactly what the user just approved, overriding any potential API lag
       if (updatedFiles) {
           console.log("Using locally updated files for categories summary");
           const cats: DocumentCategory[] = Object.entries(updatedFiles).map(([type, docs]) => {
@@ -124,134 +182,150 @@ function ProcessingContent() {
       }
 
       setIsReviewing(false);
+      setAttachOnly(false);
       setStartProcessing(true);
   };
 
-  useEffect(() => {
-    // Start normalization and progress tracking
-    const startNormalization = async () => {
-      if (!startProcessing) return;
+  // SSE progress handler — extracted so both "new" and "attach" paths use the same logic
+  const createProgressHandler = (eventSourceRef: { current: EventSource | null }) => {
+    let hasRedirected = false;
 
-      let hasRedirected = false;
-      let eventSource: EventSource | null = null;
-      
-      // Start progress stream
-      eventSource = apiClient.streamFinancialAnalysisProgress(packageId, (progressUpdate) => {
-        // Only update progress if the percentage is greater or equal to current, 
-        // or if it's not the initial "Connecting..." message
-        setProgress(prev => {
-            if (progressUpdate.message === "Connecting..." && prev.percentage > 0) {
-                return prev;
-            }
-            if (progressUpdate.percentage > prev.percentage || prev.percentage === 0 || progressUpdate.percentage === prev.percentage) {
-                return progressUpdate;
-            }
-            return prev;
-        });
-        
-        // Update active files and categories
-        if (progressUpdate.details) {
-            const active = (progressUpdate.details.active_files as string[]) || [];
-            const completed = (progressUpdate.details.completed_files as string[]) || [];
-            
-            // Only update active files if the list has changed
-            // Using JSON stringify for simple array comparison
-            setActiveFiles(prev => {
-                if (JSON.stringify(prev.sort()) !== JSON.stringify(active.sort())) {
-                    return active;
-                }
-                return prev;
-            });
-
-            // Update categories based on active and completed files
-            setCategories(prevCats => {
-                return prevCats.map(cat => {
-                    // Count how many of this category's files are completed
-                    const catCompletedCount = cat.fileNames.filter(f => completed.includes(f)).length;
-                    
-                    // Check if any of this category's files are active
-                    const isProcessing = cat.fileNames.some(f => active.includes(f));
-                    
-                    let newStatus = cat.status;
-                    if (catCompletedCount === cat.count && cat.count > 0) {
-                        newStatus = 'completed';
-                    } else if (isProcessing || catCompletedCount > 0) {
-                        newStatus = 'processing';
-                    } else {
-                        newStatus = 'queued';
-                    }
-
-                    return {
-                        ...cat,
-                        completedCount: catCompletedCount,
-                        status: newStatus
-                    };
-                });
-            });
+    return (progressUpdate: FinancialAnalysisProgress) => {
+      setProgress(prev => {
+        if (progressUpdate.message === "Connecting..." && prev.percentage > 0) {
+          return prev;
         }
-        
-        // Check if processing is complete (100%)
-        if (progressUpdate.percentage >= 100 && !hasRedirected) {
-          hasRedirected = true;
-          console.log("Processing complete, redirecting to analysis page...");
-          
-          // Mark all categories as completed
-          setCategories(prev => prev.map(cat => ({ ...cat, status: 'completed', completedCount: cat.count })));
-          setActiveFiles([]);
-
-          // Close event source and redirect
-          setTimeout(() => {
-            if (eventSource) eventSource.close();
-            router.push(`/analysis/${packageId}`);
-          }, 1500);
+        if (progressUpdate.percentage > prev.percentage || prev.percentage === 0 || progressUpdate.percentage === prev.percentage) {
+          return progressUpdate;
         }
+        return prev;
       });
 
-      try {
-        const response = await fetch(
-          `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}/normalize`,
-          {
-            method: "POST",
-          }
-        );
+      // Update active files and categories
+      if (progressUpdate.details) {
+        const active = (progressUpdate.details.active_files as string[]) || [];
+        const completed = (progressUpdate.details.completed_files as string[]) || [];
 
-        if (!response.ok) {
-          throw new Error("Failed to normalize documents");
-        }
-        
-      } catch (err) {
-        console.error("Normalization failed:", err);
-        if (eventSource) eventSource.close();
-        // Redirect back to upload page on error
-        setTimeout(() => {
-          router.push(`/upload-package`);
-        }, 2000);
-      }
-      
-      // Return cleanup function to useEffect
-      return () => {
-          if (eventSource) {
-              console.log("Cleaning up EventSource");
-              eventSource.close();
+        // Merge active files rather than replacing — only remove files that
+        // have moved to completed, and add any new ones.  This prevents
+        // flickering when rapid SSE updates briefly report an empty active list
+        // between file transitions.
+        setActiveFiles(prev => {
+          const completedSet = new Set(completed);
+          // Keep previously active files that haven't completed yet, add new ones
+          const merged = new Set([...prev.filter(f => !completedSet.has(f)), ...active]);
+          const next = Array.from(merged);
+          if (JSON.stringify([...prev].sort()) !== JSON.stringify(next.sort())) {
+            return next;
           }
-      };
-    };
-
-    // Only start if explicitly requested
-    if (startProcessing) {
-        // startNormalization is async, so we can't return its result directly to useEffect
-        // But we can keep track of the cleanup function it generates
-        let cleanupFunc: (() => void) | undefined;
-        
-        startNormalization().then(cleanup => {
-            cleanupFunc = cleanup;
+          return prev;
         });
-        
-        return () => {
-            if (cleanupFunc) cleanupFunc();
-        };
+
+        setCategories(prevCats => {
+          return prevCats.map(cat => {
+            const catCompletedCount = cat.fileNames.filter(f => completed.includes(f)).length;
+            const isProcessing = cat.fileNames.some(f => active.includes(f));
+
+            // Never regress status: completed stays completed, processing never goes back to queued
+            let newStatus = cat.status;
+            if (cat.status === 'completed') {
+              // Once completed, never regress (subsequent extraction steps may
+              // send progress updates that don't include this category's files)
+              newStatus = 'completed';
+            } else if (catCompletedCount === cat.count && cat.count > 0) {
+              newStatus = 'completed';
+            } else if (isProcessing || catCompletedCount > 0) {
+              newStatus = 'processing';
+            } else if (cat.status !== 'processing') {
+              newStatus = 'queued';
+            }
+
+            // Compute per-category percentage from this category's own
+            // completed/total counts instead of using the shared backend key,
+            // which lumps multiple categories (e.g. all non-OM docs) together.
+            let categoryPct: number | undefined;
+            if (newStatus === 'processing' && cat.count > 0) {
+              categoryPct = Math.round((catCompletedCount / cat.count) * 100);
+            }
+
+            return {
+              ...cat,
+              completedCount: catCompletedCount,
+              status: newStatus,
+              categoryProgress: categoryPct,
+            };
+          });
+        });
+      }
+
+      // Check if processing failed (negative percentage from background task)
+      if (progressUpdate.percentage < 0) {
+        if (eventSourceRef.current) eventSourceRef.current.close();
+        setProcessingFailed(true);
+        setFailedMessage(progressUpdate.message || "Processing failed");
+        return;
+      }
+
+      // Check if processing is complete (100%)
+      if (progressUpdate.percentage >= 100 && !hasRedirected) {
+        hasRedirected = true;
+        console.log("Processing complete, redirecting to analysis page...");
+
+        setCategories(prev => prev.map(cat => ({ ...cat, status: 'completed', completedCount: cat.count })));
+        setActiveFiles([]);
+
+        setTimeout(() => {
+          if (eventSourceRef.current) eventSourceRef.current.close();
+          router.push(`/analysis/${packageId}`);
+        }, 1500);
+      }
+    };
+  };
+
+  useEffect(() => {
+    if (!startProcessing) return;
+
+    const eventSourceRef: { current: EventSource | null } = { current: null };
+    const progressHandler = createProgressHandler(eventSourceRef);
+
+    // Always connect to SSE stream
+    eventSourceRef.current = apiClient.streamFinancialAnalysisProgress(packageId, progressHandler);
+
+    // Fire the backend call — only for normal flow (re-analyze is triggered by the analysis page)
+    if (!attachOnly && !reanalyzeLevel) {
+      // Normal flow: POST /normalize for new processing runs
+      (async () => {
+        try {
+          const response = await fetch(
+            `${process.env.NEXT_PUBLIC_FINANCIAL_API_URL}/api/v1/multi-document/packages/${packageId}/normalize`,
+            { method: "POST" }
+          );
+
+          if (response.status === 409) {
+            // Already in progress — SSE will pick up current state, nothing to do
+            console.log("Normalization already in progress (409), attached to SSE stream.");
+            return;
+          }
+
+          if (!response.ok) {
+            throw new Error("Failed to normalize documents");
+          }
+        } catch (err) {
+          console.error("Normalization failed:", err);
+          if (eventSourceRef.current) eventSourceRef.current.close();
+          setProcessingFailed(true);
+          setFailedMessage(String(err));
+        }
+      })();
     }
-  }, [packageId, router, startProcessing]);
+
+    return () => {
+      if (eventSourceRef.current) {
+        console.log("Cleaning up EventSource");
+        eventSourceRef.current.close();
+      }
+    };
+  }, [packageId, router, startProcessing, attachOnly, reanalyzeLevel]);
 
   return (
     <div className={`min-h-screen overflow-hidden relative bg-[#F8FAFC] text-[#0F172A] flex ${sidebarExpanded ? "has-expanded-sidebar" : ""}`}>
@@ -277,7 +351,7 @@ function ProcessingContent() {
               <span className="hover:text-[#475569] cursor-pointer" onClick={() => router.push("/dashboard")}>Deals</span>
               <span>/</span>
               <span className="text-[#0F172A] font-medium">
-                {isReviewing ? "Organize Files" : "Processing Documents"}
+                {isReviewing ? "Organize Files" : reanalyzeLevel ? "Re-Analyzing" : "Processing Documents"}
               </span>
             </nav>
           </div>
@@ -299,7 +373,25 @@ function ProcessingContent() {
         <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8 min-w-0">
           <div className={`mx-auto flex flex-col gap-6 ${isReviewing ? "max-w-[95%]" : "max-w-5xl"}`}>
 
-            {isReviewing && dealPackage ? (
+            {processingFailed ? (
+              <div className="max-w-xl mx-auto flex flex-col items-center gap-6 py-16">
+                <div className="w-14 h-14 rounded-full bg-[rgba(239,68,68,0.12)] flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#EF4444]">
+                    <circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" />
+                  </svg>
+                </div>
+                <div className="text-center">
+                  <h2 className="text-xl font-semibold text-[#0F172A] mb-2">Processing Failed</h2>
+                  <p className="text-sm text-[#64748B]">{failedMessage || "An error occurred during document processing."}</p>
+                </div>
+                <button
+                  onClick={handleRetry}
+                  className="px-5 py-2.5 rounded-lg bg-[#0F172A] text-white text-sm font-medium hover:bg-[#1E293B] transition-colors"
+                >
+                  Retry Processing
+                </button>
+              </div>
+            ) : isReviewing && dealPackage ? (
               <FileOrganization
                 packageId={packageId}
                 initialPackage={dealPackage}
@@ -341,14 +433,36 @@ function ProcessingContent() {
                       </div>
 
                       <div className="space-y-3">
-                        {progress.percentage >= 60 && (
-                          <div className="flex items-center gap-2 p-2.5 bg-[rgba(59,130,246,0.08)] border border-[rgba(59,130,246,0.15)] rounded-lg">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#60A5FA] animate-spin shrink-0">
+                        {progress.percentage > 0 && progress.percentage < 100 && activeFiles.length === 0 && (
+                          <div className={`flex items-center gap-2 p-2.5 rounded-lg ${
+                            progress.percentage >= 80
+                              ? "bg-[rgba(16,185,129,0.08)] border border-[rgba(16,185,129,0.15)]"
+                              : progress.percentage >= 60
+                              ? "bg-[rgba(59,130,246,0.08)] border border-[rgba(59,130,246,0.15)]"
+                              : "bg-[rgba(249,115,22,0.08)] border border-[rgba(249,115,22,0.15)]"
+                          }`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 animate-spin ${
+                              progress.percentage >= 80 ? "text-[#10B981]" : progress.percentage >= 60 ? "text-[#60A5FA]" : "text-[#F97316]"
+                            }`}>
                               <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                             </svg>
-                            <span className="text-xs font-medium text-[#60A5FA]">
-                              {progress.percentage >= 100 ? "Finalizing Report…" : progress.percentage >= 80 ? "Generating Financial Report…" : "Normalizing Extracted Data…"}
+                            <span className={`text-xs font-medium ${
+                              progress.percentage >= 80 ? "text-[#10B981]" : progress.percentage >= 60 ? "text-[#60A5FA]" : "text-[#F97316]"
+                            }`}>
+                              {progress.percentage >= 60
+                                ? progress.message
+                                : progress.percentage >= 40 ? "Normalizing Extracted Data…"
+                                : progress.percentage >= 15 ? "Extracting Data from Documents…"
+                                : progress.message || "Preparing Documents…"}
                             </span>
+                          </div>
+                        )}
+                        {progress.percentage >= 100 && (
+                          <div className="flex items-center gap-2 p-2.5 bg-[rgba(16,185,129,0.08)] border border-[rgba(16,185,129,0.15)] rounded-lg">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#10B981] shrink-0">
+                              <path d="M20 6 9 17l-5-5" />
+                            </svg>
+                            <span className="text-xs font-medium text-[#10B981]">Analysis complete — redirecting…</span>
                           </div>
                         )}
 
@@ -424,7 +538,12 @@ function ProcessingContent() {
                               </div>
                               <div>
                                 <p className="text-sm font-medium text-[#0F172A]">{category.name}</p>
-                                <p className="text-[10px] text-[#64748B] font-mono">{category.completedCount} / {category.count} processed</p>
+                                <p className="text-[10px] text-[#64748B] font-mono">
+                                  {category.completedCount} / {category.count} processed
+                                  {category.status === 'processing' && category.categoryProgress != null && category.categoryProgress < 100 && (
+                                    <span className="ml-1.5 text-[#F97316]">&middot; {Math.round(category.categoryProgress)}%</span>
+                                  )}
+                                </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-2">

@@ -8,6 +8,7 @@ import logging
 import json
 import asyncio
 from typing import List, Dict, Any, Optional
+from starlette.concurrency import run_in_threadpool
 import openpyxl
 from openpyxl.worksheet.worksheet import Worksheet
 from google import genai
@@ -24,8 +25,16 @@ from app.services.extract_om_details import OMScraperService
 
 logger = logging.getLogger(__name__)
 
-# Ordered preference for OM scenario selection when no historical/in-place
-# scenario is found. Used by _convert_om_proforma_to_expenses Tier 2 logic.
+# ── OM Scenario Selection ─────────────────────────────────────────────────
+# When an OM contains multiple proforma scenarios (e.g. "Stabilized" and
+# "Market"), we select ONE for the expense pipeline.  Selection priority:
+#
+#   Tier 1 — Historical/in-place keywords: "current", "actual", "t12",
+#            "trailing", "in-place"  (but NOT "pro forma" in the name).
+#   Tier 2 — Forward-looking keywords listed in OM_SCENARIO_PREFERENCE.
+#   Tier 3 — First table in the list (arbitrary but deterministic).
+#
+# Changing this constant changes which Tier-2 keywords are tried, in order.
 OM_SCENARIO_PREFERENCE = ["year 1", "stabilized", "pro forma"]
 
 
@@ -746,8 +755,7 @@ class MultiDocumentExtractionService:
             try:
                 # Read file content for direct processing (new API doesn't require file upload)
                 # Instead, we'll pass the file content directly
-                with open(tmp_path, 'rb') as f:
-                    file_bytes = f.read()
+                file_bytes = await run_in_threadpool(lambda: open(tmp_path, 'rb').read())
                 
                 logger.info(f"Processing file with Gemini: {filename} ({mime_type})")
 
@@ -924,8 +932,7 @@ class MultiDocumentExtractionService:
             
             try:
                 # Read file content for direct processing
-                with open(tmp_path, 'rb') as f:
-                    file_bytes = f.read()
+                file_bytes = await run_in_threadpool(lambda: open(tmp_path, 'rb').read())
                 
                 logger.info(f"Processing OM file with Gemini: {filename}")
                 
@@ -1088,10 +1095,16 @@ class MultiDocumentExtractionService:
     # were deleted in Tier C. All normalization now routes through the adapter →
     # NormalizationService pipeline in process_financial_documents.
 
+    # (deleted methods formerly here — see git history)
+
     def _convert_om_proforma_to_expenses(self, proforma_tables: List[OMProformaTable], filename: str, document_id: str) -> List[Dict[str, Any]]:
         """
         Converts extracted OM Proforma tables into raw expense items for normalization.
-        Prioritizes 'Current', 'Actual', 'T12' scenarios.
+
+        Scenario selection (single-scenario output):
+          Tier 1 — historical/in-place: "current", "actual", "t12", etc.
+          Tier 2 — forward-looking via OM_SCENARIO_PREFERENCE constant.
+          Tier 3 — first table (fallback).
         """
         if not proforma_tables:
             return []
@@ -1188,7 +1201,7 @@ class MultiDocumentExtractionService:
             elif "rent" in row_lower and not is_excluded_rent:
                 item_type = "revenue"
                 subtype = "rent"
-
+            
             # Exclude NOI, Total Income, Total Expenses lines to avoid double counting
             # These are usually summary lines. We want line items.
             if any(x in row_lower for x in [

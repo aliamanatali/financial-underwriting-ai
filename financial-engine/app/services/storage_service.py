@@ -163,6 +163,39 @@ class StorageService:
         _memory_storage[package_id] = package_data
         return True
 
+    async def partial_update_deal_package(self, package_id: str, fields: dict) -> bool:
+        """
+        Update specific fields on a deal package without rewriting the full document.
+
+        Uses MongoDB $set so only the supplied keys are touched, avoiding
+        write-amplification on multi-MB documents during pipeline processing.
+        Falls back to a full read-modify-write for in-memory storage.
+        """
+        if not package_id or not fields:
+            return False
+
+        now = datetime.utcnow().isoformat()
+        fields["updated_at"] = now
+
+        if self.use_mongodb:
+            try:
+                db = get_database()
+                await db.deal_packages.update_one(
+                    {"package_id": package_id},
+                    {"$set": fields},
+                )
+                logger.info(f"Partial update ({list(fields.keys())}) for package {package_id}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed partial update for {package_id}: {e}")
+                return False
+
+        # Fallback: in-memory
+        if package_id in _memory_storage:
+            _memory_storage[package_id].update(fields)
+            return True
+        return False
+
     async def save_analysis_result(self, package_id: str, analysis_data: dict) -> bool:
         """
         Save underwriting analysis result to MongoDB (or fallback).
@@ -181,7 +214,11 @@ class StorageService:
                 # Upsert based on document_id (which acts as package_id for single-doc analysis)
                 # Note: analysis_data usually contains 'document_id' which maps to package_id here
                 doc_id = analysis_data.get("document_id", package_id)
-                
+
+                # Stamp computed_at for versioning / stale-deal identification
+                from datetime import datetime, timezone
+                analysis_data["computed_at"] = datetime.now(timezone.utc).isoformat()
+
                 await db.analysis_results.update_one(
                     {"document_id": doc_id},
                     {"$set": analysis_data},
@@ -334,7 +371,15 @@ class StorageService:
                 db = get_database()
                 total = await db.deal_packages.count_documents({})
                 
-                cursor = db.deal_packages.find({}).sort("created_at", -1).skip(offset)
+                # Exclude heavy embedded arrays that the list view doesn't need.
+                # Using exclusion projection so new fields are included by default.
+                _LIST_EXCLUSION = {
+                    "financials_data": 0,
+                    "normalized_data": 0,
+                    "rent_roll_data": 0,
+                    "om_proforma_data": 0,
+                }
+                cursor = db.deal_packages.find({}, _LIST_EXCLUSION).sort("created_at", -1).skip(offset)
                 if limit is not None:
                     cursor = cursor.limit(limit)
                 
@@ -476,9 +521,8 @@ class StorageService:
                 full_path = self.local_storage_dir / blob_path
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 
-                with open(full_path, "wb") as f:
-                    f.write(file_content)
-                    
+                await run_in_threadpool(lambda: full_path.write_bytes(file_content))
+
                 logger.info(f"Saved document file locally: {filename} -> {full_path}")
                 return str(full_path)
             except Exception as e:
@@ -522,9 +566,8 @@ class StorageService:
                     logger.warning(f"Document file not found locally: {full_path}")
                     return None
                     
-                with open(full_path, "rb") as f:
-                    data = f.read()
-                    
+                data = await run_in_threadpool(lambda: full_path.read_bytes())
+
                 logger.info(f"Retrieved document file locally: {storage_path}")
                 return data
             except Exception as e:
