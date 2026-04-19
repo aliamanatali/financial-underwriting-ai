@@ -277,7 +277,14 @@ class DealParameters(BaseModel):
     bridge_spread: float = 0.02 # Spread over SOFR
     treasury_rate_5yr: float = 0.042 # 5-Year US Treasury Rate
     perm_spread: float = 0.0185 # 185 bps over Treasuries
-    
+
+    # Lease-Up Assumptions (high-vacancy acquisitions)
+    lease_up_downtime_months: float = 2.0    # Avg months to lease each vacant unit
+    lease_up_vacancy_threshold: float = 0.10  # Only applies above 10% physical vacancy
+
+    # Default Management Fee
+    default_mgmt_fee_pct: float = 0.04  # 4% of EGI when no mgmt fee extracted
+
     # Project Cost Assumptions
     closing_costs: float = 100_000.0
     renovation_budget: float = 0.0
@@ -515,10 +522,14 @@ class UnderwritingAnalysis(BaseModel):
     gross_potential_rent: Optional[float] = 0.0
     loss_to_lease: Optional[float] = 0.0
     vacancy_loss: Optional[float] = 0.0
+    year1_leaseup_loss: Optional[float] = None  # Year 1 only; absent when below threshold
     effective_gross_income: Optional[float] = 0.0
     other_income: Optional[float] = 0.0 # Extracted from T12
     pro_forma_expenses: Optional[float] = 0.0
     pro_forma_noi: Optional[float] = 0.0
+    stabilized_noi: Optional[float] = None  # Year 2+ NOI (without lease-up loss)
+    mgmt_fee_source: Optional[str] = None  # "extracted" | "default_injected" | "user_override"
+    stabilized_egi: Optional[float] = None  # Year 2+ EGI (without lease-up loss); internal use
     
     # Valuation Metrics
     yield_on_cost: Optional[float] = 0.0
@@ -556,6 +567,8 @@ class UnderwritingAnalysis(BaseModel):
     investment_memo: Optional[str] = None
     conclusion: Optional[Conclusion] = None
     
+    computed_at: Optional[str] = None
+
     # OM Proforma Extraction
     om_proforma: Optional[List[OMProformaTable]] = []
     tax_assumptions: Optional[OMTaxAssumptions] = None

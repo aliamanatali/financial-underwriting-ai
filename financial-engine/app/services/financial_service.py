@@ -858,11 +858,72 @@ class FinancialService:
              logger.info(f"Scaled Other Income by {scaling_factor:.4f} -> ${other_income_total:,.0f}")
              
         analysis.other_income = self._sanitize_value(other_income_total)
-        
-        egi = gpr - loss_to_lease - vacancy_loss + other_income_total
+
+        # 4a. Year 1 Lease-Up Loss (high-vacancy acquisitions)
+        # When physical vacancy exceeds the threshold, the Year 1 pro forma
+        # includes a lease-up loss reflecting downtime to fill vacant units.
+        from app.models.schemas import is_unit_vacant
+        total_units = len(analysis.rent_roll) or analysis.property_meta.total_units or 0
+        vacant_units = sum(
+            1 for u in analysis.rent_roll
+            if is_unit_vacant(
+                current_rent=u.current_rent or 0.0,
+                tenant_name=u.tenant_name or "",
+                unit_type=u.unit_type or "",
+                move_in_date=u.move_in_date,
+                is_vacant_flag=u.is_vacant,
+            )
+        )
+        physical_vacancy = vacant_units / total_units if total_units > 0 else 0.0
+
+        year1_leaseup_loss = 0.0
+        if physical_vacancy > params.lease_up_vacancy_threshold and vacant_units > 0:
+            # Average market rent per vacant unit (monthly)
+            vacant_market_rents = [
+                (u.market_rent or 0.0) for u in analysis.rent_roll
+                if is_unit_vacant(
+                    current_rent=u.current_rent or 0.0,
+                    tenant_name=u.tenant_name or "",
+                    unit_type=u.unit_type or "",
+                    move_in_date=u.move_in_date,
+                    is_vacant_flag=u.is_vacant,
+                )
+            ]
+            avg_vacant_market = sum(vacant_market_rents) / len(vacant_market_rents) if vacant_market_rents else 0.0
+            year1_leaseup_loss = vacant_units * avg_vacant_market * params.lease_up_downtime_months
+            logger.info(
+                f"Year 1 Lease-Up Loss: {vacant_units} vacant units × "
+                f"${avg_vacant_market:,.0f} avg market rent × "
+                f"{params.lease_up_downtime_months} months = ${year1_leaseup_loss:,.0f} "
+                f"(physical vacancy {physical_vacancy:.1%} > {params.lease_up_vacancy_threshold:.0%} threshold)"
+            )
+            self.audit_log_service.add_log(
+                analysis, "Year 1 Lease-Up Loss", f"${year1_leaseup_loss:,.0f}",
+                "Lease-Up Model",
+                f"{vacant_units} units × ${avg_vacant_market:,.0f}/mo × {params.lease_up_downtime_months} mo"
+            )
+
+        analysis.year1_leaseup_loss = self._sanitize_value(year1_leaseup_loss) if year1_leaseup_loss > 0 else None
+
+        # 4b. Effective Gross Income (Year 1)
+        # Year 1 EGI includes lease-up loss; stabilized EGI (Year 2+) does not.
+        egi = gpr - loss_to_lease - vacancy_loss - year1_leaseup_loss + other_income_total
+        stabilized_egi = gpr - loss_to_lease - vacancy_loss + other_income_total
+
         analysis.effective_gross_income = self._sanitize_value(egi)
+        # Store stabilized EGI for Year 2+ NOI computation in _calculate_returns
+        analysis.stabilized_egi = self._sanitize_value(stabilized_egi)
+
         self.audit_log_service.add_log(analysis, "Other Income", f"${other_income_total:,.0f}", "T12 Extraction", "Sum of Other Income & Reimbursements")
-        self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation", "GPR - LossToLease - VacancyLoss + OtherIncome")
+        if year1_leaseup_loss > 0:
+            self.audit_log_service.add_log(analysis, "EGI (Year 1)", f"${egi:,.0f}", "Calculation",
+                                           "GPR - LTL - Vacancy - LeaseUpLoss + OtherIncome")
+            self.audit_log_service.add_log(analysis, "EGI (Stabilized)", f"${stabilized_egi:,.0f}", "Calculation",
+                                           "GPR - LTL - Vacancy + OtherIncome")
+        else:
+            self.audit_log_service.add_log(analysis, "EGI", f"${egi:,.0f}", "Calculation",
+                                           "GPR - LTL - Vacancy + OtherIncome")
+
 
     # --- Step 2: Expense Logic ---
     def _calculate_expenses(self, analysis: UnderwritingAnalysis):
@@ -879,10 +940,36 @@ class FinancialService:
         self.audit_log_service.add_log(analysis, "Expense: Taxes", f"${pro_forma_tax:,.0f}", "Valiance Rule", f"Purchase Price * {params.tax_rate:.2%}")
 
         # 2. Management Fee
-        # Formula: EGI * 0.04
-        mgmt_fee = self._sanitize_value(egi * params.management_fee_rate)
+        # Check if an extracted (non-zero) mgmt fee exists in historical expenses
+        extracted_mgmt = 0.0
+        mgmt_user_verified = False
+        if analysis.historical_expenses:
+            for exp in analysis.historical_expenses:
+                if exp.mapped_category == ExpenseCategory.MANAGEMENT_FEES:
+                    if getattr(exp, 'user_verified', False):
+                        mgmt_user_verified = True
+                    extracted_mgmt += exp.amount
+
+        if mgmt_user_verified:
+            mgmt_fee = self._sanitize_value(extracted_mgmt)
+            analysis.mgmt_fee_source = "user_override"
+            self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}",
+                                           "User Override", "User-verified management fee")
+        elif extracted_mgmt > 0:
+            mgmt_fee = self._sanitize_value(egi * params.management_fee_rate)
+            analysis.mgmt_fee_source = "extracted"
+            self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}",
+                                           "Valiance Rule", f"{params.management_fee_rate:.1%} of EGI (extracted fee present)")
+        else:
+            # No mgmt fee extracted — inject default
+            mgmt_fee = self._sanitize_value(egi * params.default_mgmt_fee_pct)
+            analysis.mgmt_fee_source = "default_injected"
+            self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}",
+                                           "Default Injection",
+                                           f"No mgmt fee in source docs — default {params.default_mgmt_fee_pct:.0%} of EGI")
+            logger.warning(f"No Management Fee found in extraction. Injecting default: ${mgmt_fee:,.0f} ({params.default_mgmt_fee_pct:.0%} of EGI)")
+
         expense_breakdown.append(ProFormaExpenseItem(name=ExpenseCategory.MANAGEMENT_FEES.value, amount=mgmt_fee))
-        self.audit_log_service.add_log(analysis, "Expense: Mgmt Fee", f"${mgmt_fee:,.0f}", "Valiance Rule", f"{params.management_fee_rate:.1%} of EGI")
 
         # 3. Other Operating Expenses (Sourced from T12)
         # We aggregate historical expenses by category, excluding Taxes and Mgmt Fees which are recalculated.
@@ -930,6 +1017,10 @@ class FinancialService:
                     ExpenseCategory.GROSS_POTENTIAL_RENT,
                     ExpenseCategory.REIMBURSEMENTS
                 ]:
+                    if first_item.mapped_category == ExpenseCategory.UNCATEGORIZED:
+                        total_dropped = sum(i.amount for i in items)
+                        for i in items:
+                            logger.warning(f"DROPPED UNCATEGORIZED F12 expense: '{i.original_text}' (${i.amount:,.2f}) — review normalization if this is a real operating expense")
                     continue
                 
                 # Additional String Checks (Case-insensitive for safety)
@@ -1038,16 +1129,25 @@ class FinancialService:
 
     # --- Step 3: Profitability Metrics (NOI) ---
     def _calculate_profitability(self, analysis: UnderwritingAnalysis):
-        egi = analysis.effective_gross_income or 0
+        egi = analysis.effective_gross_income or 0  # Year 1 EGI (includes lease-up loss)
         opex = analysis.pro_forma_expenses or 0
         purchase_price = analysis.property_meta.purchase_price or 0
         params = analysis.deal_parameters or DealParameters()
 
-        # 1. Net Operating Income (NOI)
-        # Formula: EGI - OpEx
+        # 1. Net Operating Income (Year 1, includes lease-up loss if applicable)
         noi = egi - opex
         analysis.pro_forma_noi = self._sanitize_value(noi)
-        self.audit_log_service.add_log(analysis, "NOI", f"${noi:,.0f}", "Calculation", "EGI - OpEx")
+
+        # Stabilized NOI (Year 2+, no lease-up loss)
+        stabilized_egi = analysis.stabilized_egi if analysis.stabilized_egi is not None else egi
+        stabilized_noi = stabilized_egi - opex
+        analysis.stabilized_noi = self._sanitize_value(stabilized_noi) if analysis.year1_leaseup_loss else None
+
+        if analysis.year1_leaseup_loss:
+            self.audit_log_service.add_log(analysis, "Year 1 NOI", f"${noi:,.0f}", "Calculation", "Year 1 EGI - OpEx")
+            self.audit_log_service.add_log(analysis, "Stabilized NOI", f"${stabilized_noi:,.0f}", "Calculation", "Stabilized EGI - OpEx")
+        else:
+            self.audit_log_service.add_log(analysis, "NOI", f"${noi:,.0f}", "Calculation", "EGI - OpEx")
 
         # 2. Yield on Cost (Unlevered Yield)
         # Formula: NOI / Total Project Cost
@@ -1160,29 +1260,21 @@ class FinancialService:
         # Year 0: Investment (Negative)
         cash_flows.append(-equity_invested)
         
-        # Current NOI is Year 1 Base
-        current_noi = analysis.pro_forma_noi or 0
-        
-        # IMPORTANT: We assume NOI grows at the same rate as Revenue for simplicity in this model,
-        # OR we could grow Revenue and Expenses separately.
-        # Given the prompt says "Rents grow 3% annually", we'll apply growth to NOI for simplicity 
-        # unless full pro-forma tables are needed. 
-        # Re-reading prompt: "Year N Revenue = Year N-1 Revenue * 1.03".
-        # It doesn't specify Expense growth, but usually expenses grow too (at 2-3%).
-        # Let's assume NOI grows at 3% to keep it consistent with Revenue growth, 
-        # or implies Revenue grows and Expenses stay flat (which is aggressive).
-        # Better approach: Grow Revenue by 3%, Expenses by 3% (Standard), so NOI grows by 3%.
-        
-        annual_noi = current_noi
-        
+        # Year 1 NOI includes lease-up loss; Years 2+ use stabilized NOI
+        year1_noi = analysis.pro_forma_noi or 0
+        stabilized_noi = analysis.stabilized_noi if analysis.stabilized_noi is not None else year1_noi
+
         # Years 1-4 Cash Flow
+        annual_noi = year1_noi  # Year 1
         for year in range(1, params.hold_period):
-            # Cash Flow = NOI - Debt Service
             cf = annual_noi - (analysis.annual_debt_service or 0)
             cash_flows.append(cf)
-            
-            # Grow NOI for next year
-            annual_noi *= (1 + params.growth_rate)
+
+            if year == 1 and analysis.year1_leaseup_loss:
+                # Year 2 starts from stabilized NOI (lease-up complete)
+                annual_noi = stabilized_noi * (1 + params.growth_rate)
+            else:
+                annual_noi *= (1 + params.growth_rate)
             
         # Year 5 (Exit Year)
         year_5_noi = annual_noi
