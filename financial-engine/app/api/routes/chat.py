@@ -454,3 +454,9 @@ async def chat_with_report(
              yield f"data: {err_data}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/property-info")
+async def get_property_info(request: ChatMessage):
+    prompt = f"what is Gross Sq Ft for {request.content}. Return ONLY the value and unit, nothing else."
+    response = await gemini_client.generate_content_async(prompt, use_google_search=True, use_fast_model=True)
+    return {"value": response.strip()}

@@ -132,11 +132,11 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
   if (!file) return null;
 
   return (
-    <div className="w-[350px] border-l border-neutral-200 bg-white flex flex-col h-full shrink-0 animate-in slide-in-from-right duration-300">
+    <div className="w-[350px] border-l border-[#E2E8F0] bg-white flex flex-col h-full shrink-0 animate-in slide-in-from-right duration-300">
       <div className="p-6 h-full overflow-y-auto custom-scrollbar">
         <div className="flex items-center justify-between mb-6">
-            <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Document Preview</h3>
-            <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600">
+            <h3 className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-widest">Document Preview</h3>
+            <button onClick={onClose} className="text-[#94A3B8] hover:text-[#475569] transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18"></line>
                     <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -145,19 +145,19 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
         </div>
 
         {/* Preview Area */}
-        <div className="border border-neutral-200 rounded-lg bg-neutral-50 mb-6 overflow-hidden flex items-center justify-center min-h-[300px] max-h-[450px]">
+        <div className="border border-[#E2E8F0] rounded-xl bg-[#F8FAFC] mb-6 overflow-hidden flex items-center justify-center min-h-[300px] max-h-[450px]">
             {isLoading ? (
                 <div className="flex flex-col items-center gap-2">
-                    <div className="w-6 h-6 border-2 border-neutral-300 border-t-[#FF5E00] rounded-full animate-spin"></div>
-                    <span className="text-xs text-neutral-500">Loading...</span>
+                    <div className="w-6 h-6 border-2 border-[#E2E8F0] border-t-[#F97316] rounded-full animate-spin"></div>
+                    <span className="text-xs text-[#64748B]">Loading...</span>
                 </div>
             ) : error ? (
                 <div className="text-center p-4">
-                    <p className="text-xs text-neutral-400 mb-2">Preview not available</p>
+                    <p className="text-xs text-[#94A3B8] mb-2">Preview not available</p>
                 </div>
             ) : contentType === 'application/pdf' && contentUrl ? (
                 <div
-                    className="w-full h-full overflow-auto custom-scrollbar flex justify-center bg-neutral-100 cursor-pointer hover:bg-neutral-200 transition-colors"
+                    className="w-full h-full overflow-auto custom-scrollbar flex justify-center bg-[#F1F5F9] cursor-pointer hover:bg-[#E2E8F0] transition-colors"
                     onClick={() => onViewFull(file.id, file.name)}
                     title="Click to view full details"
                 >
@@ -166,7 +166,7 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
                         onLoadSuccess={onDocumentLoadSuccess}
                         loading={
                             <div className="flex items-center justify-center h-40">
-                                <div className="w-6 h-6 border-2 border-neutral-300 border-t-[#FF5E00] rounded-full animate-spin"></div>
+                                <div className="w-6 h-6 border-2 border-[#E2E8F0] border-t-[#F97316] rounded-full animate-spin"></div>
                             </div>
                         }
                         className="flex flex-col items-center"
@@ -193,7 +193,7 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-300 mx-auto mb-2">
                         <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
                     </svg>
-                    <p className="text-xs text-neutral-400">No preview available</p>
+                    <p className="text-xs text-[#94A3B8]">No preview available</p>
                 </div>
             )}
         </div>
@@ -202,7 +202,7 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
         <div className="flex flex-col gap-3 mb-8">
             <button 
                 onClick={handleDownload}
-                className="w-full flex items-center justify-center gap-2 bg-[#FF5E00] hover:bg-[#E05200] text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
+                className="w-full flex items-center justify-center gap-2 bg-[#F97316] hover:bg-[#EA6C0A] text-white py-2.5 rounded-lg text-sm font-medium transition-colors shadow-[0_2px_8px_rgba(249,115,22,0.25)]"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -225,20 +225,20 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
 
         {/* Metadata */}
         <div className="mb-8">
-            <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-4">Metadata</h3>
+            <h3 className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-4">Metadata</h3>
             <div className="space-y-3">
                 <div className="flex justify-between items-start text-sm">
-                    <span className="text-neutral-500">Filename</span>
-                    <span className="text-neutral-900 font-medium text-right max-w-[200px] break-words">{file.name}</span>
+                    <span className="text-[#64748B]">Filename</span>
+                    <span className="text-[#0F172A] font-medium text-right max-w-[200px] break-words">{file.name}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
-                    <span className="text-neutral-500">Size</span>
-                    <span className="text-neutral-900 font-medium">{formatFileSize(file.size)}</span>
+                    <span className="text-[#64748B]">Size</span>
+                    <span className="text-[#0F172A] font-medium">{formatFileSize(file.size)}</span>
                 </div>
                 {numPages && (
                     <div className="flex justify-between items-center text-sm">
-                        <span className="text-neutral-500">Pages</span>
-                        <span className="text-neutral-900 font-medium">{numPages}</span>
+                        <span className="text-[#64748B]">Pages</span>
+                        <span className="text-[#0F172A] font-medium">{numPages}</span>
                     </div>
                 )}
             </div>
@@ -247,7 +247,7 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
         {/* View Full Details */}
         <button 
             onClick={() => onViewFull(file.id, file.name)}
-            className="w-full flex items-center justify-center gap-2 bg-white border border-neutral-300 text-neutral-700 hover:bg-neutral-50 py-2.5 rounded-lg text-sm font-medium transition-colors"
+            className="w-full flex items-center justify-center gap-2 bg-white border border-[#E2E8F0] text-[#475569] hover:bg-[#F8FAFC] py-2.5 rounded-lg text-sm font-medium transition-colors"
         >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>

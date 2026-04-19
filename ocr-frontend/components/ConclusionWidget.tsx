@@ -9,31 +9,30 @@ interface ConclusionWidgetProps {
 
 function DecisionCard({ decision }: { decision: DecisionImpact }) {
   return (
-    <div className="bg-slate-50 rounded-lg p-5 border border-slate-200 hover:border-blue-300 transition-colors">
+    <div className="bg-[#F1F5F9] rounded-xl p-5 border border-[#E2E8F0] hover:border-[#CBD5E1] transition-all duration-150">
       <div className="flex justify-between items-start mb-3">
-        <h4 className="font-bold text-slate-900 text-sm uppercase tracking-wide">
+        <h4 className="font-bold text-[#0F172A] text-xs uppercase tracking-widest">
           {decision.metric}
         </h4>
-        <span className="bg-#FFE5D9 text-blue-800 text-xs px-2 py-0.5 rounded-full font-medium">
+        <span className="bg-[rgba(249,115,22,0.12)] text-[#F97316] text-[9px] px-2 py-0.5 rounded-full font-semibold border border-[rgba(249,115,22,0.2)] uppercase tracking-wide">
           AI Decision
         </span>
       </div>
-      
-      <p className="text-lg font-bold text-slate-800 mb-3 leading-tight">
+
+      <p className="text-base font-semibold text-[#0F172A] mb-4 leading-snug">
         {decision.decision}
       </p>
 
       <div className="space-y-3">
         <div>
-          <p className="text-xs text-slate-500 font-semibold uppercase mb-1">Reasoning</p>
-          <p className="text-sm text-slate-700 leading-relaxed bg-white p-2 rounded border border-slate-100">
+          <p className="text-[9px] text-[#64748B] font-semibold uppercase tracking-widest mb-1.5">Reasoning</p>
+          <p className="text-xs text-[#475569] leading-relaxed bg-[#F8FAFC] p-3 rounded-lg border border-[#E2E8F0]">
             {decision.reasoning}
           </p>
         </div>
-        
         <div>
-          <p className="text-xs text-slate-500 font-semibold uppercase mb-1">Client Impact</p>
-          <p className="text-sm text-slate-700 leading-relaxed bg-amber-50 p-2 rounded border border-amber-100 text-amber-900">
+          <p className="text-[9px] text-[#64748B] font-semibold uppercase tracking-widest mb-1.5">Client Impact</p>
+          <p className="text-xs leading-relaxed bg-[rgba(245,158,11,0.06)] p-3 rounded-lg border border-[rgba(245,158,11,0.15)] text-[#F59E0B]">
             {decision.impact}
           </p>
         </div>
@@ -45,63 +44,98 @@ function DecisionCard({ decision }: { decision: DecisionImpact }) {
 export default function ConclusionWidget({ analysis }: ConclusionWidgetProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  if (!analysis.conclusion) {
-    return null;
-  }
+  if (!analysis.conclusion) return null;
 
   const { summary, key_decisions } = analysis.conclusion;
+  const isPassing = analysis.pass_fail_status === "PASS";
 
   return (
-    <div className="bg-white rounded-xl shadow-sm ring-1 ring-slate-200 border-l-4 border-indigo-600">
-      {/* Header - Always Visible */}
+    <div className="rounded-xl border border-[#E2E8F0] bg-white overflow-hidden shadow-[var(--shadow-card)]" style={{ borderTop: "3px solid #F97316" }}>
+
+      {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full p-8 flex items-center justify-between hover:bg-slate-50/50 transition-colors"
+        className="w-full px-7 py-6 flex items-center justify-between hover:bg-[#F1F5F9] transition-colors text-left"
       >
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-100 rounded-lg">
-            <svg
-              className="w-6 h-6 text-indigo-700"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          {/* Sparkle icon */}
+          <div className="p-2 bg-[rgba(249,115,22,0.12)] rounded-lg border border-[rgba(249,115,22,0.2)]">
+            <svg className="w-5 h-5 text-[#F97316]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 3l1.5 1.5M19 3l-1.5 1.5M12 2v2M3 12h2M19 12h2M5 21l1.5-1.5M19 21l-1.5-1.5M12 22v-2M12 6a6 6 0 100 12 6 6 0 000-12z" />
             </svg>
           </div>
-          <h3 className="text-2xl font-bold text-slate-900">AI Underwriting Conclusion</h3>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-[#0F172A] uppercase tracking-wide">
+                ✦ AI Underwriting Conclusion
+              </h3>
+              <span className="text-[9px] font-semibold text-[#64748B] uppercase tracking-widest bg-[#F1F5F9] border border-[#E2E8F0] px-2 py-0.5 rounded-full">
+                AI Generated
+              </span>
+            </div>
+            <p className="text-xs text-[#64748B] mt-0.5">
+              Qualification Status:&nbsp;
+              <span className={`font-semibold ${isPassing ? "text-[#22C55E]" : "text-[#EF4444]"}`}>
+                {isPassing ? "CRITERIA MET" : "CRITERIA NOT MET"}
+              </span>
+            </p>
+          </div>
         </div>
-        
-        {/* Expand/Collapse Icon */}
-        <svg
-          className={`w-6 h-6 text-slate-500 transition-transform duration-200 ${
-            isExpanded ? "rotate-180" : ""
-          }`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+
+        <div className="flex items-center gap-3">
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wide ${
+            isPassing
+              ? "bg-[rgba(34,197,94,0.12)] text-[#22C55E] border border-[rgba(34,197,94,0.2)]"
+              : "bg-[rgba(239,68,68,0.12)] text-[#EF4444] border border-[rgba(239,68,68,0.2)]"
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${isPassing ? "bg-[#22C55E]" : "bg-[#EF4444] animate-pulse"}`} />
+            {isPassing ? "PASS" : "CRITERIA NOT MET"}
+          </span>
+          <svg className={`w-5 h-5 text-[#64748B] transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
       </button>
 
-      {/* Expandable Content */}
+      {/* Summary always visible when expanded */}
+      {summary && isExpanded && (
+        <div className="px-7 pb-2">
+          <p className="text-sm text-[#475569] leading-relaxed">{summary}</p>
+        </div>
+      )}
+
+      {/* Expandable content */}
       {isExpanded && (
-        <div className="px-8 pb-8">
+        <div className="px-7 pb-7 pt-4 space-y-6">
+
+          {/* Analyst Commentary */}
           {analysis.analyst_commentary && (
-            <div className="mb-8 bg-indigo-50/50 p-6 rounded-xl border border-indigo-100">
-              <h4 className="text-sm font-bold text-indigo-900 uppercase tracking-wide mb-2">Analyst Commentary</h4>
-              <div className="text-lg text-slate-800 leading-relaxed whitespace-pre-wrap">
-                {analysis.analyst_commentary}
+            <div className="relative bg-[#F1F5F9] p-6 rounded-xl border border-[#E2E8F0]">
+              {/* Gradient left accent */}
+              <div className="absolute left-0 top-4 bottom-4 w-0.5 bg-gradient-to-b from-[#F97316] via-[#F97316]/50 to-transparent rounded-full" />
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-[9px] font-bold text-[#64748B] uppercase tracking-widest pl-3">Analyst Commentary</h4>
+                <span className="text-[9px] font-semibold text-[#64748B] uppercase tracking-widest bg-[rgba(249,115,22,0.08)] border border-[rgba(249,115,22,0.15)] px-2 py-0.5 rounded-full">
+                  AI Generated
+                </span>
               </div>
+              <p className="text-sm text-[#475569] leading-[1.7] whitespace-pre-wrap pl-3 max-w-[70ch]">
+                {analysis.analyst_commentary}
+              </p>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {key_decisions.map((decision, index) => (
-              <DecisionCard key={index} decision={decision} />
-            ))}
-          </div>
+          {/* Key decisions grid */}
+          {key_decisions && key_decisions.length > 0 && (
+            <div>
+              <h4 className="text-[9px] font-bold text-[#64748B] uppercase tracking-widest mb-3">Investment Criteria</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {key_decisions.map((decision, i) => (
+                  <DecisionCard key={i} decision={decision} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

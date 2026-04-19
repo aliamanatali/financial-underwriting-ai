@@ -338,15 +338,7 @@ class FinancialService:
         # Ensure parameters exist, else use defaults
         params = analysis.deal_parameters or DealParameters()
         
-        # 1. Unit Count Check
-        # FIX: Use Rent Roll count as primary source of truth (Document Metadata is often wrong)
-        unit_count = len(analysis.rent_roll) if analysis.rent_roll else (analysis.property_meta.total_units or 0)
-
-        if not (params.min_unit_count <= unit_count <= params.max_unit_count):
-            status = "FAIL"
-            reasons.append(f"Unit count FAIL: {unit_count} units is outside range {params.min_unit_count}-{params.max_unit_count}.")
-        
-        # 2. Loan Amount Check (Preliminary, based on Purchase Price if available)
+        # 1. Loan Amount Check (Preliminary, based on Purchase Price if available)
         # Note: True Loan Amount is calculated in Step 4, but we can check rough sizing here.
         purchase_price = analysis.property_meta.purchase_price or 0
         
@@ -363,20 +355,12 @@ class FinancialService:
             else:
                 estimated_loan = purchase_price * params.ltv
                 
-            if estimated_loan < params.min_loan_amount:
-                status = "FAIL"
-                reasons.append(f"Loan amount FAIL: Estimated loan ${estimated_loan:,.0f} is below minimum of ${params.min_loan_amount:,.0f}.")
+            # Removed loan amount FAIL gating logic
         elif explicit_loan is None and purchase_price == 0:
              # Case where we have NO info to estimate loan
-             status = "FAIL"
-             reasons.append(f"Loan amount FAIL: Could not calculate loan (missing Purchase Price) and no manual Loan Amount provided.")
+             # Removed loan amount FAIL gating logic
+             pass
         
-        # 3. Vintage Check
-        year_built = analysis.property_meta.year_built or 0
-        if year_built > 0 and year_built < params.max_build_year and not analysis.property_meta.is_renovated:
-            status = "FAIL"
-            reasons.append(f"Property vintage FAIL: Built in {year_built}. Criteria requires 1970-2005 or renovated.")
-
         # FINAL OVERRIDE: Never block analysis completely on data checks.
         # We want to see the report even if it's "bad".
         if status == "FAIL":
@@ -1082,6 +1066,11 @@ class FinancialService:
                 logger.warning(f"Purchase Price missing. Using Implied Value ${implied_value:,.0f} for Loan calc.")
                 # We won't overwrite extracted Purchase Price to preserve data integrity,
                 # but we will use this implied loan amount.
+                
+                # FIX: We MUST update total_project_cost if we used implied value for loan!
+                # Otherwise equity_invested becomes negative and Cash-on-Cash drops to 0.
+                total_project_cost = implied_value + params.closing_costs + params.renovation_budget
+                analysis.total_project_cost = self._sanitize_value(total_project_cost)
 
         analysis.loan_amount = self._sanitize_value(loan_amount)
         self.audit_log_service.add_log(analysis, "Loan Amount", f"${loan_amount:,.0f}", "Calculation", method)
@@ -1185,10 +1174,11 @@ class FinancialService:
         cash_flows.append(year_5_cf)
         
         # 4. MOIC
-        # Formula: Sum(Positive Cash Flows) / Equity Invested
-        # Note: cash_flows[0] is negative equity.
+        # Formula: Sum(Positive Cash Flows) / Abs(Sum(Negative Cash Flows))
+        # Note: cash_flows[0] is negative equity. Any other negative CFs are capital calls.
         total_inflows = sum(cf for cf in cash_flows if cf > 0)
-        moic = total_inflows / equity_invested if equity_invested > 0 else 0
+        total_outflows = abs(sum(cf for cf in cash_flows if cf < 0))
+        moic = total_inflows / total_outflows if total_outflows > 0 else 0
         analysis.moic = self._sanitize_value(moic)
         
         # 5. IRR
@@ -1217,7 +1207,7 @@ class FinancialService:
         analysis.irr = self._sanitize_value(irr)
         
         self.audit_log_service.add_log(analysis, "IRR", f"{irr:.2%}", "Numpy Financial", "IRR of 5-Year Cash Flows")
-        self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Equity Invested")
+        self.audit_log_service.add_log(analysis, "MOIC", f"{moic:.2f}x", "Calculation", "Total Inflows / Total Outflows (Incl. Cap Calls)")
 
     def _calculate_irr_simulation(self, analysis: UnderwritingAnalysis, growth_rate: float, exit_cap_rate: float) -> float:
         """

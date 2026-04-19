@@ -169,6 +169,7 @@ export default function RentRollPreviewModal({
           ) : (
             <div className="h-full w-full ag-theme-quartz" style={{ height: '100%', width: '100%' }}>
                 <AgGridReact
+                    theme="legacy"
                     rowData={data?.rows || []}
                     columnDefs={colDefs}
                     defaultColDef={defaultColDef}

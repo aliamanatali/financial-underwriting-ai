@@ -1,11 +1,78 @@
 @import "tailwindcss";
 
+/* ============================================================
+   DESIGN SYSTEM — TAILWIND V4 THEME TOKENS
+   Light-first palette. Color has purpose:
+   - white/slate = structure/surface
+   - orange = brand/CTA/active
+   - green/red/amber = financial signal
+   ============================================================ */
+@theme {
+  /* Background layers */
+  --color-canvas:      #F8FAFC;
+  --color-panel:       #FFFFFF;
+  --color-raised:      #F1F5F9;
+
+  /* Borders */
+  --color-rim:         #E2E8F0;
+  --color-rim-strong:  #CBD5E1;
+
+  /* Brand */
+  --color-brand:       #F97316;
+
+  /* Semantic status */
+  --color-gain:        #16A34A;
+  --color-loss:        #DC2626;
+  --color-caution:     #D97706;
+
+  /* Typography */
+  --color-ink:         #0F172A;
+  --color-ink-dim:     #475569;
+  --color-ink-ghost:   #94A3B8;
+}
+
+/* ============================================================
+   CSS CUSTOM PROPERTIES
+   ============================================================ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --font-inter: 'Inter', sans-serif;
-  --font-playfair: 'Playfair Display', serif;
+  --background:  #F8FAFC;
+  --foreground:  #0F172A;
+  --font-inter:      'Inter', sans-serif;
+  --font-playfair:   'Playfair Display', serif;
   --font-newsreader: 'Newsreader', serif;
+
+  /* Full design-system aliases */
+  --color-bg-base:        #F8FAFC;
+  --color-bg-surface:     #FFFFFF;
+  --color-bg-elevated:    #F1F5F9;
+  --color-border:         #E2E8F0;
+  --color-border-strong:  #CBD5E1;
+
+  --color-brand:          #F97316;
+  --color-brand-dim:      rgba(249, 115, 22, 0.08);
+
+  --color-positive:       #16A34A;
+  --color-positive-dim:   rgba(22, 163, 74, 0.10);
+  --color-negative:       #DC2626;
+  --color-negative-dim:   rgba(220, 38, 38, 0.10);
+  --color-warning:        #D97706;
+  --color-warning-dim:    rgba(217, 119, 6, 0.10);
+  --color-neutral:        #94A3B8;
+
+  --color-text-primary:   #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-muted:     #94A3B8;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Shadows — light-mode: subtle elevation */
+  --shadow-card:     0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.03);
+  --shadow-elevated: 0 4px 16px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04);
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
 }
 
 @theme inline {
@@ -13,13 +80,23 @@
   --color-foreground: var(--foreground);
 }
 
+/* ============================================================
+   GLOBAL BASE STYLES
+   ============================================================ */
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
   font-family: var(--font-inter), Arial, Helvetica, sans-serif;
 }
 
-/* Sidebar Expansion Logic */
+::selection {
+  background: rgba(249, 115, 22, 0.15);
+  color: var(--color-text-primary);
+}
+
+/* ============================================================
+   SIDEBAR EXPANSION LOGIC
+   ============================================================ */
 #sidebar {
   transition: width 0.4s cubic-bezier(0.25, 1, 0.5, 1);
 }
@@ -32,24 +109,21 @@ body {
   transition: padding 0.4s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
-/* Expanded State */
-body.has-expanded-sidebar #sidebar {
-  width: 16rem;
+.has-expanded-sidebar #sidebar {
+  width: 14rem;
 }
 
-body.has-expanded-sidebar #main-content {
-  margin-left: 16rem;
+.has-expanded-sidebar #main-content {
+  margin-left: 14rem;
 }
 
-/* Navigation Items Alignment when Expanded */
-body.has-expanded-sidebar #sidebar .sidebar-item {
+.has-expanded-sidebar #sidebar .sidebar-item {
   justify-content: flex-start !important;
   padding-left: 1rem !important;
   padding-right: 1rem !important;
 }
 
-/* Label Visibility */
-body.has-expanded-sidebar #sidebar .nav-label {
+.has-expanded-sidebar #sidebar .nav-label {
   position: static !important;
   opacity: 1 !important;
   background-color: transparent !important;
@@ -61,10 +135,7 @@ body.has-expanded-sidebar #sidebar .nav-label {
   white-space: nowrap;
 }
 
-/* Sidebar Header Logic */
-#collapse-trigger {
-  display: none;
-}
+#collapse-trigger { display: none; }
 
 #expand-trigger {
   display: flex;
@@ -74,92 +145,94 @@ body.has-expanded-sidebar #sidebar .nav-label {
 
 #logo-wrapper:hover #expand-trigger {
   opacity: 1;
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: rgba(249, 115, 22, 0.10);
 }
 
-body.has-expanded-sidebar #sidebar-header {
+.has-expanded-sidebar #sidebar-header {
   padding-left: 1rem;
   padding-right: 1rem;
   justify-content: space-between;
 }
 
-body.has-expanded-sidebar #collapse-trigger {
-  display: block;
+.has-expanded-sidebar #collapse-trigger { display: block; }
+.has-expanded-sidebar #expand-trigger   { display: none !important; pointer-events: none; }
+.has-expanded-sidebar #logo-wrapper     { pointer-events: none; }
+
+#sidebar .nav-label { transition: opacity 0s; }
+#sidebar .sidebar-item:hover .nav-label { transition: opacity 0.3s; }
+.has-expanded-sidebar #sidebar .nav-label { transition: opacity 0.3s ease 0.15s !important; }
+
+.has-expanded-sidebar #sidebar-bottom-actions { align-items: stretch !important; }
+.has-expanded-sidebar #sidebar-user-profile   { margin-left: 1rem; }
+
+/* ============================================================
+   ACTIVE NAV ITEM
+   ============================================================ */
+.sidebar-item.active-route {
+  border-left: 2px solid var(--color-brand);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding-left: calc(1rem - 2px) !important;
 }
 
-body.has-expanded-sidebar #expand-trigger {
-  display: none !important;
-  pointer-events: none;
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
 }
 
-body.has-expanded-sidebar #logo-wrapper {
-  pointer-events: none;
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
 }
 
-/* Fix for sidebar expansion artifacts & tooltip flashing */
-#sidebar .nav-label {
-  transition: opacity 0s;
+@keyframes float-up {
+  0%   { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0);   }
 }
 
-#sidebar .sidebar-item:hover .nav-label {
-  transition: opacity 0.3s;
-}
-
-body.has-expanded-sidebar #sidebar .nav-label {
-  transition: opacity 0.3s ease 0.15s !important;
-}
-
-/* Fix bottom actions alignment when expanded */
-body.has-expanded-sidebar #sidebar-bottom-actions {
-  align-items: stretch !important;
-}
-
-body.has-expanded-sidebar #sidebar-user-profile {
-  margin-left: 1rem;
-}
-
-/* Shiny Input Border Animation */
+/* Shiny input wrapper */
 .shiny-input-wrapper {
   position: relative;
   border-radius: 15px;
   background: linear-gradient(
     90deg,
-    rgba(255, 94, 0, 0.1),
-    rgba(255, 140, 60, 0.1),
-    rgba(255, 94, 0, 0.1)
+    rgba(249, 115, 22, 0.12),
+    rgba(249, 160, 60, 0.08),
+    rgba(249, 115, 22, 0.12)
   );
   background-size: 200% 100%;
   animation: shimmer 3s linear infinite;
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
+/* ============================================================
+   SCROLLBARS
+   ============================================================ */
+::-webkit-scrollbar { width: 0px; height: 0px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: transparent; }
 
-/* Scrollbar Styling */
-::-webkit-scrollbar {
-  width: 0px;
-  height: 0px;
-}
+.horizontal-scrollbar::-webkit-scrollbar { height: 8px; }
+.horizontal-scrollbar::-webkit-scrollbar-track { background: var(--color-bg-elevated); }
+.horizontal-scrollbar::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 4px; }
+.horizontal-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--color-neutral); }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--color-neutral); }
 
-::-webkit-scrollbar-thumb {
-  background: transparent;
-}
-
-/* Custom Range Slider Styling */
+/* ============================================================
+   RANGE SLIDER
+   ============================================================ */
 input[type="range"].slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   outline: none;
+  background: var(--color-border);
+  height: 4px;
+  border-radius: 2px;
 }
 
 input[type="range"].slider-thumb::-webkit-slider-thumb {
@@ -168,68 +241,103 @@ input[type="range"].slider-thumb::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #171717;
+  background: var(--color-brand);
   cursor: pointer;
-  border: 2px solid white;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2);
   transition: all 0.15s ease;
 }
 
 input[type="range"].slider-thumb::-webkit-slider-thumb:hover {
-  transform: scale(1.1);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
-}
-
-input[type="range"].slider-thumb::-webkit-slider-thumb:active {
-  transform: scale(1);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transform: scale(1.15);
+  box-shadow: 0 0 0 5px rgba(249, 115, 22, 0.25);
 }
 
 input[type="range"].slider-thumb::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #171717;
+  background: var(--color-brand);
   cursor: pointer;
-  border: 2px solid white;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  border: 2px solid #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.2);
   transition: all 0.15s ease;
 }
 
-input[type="range"].slider-thumb::-moz-range-thumb:hover {
-  transform: scale(1.1);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
+/* ============================================================
+   UTILITY HELPERS
+   ============================================================ */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.font-financial {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-input[type="range"].slider-thumb::-moz-range-thumb:active {
-  transform: scale(1);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+/* Card */
+.ds-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
 }
 
-.horizontal-scrollbar::-webkit-scrollbar {
-  height: 8px;
+/* Confidence badges — purposeful color on white bg */
+.badge-high   {
+  display: inline-flex; align-items: center;
+  padding: 1px 8px; border-radius: 9999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(22, 163, 74, 0.10);
+  color: #15803D;
+  border: 1px solid rgba(22, 163, 74, 0.20);
 }
-.horizontal-scrollbar::-webkit-scrollbar-track {
-  background: #f1f1f1;
+.badge-medium {
+  display: inline-flex; align-items: center;
+  padding: 1px 8px; border-radius: 9999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(217, 119, 6, 0.10);
+  color: #B45309;
+  border: 1px solid rgba(217, 119, 6, 0.20);
 }
-.horizontal-scrollbar::-webkit-scrollbar-thumb {
-  background: #888;
-}
-.horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #555;
+.badge-low {
+  display: inline-flex; align-items: center;
+  padding: 1px 8px; border-radius: 9999px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(220, 38, 38, 0.10);
+  color: #B91C1C;
+  border: 1px solid rgba(220, 38, 38, 0.20);
 }
 
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Status pills */
+.pill-completed  { background: rgba(22,163,74,0.08);  color: #15803D; border: 1px solid rgba(22,163,74,0.2);  }
+.pill-processing { background: rgba(249,115,22,0.08); color: #C2410C; border: 1px solid rgba(249,115,22,0.2); }
+.pill-failed     { background: rgba(220,38,38,0.08);  color: #B91C1C; border: 1px solid rgba(220,38,38,0.2);  }
+.pill-pending    { background: rgba(217,119,6,0.08);  color: #B45309; border: 1px solid rgba(217,119,6,0.2);  }
+
+/* Tags */
+.tag-duplicate {
+  display: inline-flex; align-items: center;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 600;
+  background: rgba(249, 115, 22, 0.08);
+  color: #C2410C;
+  border: 1px solid rgba(249, 115, 22, 0.2);
 }
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+.tag-handwritten {
+  display: inline-flex; align-items: center;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 600;
+  background: rgba(124, 58, 237, 0.08);
+  color: #6D28D9;
+  border: 1px solid rgba(124, 58, 237, 0.2);
 }
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #e5e5e5;
-  border-radius: 3px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #d4d4d4;
-}
+
+/* Heat-map cells */
+.heat-very-low  { background: rgba(220, 38, 38,  0.85); color: #fff; }
+.heat-low       { background: rgba(220, 38, 38,  0.50); color: #fff; }
+.heat-mid-low   { background: rgba(217, 119, 6,  0.55); color: #fff; }
+.heat-mid       { background: rgba(217, 119, 6,  0.25); color: var(--color-text-primary); }
+.heat-mid-high  { background: rgba(22,  163, 74,  0.25); color: var(--color-text-primary); }
+.heat-high      { background: rgba(22,  163, 74,  0.55); color: #fff; }
+.heat-very-high { background: rgba(22,  163, 74,  0.85); color: #fff; }

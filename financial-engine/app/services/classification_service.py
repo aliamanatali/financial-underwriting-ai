@@ -168,12 +168,12 @@ class ClassificationService:
             - {DocumentType.OFFERING_MEMORANDUM.value}: Marketing materials, property overview, executive summary, appraisal
             - {DocumentType.RENT_ROLL.value}: List of tenants, lease details, unit information, occupancy data
             - {DocumentType.LEASES.value}: Individual lease agreements, tenancy agreements
-            - {DocumentType.FINANCIALS.value}: T12, P&L, Income Statements, Balance Sheets, Operating Statements, Historical financials
+            - {DocumentType.FINANCIALS.value}: T12, P&L, Income Statements, Balance Sheets, Operating Statements, Historical financials. (DO NOT put proposals, quotes, estimates, invoices, or receipts here)
             - {DocumentType.BUILDING_PLANS_PERMITS.value}: Floor plans, site plans, permits, surveys, zoning documents
             - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports, purchase and sale agreements (PSA), management agreements, contracts
             - {DocumentType.TAX_BILLS.value}: Property tax bills, tax returns, assessor documents
             - {DocumentType.UTILITIES.value}: Utility bills (water, electric, gas, sewer, trash)
-            - {DocumentType.IMAGES.value}: Photos, images, scanned documents
+            - {DocumentType.IMAGES.value}: Photos, images, scanned documents, proposals, quotes, estimates, invoices, and receipts
             
             Document Filename: "{filename}"
             Total Pages: {total_pages if total_pages > 0 else 'Unknown'}
@@ -258,6 +258,8 @@ class ClassificationService:
             return DocumentType.BUILDING_PLANS_PERMITS
         if "disclosure" in filename_lower or "environmental" in filename_lower or "psa" in filename_lower or "purchase and sale" in filename_lower or "mgmt" in filename_lower or "management agreement" in filename_lower:
             return DocumentType.DISCLOSURES
+        if "proposal" in filename_lower or "receipt" in filename_lower or "invoice" in filename_lower or "quote" in filename_lower or "estimate" in filename_lower:
+            return DocumentType.IMAGES
         
         return None
 
@@ -362,12 +364,12 @@ class ClassificationService:
             - {DocumentType.OFFERING_MEMORANDUM.value}
             - {DocumentType.RENT_ROLL.value}
             - {DocumentType.LEASES.value}
-            - {DocumentType.FINANCIALS.value}
+            - {DocumentType.FINANCIALS.value} (Exclude proposals, quotes, invoices, and receipts)
             - {DocumentType.BUILDING_PLANS_PERMITS.value}
             - {DocumentType.DISCLOSURES.value}
             - {DocumentType.TAX_BILLS.value}
             - {DocumentType.UTILITIES.value}
-            - {DocumentType.IMAGES.value}
+            - {DocumentType.IMAGES.value} (Include proposals, quotes, estimates, invoices, and receipts here)
             - Unknown
             
             Filenames to classify:

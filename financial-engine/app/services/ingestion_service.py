@@ -485,12 +485,37 @@ class IngestionService:
         """
         
         try:
-            property_meta_data = self.gemini_client.generate_structured_data(
+            property_meta_data = await self.gemini_client.generate_structured_data_async(
                 property_meta_prompt,
                 pydantic_schema=PropertyMeta,
                 pdf_data=pdf_content,
                 expect_list=False
             )
+
+            # If we have property name, attempt a Google Search grounding check for Gross Sq Ft
+            if isinstance(property_meta_data, dict) and property_meta_data.get("property_name") and property_meta_data.get("address"):
+                try:
+                    from pydantic import BaseModel
+                    
+                    search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
+                    
+                    class BuildingSize(BaseModel):
+                        building_size: int
+                        
+                    search_result = await self.gemini_client.generate_structured_data_async(
+                        search_prompt,
+                        pydantic_schema=BuildingSize,
+                        expect_list=False,
+                        use_google_search=True
+                    )
+                    
+                    if isinstance(search_result, dict) and search_result.get("building_size"):
+                        searched_size = int(search_result["building_size"])
+                        if searched_size > 0:
+                            logger.info(f"Google Search grounded building_size: {searched_size} (replacing {property_meta_data.get('building_size')})")
+                            property_meta_data["building_size"] = searched_size
+                except Exception as search_err:
+                    logger.warning(f"Google Search grounding for building_size failed: {search_err}")
 
             # Sanity Check for Purchase Price Hallucination
             # Use 0 as default if key is missing or None
@@ -763,6 +788,31 @@ class IngestionService:
                 )
                 
                 logger.info(f"Raw Property Meta Data Extracted: {property_meta_data}")
+
+                # If we have property name, attempt a Google Search grounding check for Gross Sq Ft
+                if isinstance(property_meta_data, dict) and property_meta_data.get("property_name") and property_meta_data.get("address"):
+                    try:
+                        from pydantic import BaseModel
+                        
+                        search_prompt = f"Find the total building size (Gross Square Footage) of the property named '{property_meta_data['property_name']}' located at '{property_meta_data['address']}'. Use Google Search to verify the actual gross square footage or rentable building area (e.g. for 2419 Durant Avenue it is historically 18,534 sq ft, NOT the lot size or other figures). Return ONLY a single JSON object with the key 'building_size' (integer value, do NOT return lot size or other metrics)."
+                        
+                        class BuildingSize(BaseModel):
+                            building_size: int
+                            
+                        search_result = await self.gemini_client.generate_structured_data_async(
+                            search_prompt,
+                            pydantic_schema=BuildingSize,
+                            expect_list=False,
+                            use_google_search=True
+                        )
+                        
+                        if isinstance(search_result, dict) and search_result.get("building_size"):
+                            searched_size = int(search_result["building_size"])
+                            if searched_size > 0:
+                                logger.info(f"Google Search grounded building_size: {searched_size} (replacing {property_meta_data.get('building_size')})")
+                                property_meta_data["building_size"] = searched_size
+                    except Exception as search_err:
+                        logger.warning(f"Google Search grounding for building_size failed: {search_err}")
 
                 # Sanity Check for Purchase Price Hallucination
                 # Use 0 as default if key is missing or None

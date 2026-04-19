@@ -15,31 +15,26 @@ function DashboardContent() {
 
   const getUserInitials = () => {
     if (!user?.name) return "FA";
-    const names = user.name.split(" ");
-    return names
+    return user.name
+      .split(" ")
       .map((n) => n[0])
       .join("")
       .toUpperCase();
   };
 
-  const toggleSidebar = () => {
-    setSidebarExpanded(!sidebarExpanded);
-  };
-
-  const handleNewDeal = () => {
-    router.push("/upload-package");
-  };
+  const toggleSidebar = () => setSidebarExpanded(!sidebarExpanded);
+  const handleNewDeal = () => router.push("/upload-package");
 
   return (
     <div
-      className={`min-h-screen overflow-hidden selection:bg-neutral-900 selection:text-white relative bg-white text-neutral-900 flex ${
+      className={`min-h-screen overflow-hidden relative bg-[#F8FAFC] text-[#0F172A] flex ${
         sidebarExpanded ? "has-expanded-sidebar" : ""
       }`}
     >
-      {/* Background */}
+      {/* Subtle grid overlay */}
       <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]"></div>
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-white"></div>
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,#64748b08_1px,transparent_1px),linear-gradient(to_bottom,#64748b08_1px,transparent_1px)] bg-[size:32px_32px]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#F8FAFC]/0" />
       </div>
 
       {/* Sidebar */}
@@ -51,141 +46,104 @@ function DashboardContent() {
         onNewChat={() => {}}
       />
 
-      {/* Main Content */}
+      {/* Main content */}
       <div
         className={`flex flex-col flex-1 transition-all duration-400 h-screen relative z-10 ${
-          sidebarExpanded ? "ml-64" : "ml-[72px]"
+          sidebarExpanded ? "ml-56" : "ml-[72px]"
         }`}
       >
-        {/* Top Bar */}
-        <header className="h-16 border-b border-neutral-100 bg-white/80 backdrop-blur-md flex items-center justify-between px-6 lg:px-10 shrink-0 sticky top-0 z-40">
-          {/* Global Search */}
-          <div className="flex items-center w-full max-w-lg">
+        {/* ── Top Bar ────────────────────────────────────── */}
+        <header className="h-14 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-6 lg:px-8 shrink-0 sticky top-0 z-40">
+          {/* Global search */}
+          <div className="flex items-center w-full max-w-md">
             <div className="relative w-full group">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-neutral-400 group-focus-within:text-neutral-900 transition-colors">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <path d="m21 21-4.3-4.3"></path>
+              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-[#64748B] group-focus-within:text-[#475569] transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
                 </svg>
               </div>
               <input
                 type="text"
-                className="block w-full pl-10 pr-3 py-2 border-none bg-neutral-50/50 hover:bg-neutral-50 focus:bg-white text-sm text-neutral-900 rounded-lg focus:ring-1 focus:ring-neutral-200 placeholder-neutral-400 transition-all outline-none"
-                placeholder="Search deals, properties, or locations..."
+                className="block w-full pl-9 pr-3 py-1.5 border border-[#E2E8F0] bg-[#F8FAFC] hover:bg-[#F1F5F9] focus:bg-[#F1F5F9] text-sm text-[#0F172A] rounded-lg focus:ring-1 focus:ring-[#F97316]/40 focus:border-[#F97316]/40 placeholder-[#94A3B8] transition-all outline-none"
+                placeholder="Search deals, properties…"
               />
               <div className="absolute inset-y-0 right-2 flex items-center">
-                <kbd className="hidden sm:inline-flex h-5 items-center gap-1 rounded border border-neutral-200 bg-neutral-50 px-1.5 font-mono text-[10px] font-medium text-neutral-500 opacity-100">
-                  <span className="text-xs">⌘</span>K
+                <kbd className="hidden sm:inline-flex h-4 items-center gap-0.5 rounded border border-[#E2E8F0] bg-[#F1F5F9] px-1.5 font-mono text-[9px] font-medium text-[#64748B]">
+                  <span className="text-[10px]">⌘</span>K
                 </kbd>
               </div>
             </div>
           </div>
 
-          {/* Right Actions */}
-          <div className="flex items-center gap-6">
-            {/* System Status */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-50 border border-neutral-100">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          {/* Right actions */}
+          <div className="flex items-center gap-4">
+            {/* AI status badge */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[rgba(34,197,94,0.08)] border border-[rgba(34,197,94,0.15)]">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#22C55E] opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#22C55E]" />
               </span>
-              <span className="text-[10px] font-medium text-neutral-600 uppercase tracking-wide">
+              <span className="text-[9px] font-semibold text-[#22C55E] uppercase tracking-wider">
                 Underwriting AI Active
               </span>
             </div>
 
-            <div className="h-6 w-[1px] bg-neutral-200"></div>
+            <div className="h-5 w-px bg-[#2A3347]" />
 
-            {/* User Profile */}
-            <button className="flex items-center gap-3 hover:bg-neutral-50 p-1.5 pl-2 rounded-full transition-all group">
+            {/* User */}
+            <button className="flex items-center gap-2.5 hover:bg-[#F1F5F9] p-1.5 pl-2 rounded-lg transition-all">
               <div className="text-right hidden sm:block">
-                <p className="text-xs font-medium text-neutral-900">
+                <p className="text-xs font-medium text-[#0F172A] leading-tight">
                   {user?.name || "Analyst"}
                 </p>
-                <p className="text-[10px] text-neutral-500">Valiance Capital</p>
+                <p className="text-[10px] text-[#64748B] leading-tight">
+                  Valiance Capital
+                </p>
               </div>
-              <div className="w-8 h-8 rounded-full overflow-hidden ring-2 ring-neutral-100 group-hover:ring-neutral-200 transition-all">
-                <div className="w-full h-full bg-[#FF5E00] flex items-center justify-center">
-                  <span className="text-white text-sm font-medium">
-                    {getUserInitials()}
-                  </span>
-                </div>
+              <div className="w-7 h-7 rounded-full bg-[#F97316] flex items-center justify-center ring-2 ring-[rgba(249,115,22,0.2)]">
+                <span className="text-white text-xs font-semibold">
+                  {getUserInitials()}
+                </span>
               </div>
             </button>
           </div>
         </header>
 
-        {/* Main Workspace */}
-        <main className="flex-1 overflow-y-auto p-6 lg:p-10 no-scrollbar">
-          {/* Page Header */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        {/* ── Main workspace ─────────────────────────────── */}
+        <main className="flex-1 overflow-y-auto no-scrollbar p-6 lg:p-8">
+          {/* Page header */}
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl font-semibold text-neutral-900 tracking-tight">
-                Deals Dashboard
+              <h1 className="text-2xl font-semibold text-[#0F172A] tracking-tight">
+                Deals Pipeline
               </h1>
-              <p className="text-sm text-neutral-500 mt-1">
+              <p className="text-sm text-[#64748B] mt-1">
                 Manage investment pipeline and monitor underwriting status.
               </p>
             </div>
-            {/* Primary Action */}
+
+            {/* New Deal CTA */}
             <button
               onClick={handleNewDeal}
-              className="group flex items-center gap-2 bg-neutral-900 hover:bg-neutral-800 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-all shadow-[0_2px_10px_rgba(0,0,0,0.1)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.2)] hover:-translate-y-0.5"
+              className="flex items-center gap-2 bg-[#F97316] hover:bg-[#EA6C0A] text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-all shadow-[0_4px_14px_rgba(249,115,22,0.35)] hover:shadow-[0_6px_20px_rgba(249,115,22,0.45)] hover:-translate-y-0.5 shrink-0"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M5 12h14"></path>
-                <path d="M12 5v14"></path>
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14" /><path d="M12 5v14" />
               </svg>
-              <span>New Deal</span>
+              New Deal
             </button>
           </div>
 
-          {/* Deal History Table with New Design */}
-          <div className="bg-white rounded-xl border border-neutral-200/80 shadow-sm overflow-hidden">
-            <DealHistoryTable />
-          </div>
+          {/* Deal History Table / Card Grid */}
+          <DealHistoryTable />
         </main>
       </div>
-
-      <style jsx global>{`
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-      `}</style>
     </div>
   );
 }
 
 export default function DashboardPage() {
   const { isAuthenticated, isLoading } = useAuth();
-
-  if (isLoading) {
-    return <LoadingSpinner />;
-  }
-
+  if (isLoading) return <LoadingSpinner />;
   return isAuthenticated ? <DashboardContent /> : <LoginPage />;
 }

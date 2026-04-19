@@ -295,6 +295,7 @@ export default function RentRollWidget({
 
   // Map of Row ID -> { fieldName: errorMessage }
   const [rowErrors, setRowErrors] = useState<Record<string, Record<string, string>>>({});
+  const [initialPayloadStr, setInitialPayloadStr] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -329,13 +330,6 @@ export default function RentRollWidget({
     const marketVal = parseFloat(String(item.market_rent));
     if (isNaN(marketVal) || marketVal <= 0) errors.market_rent = "Required";
     
-    // Stabilized rent validation: only required (> 0) if not vacant.
-    // If vacant, stabilized rent is allowed (and expected) to be 0.
-    const stabilizedVal = parseFloat(String(item.stabilized_rent));
-    if (!item.is_vacant && (isNaN(stabilizedVal) || stabilizedVal <= 0)) {
-        errors.stabilized_rent = "Required";
-    }
-
     const currentVal = parseFloat(String(item.current_rent));
     if (item.is_vacant) {
         if (!isNaN(currentVal) && currentVal > 0) {
@@ -482,8 +476,55 @@ export default function RentRollWidget({
     handleItemChangeById(id, field, numericValue);
   };
 
+  const generatePayload = (currentItems: EditableRentRollItem[]) => {
+      const cleanItems: RentRollItem[] = currentItems.map(({ id, ...rest }) => ({
+        ...rest,
+        unit_size: parseFloat(String(rest.unit_size)) || 0,
+        current_rent: parseFloat(String(rest.current_rent)) || 0,
+        stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
+        market_rent: parseFloat(String(rest.market_rent)) || 0,
+        deposit: parseFloat(String(rest.deposit)) || 0,
+      }));
+
+      const uniqueUnitTypes = Array.from(new Set(currentItems.map(i => i.unit_type)));
+      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
+          const item = currentItems.find(i => i.unit_type === unitType);
+          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
+            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
+          );
+          
+          if (item) {
+              return {
+                  unit_type: unitType,
+                  beds_single: item.beds_single ?? existingConfig?.beds_single,
+                  beds_double: item.beds_double ?? existingConfig?.beds_double,
+                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
+                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
+                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
+                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
+                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
+              };
+          }
+          return existingConfig || {
+              unit_type: unitType,
+              bed_count: 1,
+              occupancy_type: "Single",
+              unit_config_label: "Single"
+          };
+      });
+
+      return {
+          rent_roll: cleanItems,
+          student_housing_config: {
+              ...(studentHousingConfig || { unit_type_configs: [] }),
+              unit_type_configs: newUnitTypeConfigs
+          }
+      };
+  };
+
   const handleEdit = () => {
     setIsEditing(true);
+    setInitialPayloadStr(JSON.stringify(generatePayload(items)));
     // Validate all items when entering edit mode
     const initialErrors: Record<string, Record<string, string>> = {};
       items.forEach(item => {
@@ -519,15 +560,6 @@ export default function RentRollWidget({
     console.log("RentRollWidget: handleSave started");
     setIsSaving(true);
 
-    const cleanItems: RentRollItem[] = items.map(({ id, ...rest }) => ({
-      ...rest,
-      unit_size: parseFloat(String(rest.unit_size)) || 0,
-      current_rent: parseFloat(String(rest.current_rent)) || 0,
-      stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
-      market_rent: parseFloat(String(rest.market_rent)) || 0,
-      deposit: parseFloat(String(rest.deposit)) || 0,
-    }));
-
     if (activeTab === 'details') {
       let errorCount = 0;
       const newRowErrors: Record<string, Record<string, string>> = {};
@@ -561,7 +593,7 @@ export default function RentRollWidget({
       if (errorCount > 0) {
           console.log("RentRollWidget: Validation failed with", errorCount, "errors");
           setWarningMessage(
-              `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Stabilized and Market Rents are set (> 0)`
+              `Found ${errorCount} unit(s) with incomplete data.\n\nPlease ensure:\n• All units have Number, Type, and Size (> 0)\n• Market Rents are set (> 0)`
           );
           setShowWarning(true);
           setIsSaving(false);
@@ -572,45 +604,15 @@ export default function RentRollWidget({
     setRowErrors({});
 
     try {
-      const payload: any = { rent_roll: cleanItems };
+      const payload: any = generatePayload(items);
+      const currentPayloadStr = JSON.stringify(payload);
       
-      // Construct unit_type_configs from current items to ensure we capture all unit types
-      // even if they weren't in the original config or if it was empty.
-      const uniqueUnitTypes = Array.from(new Set(items.map(i => i.unit_type)));
-      
-      const newUnitTypeConfigs = uniqueUnitTypes.map(unitType => {
-          const item = items.find(i => i.unit_type === unitType);
-          const existingConfig = studentHousingConfig?.unit_type_configs?.find(c =>
-            (c.unit_type || "").trim().toLowerCase() === (unitType || "").trim().toLowerCase()
-          );
-          
-          if (item) {
-              // Priority: Item values > Existing Config > Defaults
-              return {
-                  unit_type: unitType,
-                  beds_single: item.beds_single ?? existingConfig?.beds_single,
-                  beds_double: item.beds_double ?? existingConfig?.beds_double,
-                  market_rent_single: item.market_rent_single ?? existingConfig?.market_rent_single,
-                  market_rent_double: item.market_rent_double ?? existingConfig?.market_rent_double,
-                  unit_config_label: item.unit_config_label ?? existingConfig?.unit_config_label ?? "Single",
-                  bed_count: item.bed_count !== undefined ? item.bed_count : (existingConfig?.bed_count || getBedCountFromUnitType(unitType)),
-                  occupancy_type: (item.occupancy_type as "Single" | "Double" | "Mixed") || existingConfig?.occupancy_type || "Single",
-              };
-          }
-          return existingConfig || {
-              unit_type: unitType,
-              bed_count: 1,
-              occupancy_type: "Single",
-              unit_config_label: "Single"
-          };
-      });
-
-      const updatedConfig = {
-          ...(studentHousingConfig || { unit_type_configs: [] }),
-          unit_type_configs: newUnitTypeConfigs
-      };
-      
-      payload.student_housing_config = updatedConfig;
+      if (initialPayloadStr === currentPayloadStr) {
+          console.log("RentRollWidget: No changes detected, skipping update");
+          setIsEditing(false);
+          setIsSaving(false);
+          return;
+      }
 
       console.log("RentRollWidget: Sending update payload", payload);
       await apiClient.updateManualOverrides(packageId, payload);
@@ -627,68 +629,7 @@ export default function RentRollWidget({
     }
   };
 
-  const validateConfigForExport = (): boolean => {
-      // Logic mirrors the strict checks in ExportButtons.tsx
-      if (!studentHousingConfig?.unit_type_configs) return false;
-
-      // Get unique unit types from current items
-      const unitTypes = Array.from(new Set(items.map(i => i.unit_type)));
-      
-      for (const unitType of unitTypes) {
-          // Check against the merged item state first (as it reflects unsaved edits or current view)
-          // OR check against the config object.
-          // Since we are exporting what is currently in 'items' (plus config for fields not in items),
-          // we should verify the data we are about to export.
-          
-          // However, handleExport constructs exportData using studentHousingConfig.
-          // We should validate the studentHousingConfig we are about to send (or the items if merged).
-          // Let's check the items directly as they are the source of truth for the export payload
-          
-          // Actually, handleExport uses 'items' for rent_roll lines, but 'studentHousingConfig' for the config object.
-          // The Excel service uses 'studentHousingConfig' for the Stabilized table columns.
-          // So we must validate 'studentHousingConfig'.
-          
-          const config = studentHousingConfig.unit_type_configs.find(c => (c.unit_type || "").trim() === (unitType || "").trim());
-          
-          if (!config) {
-              console.log(`Validation Failed: No config for ${unitType}`);
-              return false;
-          }
-          
-          if (!config.bed_count || config.bed_count <= 0) {
-               console.log(`Validation Failed: Invalid bed count for ${unitType}`);
-               return false;
-          }
-          
-          const occupancy = config.occupancy_type;
-          if (!occupancy) {
-               console.log(`Validation Failed: No occupancy for ${unitType}`);
-               return false;
-          }
-          
-          if (occupancy === "Single") {
-              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
-          } else if (occupancy === "Double") {
-              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
-          } else if (occupancy === "Mixed") {
-              if (!config.beds_single || config.beds_single <= 0 || !config.market_rent_single || config.market_rent_single <= 0) return false;
-              if (!config.beds_double || config.beds_double <= 0 || !config.market_rent_double || config.market_rent_double <= 0) return false;
-          }
-      }
-      return true;
-  };
-
   const handleExport = async () => {
-    // Validate before export
-    if (!validateConfigForExport()) {
-        setWarningMessage("Cannot export Rent Roll.\n\nUnit Breakdown Stabilized information is incomplete.\nPlease ensure Bed Counts, Occupancy Types, and corresponding Prices are fully configured for all unit types.");
-        setShowWarning(true);
-        // Switch to the tab to help user
-        setActiveTab("unitBreakdownStabilized");
-        setIsEditing(true);
-        return;
-    }
-
     // Construct the full analysis object needed for export
     // The backend expects an UnderwritingAnalysis object
     // Start with the full analysis object if available, or a minimal one
@@ -709,11 +650,10 @@ export default function RentRollWidget({
     const exportData = {
         ...baseAnalysis,
         document_id: packageId,
-        rent_roll: visibleItems.map(({ id, ...rest }) => ({
+        rent_roll: visibleItems.map(({ id, stabilized_rent, ...rest }) => ({
             ...rest,
             unit_size: parseFloat(String(rest.unit_size)) || 0,
             current_rent: parseFloat(String(rest.current_rent)) || 0,
-            stabilized_rent: parseFloat(String(rest.stabilized_rent)) || 0,
             market_rent: parseFloat(String(rest.market_rent)) || 0,
         })),
         rent_roll_summary: summary || localSummary,
@@ -1031,17 +971,6 @@ export default function RentRollWidget({
                  <th className="px-4 py-3 text-center">Current Rent</th>
                  <th className="px-4 py-3 text-center">
                    <div className="flex items-center justify-center gap-1">
-                     Stabilized Rent
-                     {isNonOMFlow && (
-                       <WidgetTooltip
-                         title="Stabilized Rent Assumption"
-                         description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
-                       />
-                     )}
-                   </div>
-                 </th>
-                 <th className="px-4 py-3 text-center">
-                   <div className="flex items-center justify-center gap-1">
                      Market Rent
                      {isNonOMFlow && (
                        <WidgetTooltip
@@ -1102,7 +1031,6 @@ export default function RentRollWidget({
                   <td className="px-4 py-3 text-center">Avg Unit Size</td>
                   <td colSpan={1} className="px-4 py-3"></td>
                   <td className="px-4 py-3 text-center">Current Rent</td>
-                  <td className="px-4 py-3 text-center">Stabilized Rent</td>
                   <td className="px-4 py-3 text-center">Market Rent</td>
                   <td colSpan={10}></td>
                 </tr>
@@ -1122,14 +1050,6 @@ export default function RentRollWidget({
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency(displaySummary.total_annual_rent)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_rent_per_unit)}</span></div>
                        <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${Math.round(displaySummary.avg_rent_per_sf || 0)}</span></div>
-                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                     <div className="text-xs space-y-1">
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Monthly</span> <span className="font-bold">{formatCurrency(displaySummary.total_stabilized_rent)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Annual</span> <span className="font-bold">{formatCurrency((displaySummary.total_stabilized_rent || 0) * 12)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg Unit</span> <span className="font-bold">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</span></div>
-                       <div className="flex justify-between gap-4"><span className="text-neutral-400 font-normal">Avg SF</span> <span className="font-bold">${Math.round(displaySummary.avg_stabilized_per_sf || 0)}</span></div>
                      </div>
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -1375,8 +1295,7 @@ export default function RentRollWidget({
       {/* Rent Roll Summary Table */}
       {activeTab === 'details' && (
         <div className="mt-8">
-          <h2 className="text-2xl font-bold text-neutral-900 mb-4">RENT ROLL SUMMARY</h2>
-          <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
             <div className="bg-neutral-900 px-6 py-3 text-center border-b border-neutral-900">
               <h3 className="text-white font-medium">Rent Roll Summary</h3>
             </div>
@@ -1388,17 +1307,6 @@ export default function RentRollWidget({
                     <th className="px-6 py-3 text-center">Unit Count</th>
                     <th className="px-6 py-3 text-center">%</th>
                     <th className="px-6 py-3 text-center">Avg. Current Rent</th>
-                    <th className="px-6 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        Stabilized Rent
-                        {isNonOMFlow && (
-                          <WidgetTooltip
-                            title="Stabilized Rent Assumption"
-                            description="As stabilized rent is unavailable in the Rent Roll, we are assuming Current Rent represents stabilized levels for our proforma calculations."
-                          />
-                        )}
-                      </div>
-                    </th>
                     <th className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1">
                         Market Rent
@@ -1420,7 +1328,6 @@ export default function RentRollWidget({
                       <td className="px-6 py-3 text-center text-neutral-600">{group.count}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{formatPercent(group.percent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{group.avgCurrentRent === 0 ? "-" : formatCurrency(group.avgCurrentRent)}</td>
-                      <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgStabilizedRent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{formatCurrency(group.avgMarketRent)}</td>
                       <td className="px-6 py-3 text-center text-neutral-600">{Math.round(group.avgSqFt)}</td>
                     </tr>
@@ -1433,7 +1340,6 @@ export default function RentRollWidget({
                     <td className="px-6 py-4 text-center text-neutral-900">
                       {formatCurrency(displaySummary.occupied_units > 0 ? displaySummary.total_monthly_rent / displaySummary.occupied_units : 0)}
                     </td>
-                    <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_stabilized_per_unit)}</td>
                     <td className="px-6 py-4 text-center text-neutral-900">{formatCurrency(displaySummary.avg_market_per_unit)}</td>
                     <td className="px-6 py-4 text-center text-neutral-900">{Math.round(displaySummary.avg_unit_size)}</td>
                   </tr>
@@ -1605,23 +1511,6 @@ function SortableRow({
           </div>
         ) : (
           formatCurrency(typeof item.current_rent === 'number' ? item.current_rent : parseFloat(item.current_rent) || 0)
-        )}
-      </td>
-      <td className="px-4 py-2.5 text-center text-neutral-600">
-        {isEditing ? (
-          <div className="w-20 mx-auto">
-            <input
-              type="text"
-              value={item.stabilized_rent}
-              onChange={(e) => handleNumericChange(item.id, "stabilized_rent", e.target.value)}
-              className={`w-full bg-white border rounded px-2 py-1 text-xs text-center focus:ring-1 focus:outline-none ${
-                errors?.stabilized_rent ? "border-rose-500 bg-rose-50 focus:ring-rose-500" : "border-neutral-200 focus:ring-neutral-900"
-              }`}
-            />
-            {errors?.stabilized_rent && <div className="text-[10px] text-rose-600 mt-1">{errors.stabilized_rent}</div>}
-          </div>
-        ) : (
-          formatCurrency(typeof item.stabilized_rent === 'number' ? item.stabilized_rent : parseFloat(item.stabilized_rent) || 0)
         )}
       </td>
       <td className="px-4 py-2.5 text-center text-neutral-600">

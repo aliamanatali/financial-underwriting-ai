@@ -231,21 +231,23 @@ class ExplainabilityService:
         gpr = self.analysis.gross_potential_rent or 0.0
         ltl = self.analysis.loss_to_lease or 0.0
         vac = self.analysis.vacancy_loss or 0.0
-        
+        other = self.analysis.other_income or 0.0
+
         self._add_explanation("Effective Gross Income", ExplainabilityMetadata(
             metric="Effective Gross Income (EGI)",
             value=val,
             source=ExplanationSource(
                 document="Calculation",
-                fields_used=["GPR", "Loss to Lease", "Vacancy Loss"],
+                fields_used=["GPR", "Loss to Lease", "Vacancy Loss", "Other Income"],
                 data_type="Derived"
             ),
             calculation=ExplanationCalculation(
-                formula="GPR - Loss to Lease - Vacancy Loss",
+                formula="GPR - Loss to Lease - Vacancy Loss + Other Income",
                 inputs={
                     "Gross Potential Rent": gpr,
                     "Loss to Lease": ltl,
-                    "Vacancy Loss": vac
+                    "Vacancy Loss": vac,
+                    "Other Income": other
                 }
             ),
             adjustments=[],

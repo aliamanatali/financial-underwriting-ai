@@ -716,11 +716,9 @@ class SynthesisService:
                         })
 
             # PURCHASE PRICE
-            elif ("purchase price" in normalized_val or
-                "purchase price" in raw_text or
-                "sales price" in raw_text or
-                "contract price" in raw_text or
-                "price" in normalized_val):
+            elif ("purchase price" in normalized_val or "price" in normalized_val or
+                (normalized_val in ["uncategorized", "other", ""] and 
+                 ("purchase price" in raw_text or "sales price" in raw_text or "contract price" in raw_text))):
                 
                 # Critical: Exclude explicit Deposits
                 if "deposit" in normalized_val or "deposit" in raw_text or "earnest" in raw_text or "escrow" in raw_text:
@@ -729,30 +727,33 @@ class SynthesisService:
 
                 # Exclude small amounts that might be deposits or fees
                 # Lowered threshold to $10k to catch smaller properties, since Deposits are already filtered above
-                if amount > 10000 and doc_score > best_values["purchase_price"]["score"]:
-                    best_values["purchase_price"] = {
-                        "value": amount,
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Purchase Price: ${amount:,.2f} from {source_doc} (score: {doc_score})")
+                if amount > 10000:
+                    if doc_score > best_values["purchase_price"]["score"] or (doc_score == best_values["purchase_price"]["score"] and amount > best_values["purchase_price"]["value"]):
+                        best_values["purchase_price"] = {
+                            "value": amount,
+                            "source": source_doc,
+                            "score": doc_score
+                        }
+                        logger.info(f"Updated Purchase Price: ${amount:,.2f} from {source_doc} (score: {doc_score})")
             
             # TOTAL UNITS
             elif ("total units" in normalized_val or
-                  "total units" in raw_text or
-                  "number of units" in raw_text or
-                  "unit count" in raw_text):
+                  (normalized_val in ["uncategorized", "other", ""] and 
+                   ("total units" in raw_text or "number of units" in raw_text or "unit count" in raw_text))):
                 # Valid unit count range 1-1000
-                if amount > 0 and amount < 1000 and doc_score > best_values["total_units"]["score"]:
-                    best_values["total_units"] = {
-                        "value": int(amount),
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Total Units: {int(amount)} from {source_doc} (score: {doc_score})")
+                if amount > 0 and amount < 1000:
+                    if doc_score > best_values["total_units"]["score"] or (doc_score == best_values["total_units"]["score"] and amount > best_values["total_units"]["value"]):
+                        best_values["total_units"] = {
+                            "value": int(amount),
+                            "source": source_doc,
+                            "score": doc_score
+                        }
+                        logger.info(f"Updated Total Units: {int(amount)} from {source_doc} (score: {doc_score})")
             
             # YEAR BUILT
-            elif ("year built" in normalized_val or "year built" in raw_text or "year constructed" in raw_text or "build year" in raw_text):
+            elif ("year built" in normalized_val or 
+                  (normalized_val in ["uncategorized", "other", ""] and 
+                   ("year built" in raw_text or "year constructed" in raw_text or "build year" in raw_text))):
                 # Ensure year is valid
                 if amount > 1800 and amount < 2030 and doc_score > best_values["year_built"]["score"]:
                     best_values["year_built"] = {
@@ -764,37 +765,35 @@ class SynthesisService:
                     
             # RENTABLE AREA (SQ FT)
             elif ("rentable area" in normalized_val or
-                  "rentable area" in raw_text or
-                  "sq ft" in raw_text or
-                  "sq. ft" in raw_text or
-                  "square feet" in raw_text or
-                  "gross area" in raw_text or
-                  "building size" in raw_text):
-                if amount > 500 and doc_score > best_values["rentable_area"]["score"]:
-                    best_values["rentable_area"] = {
-                        "value": float(amount),
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Rentable Area: {amount:,.2f} from {source_doc} (score: {doc_score})")
+                  (normalized_val in ["uncategorized", "other", ""] and 
+                   ("rentable area" in raw_text or "sq ft" in raw_text or "sq. ft" in raw_text or "square feet" in raw_text or "gross area" in raw_text or "building size" in raw_text))):
+                if amount > 500:
+                    if doc_score > best_values["rentable_area"]["score"] or (doc_score == best_values["rentable_area"]["score"] and amount > best_values["rentable_area"]["value"]):
+                        best_values["rentable_area"] = {
+                            "value": float(amount),
+                            "source": source_doc,
+                            "score": doc_score
+                        }
+                        logger.info(f"Updated Rentable Area: {amount:,.2f} from {source_doc} (score: {doc_score})")
 
             # REAL ESTATE TAXES
             elif ("real estate tax" in normalized_val or
                   "property tax" in normalized_val or
-                  "tax amount" in raw_text):
-                 if amount > 0 and doc_score > best_values["real_estate_tax"]["score"]:
-                    best_values["real_estate_tax"] = {
-                        "value": float(amount),
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Real Estate Tax: ${amount:,.2f} from {source_doc} (score: {doc_score})")
+                  (normalized_val in ["uncategorized", "other", ""] and "tax amount" in raw_text)):
+                 if amount > 0:
+                     if doc_score > best_values["real_estate_tax"]["score"] or (doc_score == best_values["real_estate_tax"]["score"] and amount > best_values["real_estate_tax"]["value"]):
+                        best_values["real_estate_tax"] = {
+                            "value": float(amount),
+                            "source": source_doc,
+                            "score": doc_score
+                        }
+                        logger.info(f"Updated Real Estate Tax: ${amount:,.2f} from {source_doc} (score: {doc_score})")
 
             # MANAGEMENT FEE
             elif ("management fee" in normalized_val or
-                  "mgmt fee" in raw_text):
+                  (normalized_val in ["uncategorized", "other", ""] and "mgmt fee" in raw_text)):
                  # Allow 0 for management fee (self-managed)
-                 if doc_score > best_values["management_fee"]["score"]:
+                 if doc_score > best_values["management_fee"]["score"] or (doc_score == best_values["management_fee"]["score"] and amount > best_values["management_fee"]["value"]):
                     best_values["management_fee"] = {
                         "value": float(amount),
                         "source": source_doc,
@@ -806,18 +805,18 @@ class SynthesisService:
             elif ("loan balance" in normalized_val or
                   "current loan" in normalized_val or
                   "mortgage balance" in normalized_val or
-                  "existing debt" in raw_text or
-                  "principal balance" in raw_text or
-                  "loan amount" in raw_text):
+                  (normalized_val in ["uncategorized", "other", ""] and 
+                   ("existing debt" in raw_text or "principal balance" in raw_text or "loan amount" in raw_text))):
                 
                 # Exclude monthly payments or small amounts
-                if amount > 100000 and doc_score > best_values["current_loan_balance"]["score"]:
-                    best_values["current_loan_balance"] = {
-                        "value": float(amount),
-                        "source": source_doc,
-                        "score": doc_score
-                    }
-                    logger.info(f"Updated Current Loan Balance: ${amount:,.2f} from {source_doc} (score: {doc_score})")
+                if amount > 100000:
+                    if doc_score > best_values["current_loan_balance"]["score"] or (doc_score == best_values["current_loan_balance"]["score"] and amount > best_values["current_loan_balance"]["value"]):
+                        best_values["current_loan_balance"] = {
+                            "value": float(amount),
+                            "source": source_doc,
+                            "score": doc_score
+                        }
+                        logger.info(f"Updated Current Loan Balance: ${amount:,.2f} from {source_doc} (score: {doc_score})")
             
             # SPECIAL CASE: Rent Roll row count for Total Units
             if item.metadata and item.metadata.get("row_count") and "rent roll" in raw_text:
