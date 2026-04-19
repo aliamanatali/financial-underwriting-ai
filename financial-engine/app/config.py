@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Feature flags
-    use_consolidated_normalization: bool = False  # Tier B: route through adapter + NormalizationService
+    # use_consolidated_normalization: removed in Tier C — consolidated path is now the only path
 
     @property
     def use_mongodb(self) -> bool:

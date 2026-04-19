@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import List, Dict, Any
 from app.models.schemas import StandardizedExpense, ExpenseCategory, AuditLog, RentRollItem, CategoryGroup
@@ -7,34 +8,111 @@ from app.services.batch_logging_service import BatchLoggingService
 
 logger = logging.getLogger(__name__)
 
+# Maximum concurrent Gemini batch calls across all NormalizationService
+# instances.  Shared class-level semaphore prevents a large re-analyze
+# from saturating the event loop with LLM calls and starving other
+# requests (dashboard, SSE, etc.).
+_NORMALIZATION_GEMINI_CONCURRENCY = 10
+
+# Module-level cache metrics for observability.
+# Reset on process restart. Exposed via GET /api/v1/debug/cache-metrics.
+CACHE_METRICS = {"hits": 0, "misses": 0, "writes_skipped_low_confidence": 0}
+
 class NormalizationService:
+    # Cache TTL: 7 days. Reduced from 30 days to limit the blast radius of
+    # bad LLM classifications that get cached and poison future deals.
+    CACHE_TTL_SECONDS = 86400 * 7  # 7 days
+
+    # Minimum confidence to cache an LLM classification. Low-confidence
+    # mappings should not poison future deals — they'll be re-evaluated
+    # by the LLM on the next occurrence.
+    CACHE_MIN_CONFIDENCE = 0.85
+
+    # Class-level semaphore shared across all instances — bounds total
+    # concurrent Gemini calls from normalization regardless of how many
+    # callers (re-analyze, normal flow, etc.) are active.
+    _gemini_semaphore = asyncio.Semaphore(_NORMALIZATION_GEMINI_CONCURRENCY)
+
     def __init__(self, llm_service: Any, batch_logging_service: BatchLoggingService = None):
         self.llm_service = llm_service
         self.collection_name = "expense_mappings"
         self.batch_logging_service = batch_logging_service
 
-    async def _get_cached_mappings(self, descriptions: List[str]) -> Dict[str, Dict]:
-        """Retrieve cached mappings from Redis and MongoDB."""
+    @staticmethod
+    def _cache_key(description: str, section_context: str = "unknown") -> str:
+        """Build the Redis cache key for a description+context pair.
+
+        Key format: mapping:{description}:{section_context}
+
+        Migration note (2026-04-18): The old key format was mapping:{description}
+        (no section_context suffix). _get_cached_mappings falls back to reading
+        the old format when the new key misses, and forward-writes it under the
+        new key so future reads are fast. Old keys expire naturally under the
+        7-day TTL — the fallback can be removed ~30 days after deployment.
+        """
+        return f"mapping:{description}:{section_context}"
+
+    @staticmethod
+    def _legacy_cache_key(description: str) -> str:
+        """Old-format Redis key (pre section_context). Used for migration fallback."""
+        return f"mapping:{description}"
+
+    async def _get_cached_mappings(self, descriptions: List[str], section_context: str = "unknown") -> Dict[str, Dict]:
+        """Retrieve cached mappings from Redis and MongoDB.
+
+        Reads new-format keys first, falls back to old-format keys for
+        migration, and back-fills new-format keys from MongoDB or old-format
+        hits so subsequent reads are fast.
+        """
         from app.db.mongodb import get_database
         from app.db.redis import redis_client
         from app.config import settings
-        
+
         cache = {}
         missing_in_redis = []
 
-        # 1. Try Redis
+        # 1. Try Redis — new-format key first, then legacy fallback
         if redis_client.client:
-            keys = [f"mapping:{desc}" for desc in descriptions]
+            new_keys = [self._cache_key(desc, section_context) for desc in descriptions]
             try:
-                values = await redis_client.client.mget(keys)
+                values = await redis_client.client.mget(new_keys)
+                need_legacy_lookup = []
                 for desc, val in zip(descriptions, values):
                     if val:
                         try:
                             cache[desc] = json.loads(val)
                         except json.JSONDecodeError:
-                            missing_in_redis.append(desc)
+                            need_legacy_lookup.append(desc)
                     else:
-                        missing_in_redis.append(desc)
+                        need_legacy_lookup.append(desc)
+
+                # Fallback: try old-format keys for descriptions that missed
+                if need_legacy_lookup:
+                    legacy_keys = [self._legacy_cache_key(desc) for desc in need_legacy_lookup]
+                    legacy_values = await redis_client.client.mget(legacy_keys)
+                    forward_write_pipeline = redis_client.client.pipeline()
+                    has_forward_writes = False
+
+                    for desc, val in zip(need_legacy_lookup, legacy_values):
+                        if val:
+                            try:
+                                parsed = json.loads(val)
+                                cache[desc] = parsed
+                                # Forward-write under new key so future reads hit directly
+                                new_key = self._cache_key(desc, section_context)
+                                forward_write_pipeline.set(new_key, val, ex=NormalizationService.CACHE_TTL_SECONDS)
+                                has_forward_writes = True
+                            except json.JSONDecodeError:
+                                missing_in_redis.append(desc)
+                        else:
+                            missing_in_redis.append(desc)
+
+                    if has_forward_writes:
+                        try:
+                            await forward_write_pipeline.execute()
+                        except Exception as e:
+                            logger.error(f"Redis forward-write error: {e}")
+
             except Exception as e:
                 logger.error(f"Redis get error: {e}")
                 missing_in_redis = descriptions
@@ -48,9 +126,8 @@ class NormalizationService:
         if settings.use_mongodb:
             try:
                 db = get_database()
-                # Find documents where original_text is in our list
                 cursor = db[self.collection_name].find({"original_text": {"$in": missing_in_redis}})
-                
+
                 mongo_hits = []
                 async for doc in cursor:
                     if "original_text" in doc and "mapped_category" in doc:
@@ -62,50 +139,68 @@ class NormalizationService:
                         }
                         cache[doc["original_text"]] = clean_doc
                         mongo_hits.append(clean_doc)
-                
-                # Populate Redis with Mongo hits
+
+                # Populate Redis (new-format key) with Mongo hits
                 if redis_client.client and mongo_hits:
                     try:
                         pipeline = redis_client.client.pipeline()
                         for hit in mongo_hits:
-                            pipeline.set(f"mapping:{hit['original_text']}", json.dumps(hit), ex=86400 * 30) # 30 days
+                            key = self._cache_key(hit["original_text"], section_context)
+                            pipeline.set(key, json.dumps(hit), ex=NormalizationService.CACHE_TTL_SECONDS)
                         await pipeline.execute()
                     except Exception as e:
                         logger.error(f"Redis populate error: {e}")
 
             except Exception as e:
                 logger.error(f"Failed to fetch cached mappings from Mongo: {e}")
-        
+
         return cache
 
-    async def _save_mappings(self, mappings: List[Dict]):
-        """Save new mappings to MongoDB and Redis."""
+    async def _save_mappings(self, mappings: List[Dict], section_context: str = "unknown"):
+        """Save new mappings to MongoDB and Redis.
+
+        Only caches mappings with confidence >= CACHE_MIN_CONFIDENCE.
+        Low-confidence mappings are stored in MongoDB (for audit trail)
+        but NOT in Redis, so the LLM is re-invoked next time.
+        """
         from app.db.mongodb import get_database
         from app.db.redis import redis_client
         from app.config import settings
         from pymongo import UpdateOne
-        
+
         if not mappings:
             return
 
-        # 1. Save to Redis
+        # 1. Save to Redis — only high-confidence mappings
         if redis_client.client:
             try:
                 pipeline = redis_client.client.pipeline()
+                cached_count = 0
+                skipped_count = 0
                 for item in mappings:
-                     if "original_text" in item and "mapped_category" in item:
+                    if "original_text" in item and "mapped_category" in item:
+                        confidence = item.get("confidence", 0.85)
+                        if confidence < NormalizationService.CACHE_MIN_CONFIDENCE:
+                            skipped_count += 1
+                            continue
                         cache_obj = {
                             "original_text": item["original_text"],
                             "mapped_category": item["mapped_category"],
-                            "confidence": item.get("confidence", 0.85),
+                            "confidence": confidence,
                             "reasoning": item.get("reasoning")
                         }
-                        pipeline.set(f"mapping:{item['original_text']}", json.dumps(cache_obj), ex=86400 * 30)
-                await pipeline.execute()
+                        key = self._cache_key(item["original_text"], section_context)
+                        pipeline.set(key, json.dumps(cache_obj), ex=NormalizationService.CACHE_TTL_SECONDS)
+                        cached_count += 1
+                if cached_count > 0:
+                    await pipeline.execute()
+                if skipped_count > 0:
+                    CACHE_METRICS["writes_skipped_low_confidence"] += skipped_count
+                    logger.info(f"Skipped caching {skipped_count} low-confidence mappings (< {NormalizationService.CACHE_MIN_CONFIDENCE})")
             except Exception as e:
                 logger.error(f"Failed to save mappings to Redis: {e}")
 
-        # 2. Save to MongoDB
+        # 2. Save to MongoDB (all mappings, including low-confidence, for audit trail)
         if settings.use_mongodb:
             try:
                 db = get_database()
@@ -125,12 +220,44 @@ class NormalizationService:
                                 upsert=True
                             )
                         )
-                
+
                 if operations:
                     await db[self.collection_name].bulk_write(operations)
                     logger.info(f"Cached {len(operations)} expense mappings in MongoDB")
             except Exception as e:
                 logger.error(f"Failed to save cached mappings to Mongo: {e}")
+
+    @staticmethod
+    async def invalidate_cache_entry(description: str, section_context: str = "unknown"):
+        """Remove a cached mapping from both Redis and MongoDB.
+
+        Called when a user corrects a classification via the Verify Data UI.
+        The old (incorrect) mapping is purged so the next occurrence goes
+        back through the LLM instead of serving stale data.
+        """
+        from app.db.mongodb import get_database
+        from app.db.redis import redis_client
+        from app.config import settings
+
+        # 1. Delete from Redis (both new and legacy key formats)
+        if redis_client.client:
+            try:
+                new_key = NormalizationService._cache_key(description, section_context)
+                legacy_key = NormalizationService._legacy_cache_key(description)
+                await redis_client.client.delete(new_key, legacy_key)
+                logger.info(f"Invalidated Redis cache for: '{description}'")
+            except Exception as e:
+                logger.error(f"Redis invalidation error for '{description}': {e}")
+
+        # 2. Delete from MongoDB
+        if settings.use_mongodb:
+            try:
+                db = get_database()
+                result = await db["expense_mappings"].delete_one({"original_text": description})
+                if result.deleted_count:
+                    logger.info(f"Invalidated MongoDB cache for: '{description}'")
+            except Exception as e:
+                logger.error(f"MongoDB invalidation error for '{description}': {e}")
 
     def _parse_int_robust(self, value: Any) -> int:
         """Helper to safely parse integer strings, handling text suffixes like 'sq ft'."""
@@ -197,11 +324,10 @@ class NormalizationService:
                 return 0.0
         return 0.0
 
-    async def normalize_expenses_async(self, raw_expenses: List[Dict], document_id: str = None) -> List[StandardizedExpense]:
+    async def normalize_expenses_async(self, raw_expenses: List[Dict], document_id: str = None, total_units: int = 0) -> List[StandardizedExpense]:
         """
         Normalizes a list of raw expense data into StandardizedExpense objects using cached mappings and parallel batch processing.
         """
-        import asyncio
         if not raw_expenses:
             return []
 
@@ -238,17 +364,31 @@ class NormalizationService:
         raw_expenses = cleaned_expenses
 
         categories = [e.value for e in ExpenseCategory]
-        
-        # 1. Check Cache
-        descriptions = [item.get("description", "") for item in raw_expenses]
-        cached_mappings = await self._get_cached_mappings(descriptions)
-        
+
+        # Determine the dominant section_context for this batch (used for cache key).
+        # Individual items may have their own section_context from the extraction LLM.
+        # For cache lookups, we group by (description, section_context) pairs.
+
+        # 1. Check Cache — keyed by (description, section_context)
+        # Build unique (desc, section_context) pairs for cache lookup
+        desc_ctx_pairs = []
+        for item in raw_expenses:
+            desc = item.get("description", "")
+            ctx = item.get("section_context", "unknown") or "unknown"
+            desc_ctx_pairs.append((desc, ctx))
+
+        # Get all unique descriptions for cache lookup (grouped by section_context)
+        unique_descs = list(set(d for d, _ in desc_ctx_pairs))
+        # Use the first item's section_context as the batch context for cache reads
+        # (items from the same document typically share context)
+        batch_section_context = desc_ctx_pairs[0][1] if desc_ctx_pairs else "unknown"
+        cached_mappings = await self._get_cached_mappings(unique_descs, section_context=batch_section_context)
+
         uncached_expenses = []
-        uncached_indices = [] # Track original indices to merge back (not strictly necessary if we just list append)
-        
+
         # We'll build a map of description -> mapped_item
         final_mapped_data_dict = {}
-        
+
         for i, expense in enumerate(raw_expenses):
             desc = expense.get("description", "")
             if desc in cached_mappings:
@@ -261,7 +401,7 @@ class NormalizationService:
                     "amount_t3": expense.get("amount_t3"),
                     "amount_t6": expense.get("amount_t6"),
                     "amount_t9": expense.get("amount_t9"),
-                    "confidence": cached.get("confidence", 0.95), # High confidence for cache
+                    "confidence": cached.get("confidence", 0.85), # Replay original LLM confidence from cache
                     "reasoning": cached.get("reasoning"),
                     "page_number": expense.get("page_number"),
                     "bbox": expense.get("bbox")
@@ -269,13 +409,17 @@ class NormalizationService:
             else:
                 uncached_expenses.append(expense)
 
-        logger.info(f"Normalization Cache Hit Rate: {len(final_mapped_data_dict)}/{len(raw_expenses)}")
+        cache_hits = len(final_mapped_data_dict)
+        cache_misses = len(uncached_expenses)
+        CACHE_METRICS["hits"] += cache_hits
+        CACHE_METRICS["misses"] += cache_misses
+        logger.info(f"Normalization cache: hits={cache_hits}, misses={cache_misses}, total={len(raw_expenses)}")
 
         # 2. Process Uncached in Batches
         new_mappings_to_save = []
         
         if uncached_expenses:
-            BATCH_SIZE = 25
+            BATCH_SIZE = 100
             batches = [uncached_expenses[i:i + BATCH_SIZE] for i in range(0, len(uncached_expenses), BATCH_SIZE)]
             
             logger.info(f"Normalizing {len(uncached_expenses)} new expenses in {len(batches)} batches")
@@ -292,11 +436,9 @@ class NormalizationService:
                     logger.error(f"Error processing batch: {e}")
                     return []
 
-            # Execute batches in parallel with limited concurrency
-            sem = asyncio.Semaphore(3)
-
+            # Execute batches in parallel, bounded by class-level semaphore
             async def process_batch_with_sem(batch):
-                async with sem:
+                async with self._gemini_semaphore:
                     return await process_batch(batch)
 
             results = await asyncio.gather(*[process_batch_with_sem(batch) for batch in batches])
@@ -307,9 +449,9 @@ class NormalizationService:
                     for item in res:
                         # Ensure original amount is preserved if LLM messed it up
                         desc = item.get("original_text", "")
-                        
+
                         # Link back to original raw expense to get amounts and metadata
-                        original_match = next((e for e in batch if e.get("description") == desc), {})
+                        original_match = next((e for e in batches[i] if e.get("description") == desc), {})
                         
                         # Merge amounts from original extraction
                         item["amount"] = original_match.get("amount", item.get("amount"))
@@ -330,10 +472,9 @@ class NormalizationService:
                         # We don't save fallback to cache usually, or maybe we do with low confidence?
                         # Let's NOT save fallback to cache so we retry LLM next time.
 
-            # 3. Save new mappings to cache
+            # 3. Save new mappings to cache (keyed by section_context)
             if new_mappings_to_save:
-                # Fire and forget save? Or await? Await is safer.
-                await self._save_mappings(new_mappings_to_save)
+                await self._save_mappings(new_mappings_to_save, section_context=batch_section_context)
 
         # 4. Construct Final List
         try:
@@ -355,6 +496,12 @@ class NormalizationService:
                      logger.info(f"Identified likely Debt Balance/Liability item: {desc}. Forcing category to CURRENT_LOAN_BALANCE.")
                      forced_category = ExpenseCategory.CURRENT_LOAN_BALANCE
 
+                # Safety net: Past-due / receivable items should never be revenue or OpEx
+                past_due_keywords = ["past due", "outstanding balance", "overdue", "arrears", "delinquent"]
+                if not forced_category and any(k in desc_lower for k in past_due_keywords):
+                     logger.info(f"Reclassifying past-due item to Accounts Receivable: {desc}")
+                     forced_category = ExpenseCategory.ACCOUNTS_RECEIVABLE
+
                 # FIX: Explicit Debt Service Mapping (Principal & Interest often misclassified as OpEx)
                 if "current principal" in desc_lower or "principal due" in desc_lower:
                      logger.info(f"Reclassifying Debt Principal: {desc} to CURRENT_LOAN_BALANCE")
@@ -372,6 +519,21 @@ class NormalizationService:
                 elif "interest income" in desc_lower:
                      logger.info(f"Reclassifying Interest Income: {desc} to OTHER_INCOME")
                      forced_category = ExpenseCategory.OTHER_INCOME
+
+                # FIX: Explicit Other Income Mapping (Ancillary revenue misclassified as expense)
+                elif any(k in desc_lower for k in ["parking revenue", "parking income", "laundry revenue", "laundry income",
+                         "storage revenue", "storage income", "vending revenue", "vending income",
+                         "garage revenue", "garage income"]):
+                     logger.info(f"Reclassifying Ancillary Revenue item: {desc} to OTHER_INCOME")
+                     forced_category = ExpenseCategory.OTHER_INCOME
+
+                # FIX: Explicit Payroll Mapping (Manager/salary items misclassified)
+                if not forced_category and any(k in desc_lower for k in [
+                    "onsite manager", "on-site manager", "resident manager", "site manager",
+                    "manager salary", "manager payroll", "building superintendent", "super salary"
+                ]):
+                     logger.info(f"Reclassifying Payroll item: {desc} to PAYROLL")
+                     forced_category = ExpenseCategory.PAYROLL
 
                 # FIX: Exclude Vacancy/Concessions from Expenses
                 # These are deductions from Revenue, not Operating Expenses.
@@ -440,6 +602,9 @@ class NormalizationService:
                     amount_val = expense.get("amount", 0)
                     parsed_amt = abs(self._parse_amount(amount_val)) if amount_val else 0
                     if parsed_amt > 5000:
+                        # Only override if LLM put it in an OpEx category.
+                        # Reads final_mapped_data_dict which is populated earlier in this
+                        # same loop iteration (from cache hit or LLM batch result).
                         mapped_item_check = final_mapped_data_dict.get(desc)
                         if mapped_item_check:
                             try:
@@ -514,12 +679,16 @@ class NormalizationService:
                 # On tax bills, "Total Real Property" usually heads the value column or the summary of values.
                 # If the amount is very large (e.g. > $100k) and matches these keywords, it's definitely value not tax.
                 if any(k in desc_lower for k in assessment_keywords):
-                    # Safety check: Assessments usually don't have "tax" at the end, but "Net Taxable Value" does.
-                    # Exception: "Assessment Tax" or "Special Assessment".
-                    if "special assessment" not in desc_lower:
-                         # Heuristic: If value > $100,000, it's almost certainly a property value, not a tax line item
-                         # (unless it's a massive building's total tax, but context helps).
-                         # For now, blindly excluding based on specific value keywords is safer for this bug.
+                    # Exception: Actual assessment charges (special assessment, city assessment, etc.)
+                    # These are real operating expenses that should NOT be excluded.
+                    is_real_assessment = any(k in desc_lower for k in [
+                        "special assessment", "city assessment", "county assessment",
+                        "assessment fee", "assessment charge", "annual assessment",
+                        "hoa assessment", "condo assessment", "assessments"
+                    ])
+                    # "assessments" alone (plural) is typically a line-item charge, not a property value.
+                    # But "assessed value", "gross assessment" (singular in value context) are property values.
+                    if not is_real_assessment:
                          logger.warning(f"Excluding likely Assessed Value/Property Value line: {desc} - {expense.get('amount')}")
                          continue
 
@@ -550,18 +719,79 @@ class NormalizationService:
                 # If mapped_category is INSURANCE and amount > $50,000, it might be a limit or a large claim, not a premium.
                 # Or if any single expense item is > $50,000 and NOT Taxes/Debt/Management, flag it or move to CapEx/Reserves.
                 
-                # Check for large Insurance items specifically (common error source)
-                # FIX: Aggressive Insurance Limit Detection
-                # 1. High value check (> $25k)
-                # 2. Keyword check (limit, coverage, aggregate, liability) even if amount is lower but still significant (> $1000)
+                # Check for Insurance items that are actually coverage limits or CapEx, not premiums.
+                # Per-unit scaling: $1,500/unit is a reasonable insurance premium ceiling.
+                # Only auto-reclassify to Capital Reserves if description contains CapEx keywords.
+                # Otherwise, keep as Insurance but lower confidence when amount looks high.
                 is_insurance_limit_keyword = any(k in desc_lower for k in ["limit", "coverage", "aggregate", "liability"])
-                
+                capex_in_insurance_keyword = any(k in desc_lower for k in [
+                    "reserve", "replacement", "capital", "deductible", "claim", "loss run"
+                ])
+
                 if category_enum == ExpenseCategory.INSURANCE:
-                    is_high_value = parsed_amount > 25000
-                    if is_high_value or (parsed_amount > 1000 and is_insurance_limit_keyword):
-                        logger.warning(f"Likely Insurance Limit/Coverage detected (${parsed_amount:,.2f}): '{desc}'. Re-classifying as Capital Reserves.")
+                    # Items with explicit limit/coverage keywords are not premiums
+                    if is_insurance_limit_keyword:
+                        logger.warning(f"Insurance Limit/Coverage keyword detected (${parsed_amount:,.2f}): '{desc}'. Re-classifying as Capital Reserves.")
                         category_enum = ExpenseCategory.CAPITAL_RESERVES
-                        # Capital Reserves ensures it's excluded from NOI ("below the line")
+                    # Items with CapEx keywords are reserves, not premiums
+                    elif capex_in_insurance_keyword:
+                        logger.warning(f"Insurance CapEx keyword detected (${parsed_amount:,.2f}): '{desc}'. Re-classifying as Capital Reserves.")
+                        category_enum = ExpenseCategory.CAPITAL_RESERVES
+                    # Per-unit ceiling check: flag high premiums but don't auto-reclassify
+                    elif total_units and total_units > 0:
+                        per_unit_insurance = parsed_amount / total_units
+                        if per_unit_insurance > 1500:
+                            logger.warning(f"Insurance per-unit cost (${per_unit_insurance:,.0f}/unit) exceeds $1,500 ceiling for '{desc}' (${parsed_amount:,.2f}). Lowering confidence.")
+                            mapped_item["confidence"] = min(mapped_item.get("confidence", 0.85), 0.70)
+                    elif not total_units or total_units == 0:
+                        logger.warning(f"Insurance per-unit check skipped: total_units=0 for item '{desc}' (${parsed_amount:,.2f})")
+
+                # --- Cross-classification guard (Tier 3.4) ---
+                # If section_context from the extraction LLM disagrees with the
+                # mapped_category from the classification LLM, flag the conflict.
+                # Exception: Capital Reserves in an expense section is normal in OM layouts.
+                item_section = expense.get("section_context", "unknown") or "unknown"
+                if not forced_category and item_section != "unknown":
+                    INCOME_CATEGORIES = {
+                        ExpenseCategory.GROSS_POTENTIAL_RENT, ExpenseCategory.OTHER_INCOME,
+                        ExpenseCategory.REIMBURSEMENTS, ExpenseCategory.ACCOUNTS_RECEIVABLE,
+                    }
+                    EXPENSE_CATEGORIES = {
+                        ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE,
+                        ExpenseCategory.REPAIRS_MAINTENANCE, ExpenseCategory.GENERAL_ADMINISTRATIVE,
+                        ExpenseCategory.PAYROLL, ExpenseCategory.UTILITIES,
+                        ExpenseCategory.MANAGEMENT_FEES, ExpenseCategory.CONTRACT_SERVICES,
+                        ExpenseCategory.OTHER_OPERATING_EXPENSES, ExpenseCategory.ADVERTISING_MARKETING,
+                        ExpenseCategory.LEASING_FEES,
+                    }
+
+                    if item_section == "income" and category_enum in EXPENSE_CATEGORIES:
+                        logger.warning(
+                            f"Cross-classification conflict: '{desc}' is in income section but classified as "
+                            f"{category_enum.value}. Forcing to UNCATEGORIZED for review."
+                        )
+                        category_enum = ExpenseCategory.UNCATEGORIZED
+                        mapped_item["confidence"] = min(mapped_item.get("confidence", 0.85), 0.50)
+
+                    elif item_section == "expense" and category_enum in INCOME_CATEGORIES:
+                        # Capital Reserves in expense section is OK (OM layout convention)
+                        logger.warning(
+                            f"Cross-classification conflict: '{desc}' is in expense section but classified as "
+                            f"{category_enum.value}. Forcing to UNCATEGORIZED for review."
+                        )
+                        category_enum = ExpenseCategory.UNCATEGORIZED
+                        mapped_item["confidence"] = min(mapped_item.get("confidence", 0.85), 0.50)
+
+                    elif item_section == "capex" and category_enum not in {ExpenseCategory.CAPITAL_RESERVES, ExpenseCategory.UNCATEGORIZED}:
+                        logger.warning(
+                            f"Cross-classification conflict: '{desc}' is in capex section but classified as "
+                            f"{category_enum.value}. Forcing to CAPITAL_RESERVES."
+                        )
+                        category_enum = ExpenseCategory.CAPITAL_RESERVES
+
+                # Note: Capital Reserves with section_context="expense" is intentionally
+                # NOT flagged — it's a valid OM layout where CapEx appears inside the
+                # expense section, above "Total Operating Expenses".
 
                 # Fetch reasoning if available, otherwise default
                 reasoning = mapped_item.get("reasoning", f"LLM mapped '{desc}' based on semantic similarity.")
@@ -587,7 +817,9 @@ class NormalizationService:
                         amount_t9=self._parse_amount(expense.get("amount_t9")) if expense.get("amount_t9") is not None else None,
                         confidence=mapped_item.get("confidence", 0.85),
                         audit_log=audit_log,
-                        expense_year=expense.get("expense_year")
+                        expense_year=expense.get("expense_year"),
+                        section_context=item_section,
+                        source_snippet=expense.get("source_snippet"),
                     )
                 )
             return normalized_expenses
@@ -616,15 +848,19 @@ class NormalizationService:
             
             # Simple keyword matching logic (duplicated from _fallback_simple_mapping but returns dicts)
             mapped_category = ExpenseCategory.UNCATEGORIZED.value
-            if "tax" in description: mapped_category = ExpenseCategory.REAL_ESTATE_TAXES.value
+            if any(k in description for k in ["business tax", "business license", "city business", "franchise tax", "other taxes", "business / other"]):
+                mapped_category = ExpenseCategory.GENERAL_ADMINISTRATIVE.value
+            elif "tax" in description or "assessment" in description: mapped_category = ExpenseCategory.REAL_ESTATE_TAXES.value
             elif "insurance" in description: mapped_category = ExpenseCategory.INSURANCE.value
             elif "repair" in description or "maintenance" in description: mapped_category = ExpenseCategory.REPAIRS_MAINTENANCE.value
             elif "management" in description: mapped_category = ExpenseCategory.MANAGEMENT_FEES.value
             elif "util" in description or "gas" in description or "electric" in description or "waste" in description: mapped_category = ExpenseCategory.UTILITIES.value
-            elif "payroll" in description or "staff" in description: mapped_category = ExpenseCategory.PAYROLL.value
+            elif any(k in description for k in ["payroll", "staff", "salary", "wages", "onsite manager", "resident manager", "site manager"]): mapped_category = ExpenseCategory.PAYROLL.value
             elif "contract" in description or "service" in description: mapped_category = ExpenseCategory.CONTRACT_SERVICES.value
             elif "advertis" in description or "market" in description: mapped_category = ExpenseCategory.ADVERTISING_MARKETING.value
-            
+            elif any(k in description for k in ["rent control", "regulatory", "compliance fee", "license fee"]): mapped_category = ExpenseCategory.OTHER_OPERATING_EXPENSES.value
+            elif any(k in description for k in ["parking", "garage", "laundry", "storage", "vending"]): mapped_category = ExpenseCategory.OTHER_INCOME.value
+
             mapped_data.append({
                 "original_text": description,
                 "mapped_category": mapped_category,
@@ -642,7 +878,9 @@ class NormalizationService:
             
             # Simple keyword matching
             mapped_category = ExpenseCategory.UNCATEGORIZED
-            if "tax" in description:
+            if any(k in description for k in ["business tax", "business license", "city business", "franchise tax", "other taxes", "business / other"]):
+                mapped_category = ExpenseCategory.GENERAL_ADMINISTRATIVE
+            elif "tax" in description or "assessment" in description:
                 mapped_category = ExpenseCategory.REAL_ESTATE_TAXES
             elif "insurance" in description:
                 mapped_category = ExpenseCategory.INSURANCE
@@ -652,13 +890,17 @@ class NormalizationService:
                 mapped_category = ExpenseCategory.MANAGEMENT_FEES
             elif "util" in description or "gas" in description or "electric" in description or "waste" in description:
                 mapped_category = ExpenseCategory.UTILITIES
-            elif "payroll" in description or "staff" in description:
+            elif any(k in description for k in ["payroll", "staff", "salary", "wages", "onsite manager", "resident manager", "site manager"]):
                 mapped_category = ExpenseCategory.PAYROLL
             elif "contract" in description or "service" in description:
                 mapped_category = ExpenseCategory.CONTRACT_SERVICES
             elif "advertis" in description or "market" in description:
                 mapped_category = ExpenseCategory.ADVERTISING_MARKETING
-            
+            elif any(k in description for k in ["rent control", "regulatory", "compliance fee", "license fee"]):
+                mapped_category = ExpenseCategory.OTHER_OPERATING_EXPENSES
+            elif any(k in description for k in ["parking", "garage", "laundry", "storage", "vending"]):
+                mapped_category = ExpenseCategory.OTHER_INCOME
+
             # Build audit log
             # Updated to match new schema: source_doc -> source, reasoning -> method
             audit_log = AuditLog(
@@ -775,28 +1017,6 @@ class NormalizationService:
                 logger.info(f"Skipping rent roll item identified as garbage/empty: {item}")
                 continue
 
-            # --- FIX: Specific Logic for Units 6 and 8 ---
-            # "Apartment 6 and 8 tenants want to come back to live and left their stuff in the apartment.
-            # However, they haven't paid any rent and have't signed any new lease."
-            clean_unit_id = unit_str.replace("unit", "").replace("#", "").replace("apt", "").strip()
-            if clean_unit_id in ["6", "8"]:
-                 logger.info(f"Applying specific logic for Unit {clean_unit_id}: Returning tenants, no rent/lease.")
-                 
-                 # If vacant, mark as Returning Tenant (Possession) to indicate occupancy/stuff
-                 if not item.get("tenant_name") or str(item.get("tenant_name")).lower() in ["vacant", "n/a", ""]:
-                     item["tenant_name"] = "Returning Tenant (Possession)"
-                 
-                 # Set Current Rent to 0 as they haven't paid
-                 item["current_rent"] = 0.0
-                 
-                 # Clear lease dates as no new lease signed
-                 item["lease_start"] = "No Lease"
-                 item["lease_end"] = "No Lease"
-                 
-                 # Add comment
-                 existing_comments = str(item.get("comments", ""))
-                 item["comments"] = (existing_comments + " Tenants left belongings, want to return. No rent paid, no lease.").strip()
-
             # Pydantic will validate the types. We just need to ensure that the keys exist.
             # If market_rent is missing, default to current_rent or 0.0
             # Set defaults for missing or None values to prevent validation errors
@@ -820,8 +1040,9 @@ class NormalizationService:
             
             if stabilized_rent_val <= 0 and current_rent_val > 0:
                 stabilized_rent_val = current_rent_val
-            elif current_rent_val <= 0:
-                # If current rent is zero, stabilized rent should also be zero
+            elif stabilized_rent_val <= 0 and current_rent_val <= 0:
+                # Only zero out if both are missing — preserve explicitly extracted
+                # stabilized_rent for vacant units (e.g., Pro Forma rent from OM)
                 stabilized_rent_val = 0.0
 
             # Parse unit size robustly
@@ -840,19 +1061,15 @@ class NormalizationService:
             #     elif u_type.lower().endswith("-vacant"):
             #         u_type = u_type[:-7].strip()
 
-            # Determine vacancy status explicitly during normalization
-            u_type_raw = str(item.get("unit_type", "")).lower()
-            t_name_raw = str(item.get("tenant_name", "")).lower()
-            vacancy_keywords = ["vacant", "vac", "empty", "model"]
-            
-            is_vacant_val = item.get("is_vacant", False)
-            if not is_vacant_val:
-                # If not already True, check keywords
-                if any(kw in u_type_raw for kw in vacancy_keywords) or \
-                   any(kw in t_name_raw for kw in vacancy_keywords):
-                    is_vacant_val = True
-                elif current_rent_val == 0 and (not t_name_raw or t_name_raw == "unknown"):
-                    is_vacant_val = True
+            # Determine vacancy status via centralized helper
+            from app.models.schemas import is_unit_vacant
+            is_vacant_val = is_unit_vacant(
+                current_rent=current_rent_val,
+                tenant_name=item.get("tenant_name") or "",
+                unit_type=item.get("unit_type") or "",
+                move_in_date=item.get("move_in_date"),
+                is_vacant_flag=item.get("is_vacant", False),
+            )
 
             rent_roll_item_data = {
                 "unit_number": item.get("unit_number") or "N/A",

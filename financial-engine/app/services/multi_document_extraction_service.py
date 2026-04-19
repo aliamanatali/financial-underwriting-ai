@@ -1080,276 +1080,10 @@ class MultiDocumentExtractionService:
         
         return fixed_expenses
     
-    async def normalize_expenses_batch(self, expenses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Batch normalize expenses using Gemini to reduce API calls and latency.
-        """
-        if not expenses:
-            return []
-        
-        # First, validate and fix common errors
-        expenses = self._validate_and_fix_extraction(expenses)
-            
-        if not self.gemini_service:
-            return [self._fallback_categorization(e) for e in expenses]
+    # normalize_expenses_batch, _legacy_normalize_expenses, and _fallback_categorization
+    # were deleted in Tier C. All normalization now routes through the adapter →
+    # NormalizationService pipeline in process_financial_documents.
 
-        try:
-            # Prepare items for prompt
-            items_payload = []
-            # Separate items that are extraction errors to avoid sending them to Gemini
-            gemini_items = []
-            pre_categorized = {}
-            
-            for idx, exp in enumerate(expenses):
-                raw_text = exp.get("raw_text", "")
-                text_lower = raw_text.lower()
-                
-                if "extraction timed out" in text_lower or "processing failed" in text_lower or "no expenses extracted" in text_lower:
-                    # Pre-categorize these items
-                    pre_categorized[idx] = {
-                        "normalized_value": "Other Operating Expenses",
-                        "category_group": "Other",
-                        "confidence": 0.1,
-                        "reasoning": "Extraction error placeholder - check source document"
-                    }
-                else:
-                    gemini_items.append({
-                        "id": idx,
-                        "text": raw_text,
-                        "type": exp.get("type", "expense"),
-                        "subtype": exp.get("subtype", "")
-                    })
-            
-            if not gemini_items:
-                return [pre_categorized.get(i) or self._fallback_categorization(expenses[i]) for i in range(len(expenses))]
-
-            items_payload = gemini_items
-            
-            prompt = f"""
-            You are a commercial real estate financial analyst. Map these {len(items_payload)} line items to the most appropriate standard category and group.
-            
-            Standard Categories:
-            {chr(10).join(f"- {cat}" for cat in self.STANDARD_CATEGORIES)}
-            
-            Items to Process:
-            {json.dumps(items_payload, indent=2)}
-            
-            Respond with ONLY a JSON array of objects in this exact format:
-            [
-                {{
-                    "id": 0,  // Must match input ID
-                    "category": "Exact category name from the list above",
-                    "group": "Revenue" | "Operating Expense" | "Capital Expenditure" | "Property Info" | "Debt" | "Tax & Insurance" | "Other" | "Pending Expense",
-                    "confidence": 0.95,
-                    "reasoning": "Brief explanation"
-                }}
-            ]
-            
-            CRITICAL RULES:
-            - If text describes the Property Name, map to Group: "Property Info" and Category: "Property Name"
-            - If text describes the Property Address, map to Group: "Property Info" and Category: "Property Address"
-            - If type is "receivable", map to Group: "Other" and Category: "Accounts Receivable" (NOT revenue - these are uncollected amounts)
-            - If type is "pending_expense", map to Group: "Pending Expense" and Category: "Miscellaneous Expense"
-            - If type is "revenue" and subtype is "rent", map to Group: "Revenue" and Category: "Gross Potential Rent"
-            - If type is "revenue" and subtype is "late_fee", map to Group: "Revenue" and Category: "Other Income"
-            - If type is "revenue" and subtype is "other_income", map to Group: "Revenue" and Category: "Other Income"
-            - If type is "revenue" and subtype is "reimbursement", map to Group: "Revenue" and Category: "Reimbursements"
-            - If type is "capex", map to Group: "Capital Expenditure" and Category: "Capital Reserves"
-            - Map "Purchase Price", "Asking Price", "Sale Price" to Group: "Property Info" and Category: "Purchase Price"
-            - Map "Deposit", "Earnest Money", "Escrow Deposit" to Group: "Property Info" and Category: "Deposit"
-            - Map "Price per Unit", "Cost per Unit" to Group: "Property Info" and Category: "Price per Unit"
-            - Map "Units", "Total Units", "Unit Count" to Group: "Property Info" and Category: "Total Units"
-            - Map "Year Built", "Build Year", "Age", "Construction Year" to Group: "Property Info" and Category: "Year Built"
-            - Map "Loan Balance", "Mortgage", "Existing Debt" to Group: "Debt" and Category: "Current Loan Balance"
-            - Map general property stats (Roof Age, Sq Ft) to Group: "Property Info" and Category: "Property Characteristic"
-            - Map Tax/Insurance to Group: "Tax & Insurance"
-            - Map repairs/maintenance to Group: "Operating Expense"
-            - For aggregated Excel documents, map to Category: "Property Characteristic" and Group: "Other"
-            
-            Use these exact group names:
-            - Revenue
-            - Operating Expense
-            - Capital Expenditure
-            - Property Info
-            - Debt
-            - Tax & Insurance
-            - Other
-            - Pending Expense
-            """
-            
-            response_text = await self.gemini_service.generate_content_async(prompt)
-            
-            # Clean and parse JSON
-            cleaned_text = self._extract_json_from_response(response_text)
-            
-            try:
-                results = json.loads(cleaned_text)
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse batch normalization response: {cleaned_text[:100]}...")
-                return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
-            
-            # Create a map of id -> result for O(1) lookup
-            result_map = {item.get("id"): item for item in results if isinstance(item, dict)}
-            
-            # Compile final list in order
-            normalized_list = []
-            for idx in range(len(expenses)):
-                if idx in pre_categorized:
-                    normalized_list.append(pre_categorized[idx])
-                    continue
-                    
-                res = result_map.get(idx)
-                if res:
-                    normalized_list.append({
-                        "normalized_value": res.get("category", "Other Operating Expenses"),
-                        "category_group": res.get("group", "Other"),
-                        "confidence": float(res.get("confidence", 0.5)),
-                        "reasoning": res.get("reasoning", "")
-                    })
-                else:
-                    # Fallback if item missing in response
-                    normalized_list.append(self._fallback_categorization(expenses[idx]))
-                    
-            return normalized_list
-
-        except Exception as e:
-            logger.error(f"Batch normalization failed: {str(e)}")
-            # Fallback for all
-            return [self._fallback_categorization(e.get("raw_text", "")) for e in expenses]
-
-    def _fallback_categorization(self, expense_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Simple keyword-based categorization fallback when Gemini is unavailable.
-        """
-        raw_text = expense_dict.get("raw_text", "") if isinstance(expense_dict, dict) else str(expense_dict)
-        text_lower = raw_text.lower()
-        item_type = expense_dict.get("type", "expense") if isinstance(expense_dict, dict) else "expense"
-        subtype = expense_dict.get("subtype", "") if isinstance(expense_dict, dict) else ""
-        
-        # Handle extraction errors / placeholders
-        if "extraction timed out" in text_lower or "processing failed" in text_lower or "no expenses extracted" in text_lower:
-            return {
-                "normalized_value": "Other Operating Expenses",
-                "category_group": "Other",
-                "confidence": 0.1,
-                "reasoning": "Extraction error placeholder - check source document"
-            }
-
-        # Handle receivables (Past Due)
-        if item_type == "receivable" or any(keyword in text_lower for keyword in ["past due", "delinquent", "arrears"]):
-            return {
-                "normalized_value": "Accounts Receivable",
-                "category_group": "Other",
-                "confidence": 0.95,
-                "reasoning": "Receivable/Past Due amount - not revenue"
-            }
-        
-        # Handle pending expenses
-        if item_type == "pending_expense" or any(keyword in text_lower for keyword in ["proposal", "quote", "estimate", "unpaid", "due", "offer to purchase"]):
-            return {
-                "normalized_value": "Miscellaneous Expense",
-                "category_group": "Pending Expense",
-                "confidence": 0.95,
-                "reasoning": "Pending expense - requires approval"
-            }
-        
-        # Handle revenue subtypes
-        if item_type == "revenue":
-            if subtype == "rent" or ("rent" in text_lower and "late" not in text_lower):
-                return {
-                    "normalized_value": "Gross Potential Rent",
-                    "category_group": "Revenue",
-                    "confidence": 0.9,
-                    "reasoning": "Rental income"
-                }
-            elif subtype == "late_fee" or any(keyword in text_lower for keyword in ["late fee", "late charge", "penalty"]):
-                return {
-                    "normalized_value": "Other Income",
-                    "category_group": "Revenue",
-                    "confidence": 0.9,
-                    "reasoning": "Late fee income"
-                }
-            elif subtype == "other_income" or any(keyword in text_lower for keyword in ["laundry", "parking", "pet fee"]):
-                return {
-                    "normalized_value": "Other Income",
-                    "category_group": "Revenue",
-                    "confidence": 0.9,
-                    "reasoning": "Other income source"
-                }
-            elif subtype == "reimbursement" or "reimbursement" in text_lower:
-                return {
-                    "normalized_value": "Reimbursements",
-                    "category_group": "Revenue",
-                    "confidence": 0.9,
-                    "reasoning": "Tenant reimbursement"
-                }
-        
-        # Handle capital expenditures
-        if item_type == "capex" or any(keyword in text_lower for keyword in ["electrical upgrade", "major renovation", "roof replacement"]):
-            return {
-                "normalized_value": "Capital Reserves",
-                "category_group": "Capital Expenditure",
-                "confidence": 0.85,
-                "reasoning": "Capital expenditure"
-            }
-        
-        # Special handling for Excel aggregated entries
-        if "rent roll" in text_lower:
-            return {
-                "normalized_value": "Property Characteristic",
-                "category_group": "Other",
-                "confidence": 1.0,
-                "reasoning": "Rent Roll document aggregation"
-            }
-        
-        if "t12 statement" in text_lower or "financial statement" in text_lower or "p&l statement" in text_lower:
-            return {
-                "normalized_value": "Property Characteristic",
-                "category_group": "Other",
-                "confidence": 1.0,
-                "reasoning": "Financial statement document aggregation"
-            }
-        
-        # Keyword mapping for operating expenses and revenue
-        category_keywords = {
-            "Gross Potential Rent": (["rent", "rental income", "gross potential rent"], "Revenue"),
-            "Other Income": (["income", "late fee", "late charge", "penalty", "laundry", "parking", "pet fee"], "Revenue"),
-            "Reimbursements": (["reimbursement"], "Revenue"),
-            "Purchase Price": (["purchase price", "asking price", "sale price","property price"], "Property Info"),
-            "Deposit": (["deposit", "earnest money", "escrow"], "Property Info"),
-            "Price per Unit": (["price per unit", "cost per unit", "asking price/unit", "$/unit"], "Property Info"),
-            "Total Units": (["units", "total units", "unit count", "number of units"], "Property Info"),
-            "Year Built": (["year built", "build year", "construction year", "year constructed", "built in"], "Property Info"),
-            "Current Loan Balance": (["loan balance", "existing loan", "mortgage balance", "principal balance"], "Debt"),
-            "Utilities": (["utility", "utilities", "electric", "gas", "water", "sewer", "trash", "garbage", "pg&e", "pge"], "Operating Expense"),
-            "Real Estate Taxes": (["tax", "property tax", "real estate tax"], "Tax & Insurance"),
-            "Repairs & Maintenance": (["repair", "maintenance", "r&m", "plumbing", "hvac", "painting"], "Operating Expense"),
-            "Management Fees": (["management", "property management", "mgmt"], "Operating Expense"),
-            "Insurance": (["insurance", "liability", "property insurance"], "Tax & Insurance"),
-            "Contract Services": (["landscape", "landscaping", "gardening", "lawn"], "Operating Expense"),
-            "Payroll": (["payroll", "salary", "wages", "employee"], "Operating Expense"),
-            "General & Administrative": (["legal", "accounting", "professional", "consultant", "administrative", "office", "supplies"], "Operating Expense"),
-            "Advertising & Marketing": (["marketing", "advertising", "leasing"], "Operating Expense"),
-            "Property Characteristic": (["roof age", "sq ft", "square feet"], "Property Info"),
-        }
-        
-        for category, (keywords, group) in category_keywords.items():
-            if any(keyword in text_lower for keyword in keywords):
-                confidence = 0.85 if len([k for k in keywords if k in text_lower]) > 1 else 0.75
-                return {
-                    "normalized_value": category,
-                    "category_group": group,
-                    "confidence": confidence,
-                    "reasoning": "Keyword-based matching"
-                }
-        
-        return {
-            "normalized_value": "Other Operating Expenses",
-            "category_group": "Operating Expense",
-            "confidence": 0.5,
-            "reasoning": "No clear category match found"
-        }
-    
     def _convert_om_proforma_to_expenses(self, proforma_tables: List[OMProformaTable], filename: str, document_id: str) -> List[Dict[str, Any]]:
         """
         Converts extracted OM Proforma tables into raw expense items for normalization.
@@ -1974,129 +1708,50 @@ class MultiDocumentExtractionService:
         except Exception as e:
             logger.error(f"Error filtering for primary fiscal year: {e}")
 
-        # Normalize expenses using batch processing
+        # Normalize expenses via consolidated pipeline (adapter → NormalizationService)
         normalized_items: List[NormalizedDataItem] = []
-        logger.info(f"Starting batch normalization of {len(all_expenses)} expenses...")
-        
-        # Process in chunks of 50 to avoid hitting token limits
-        batch_size = 50
-        
-        # Create batches
-        batches = [all_expenses[i:i + batch_size] for i in range(0, len(all_expenses), batch_size)]
-        
-        async def process_normalization_batch(batch_idx, chunk):
-            local_items = []
-            try:
-                logger.info(f"Normalizing batch {batch_idx + 1}/{len(batches)} ({len(chunk)} items)")
-                batch_normalizations = await self.normalize_expenses_batch(chunk)
-                
-                for idx, (expense, normalization) in enumerate(zip(chunk, batch_normalizations)):
-                    try:
-                        raw_text = expense.get("raw_text", "")
-                        amount = expense.get("amount")
-                        item_type = expense.get("type", "expense")
-                        
-                        category_group = normalization.get("category_group", "Other")
-                        field_type = "expense_category"
-                        if category_group == "Property Info":
-                            field_type = "property_meta"
-                        elif category_group == "Revenue":
-                            field_type = "revenue_item"
-                        
-                        try:
-                            group_enum = CategoryGroup(category_group)
-                        except ValueError:
-                            try:
-                                if "Expense" in category_group:
-                                    group_enum = CategoryGroup.OPERATING_EXPENSE
-                                elif "Revenue" in category_group or "Income" in category_group:
-                                    group_enum = CategoryGroup.REVENUE
-                                elif "Property" in category_group:
-                                    group_enum = CategoryGroup.PROPERTY_INFO
-                                elif "Debt" in category_group:
-                                    group_enum = CategoryGroup.DEBT
-                                elif "Pending" in category_group:
-                                    group_enum = CategoryGroup.PENDING_EXPENSE
-                                else:
-                                    group_enum = CategoryGroup.OTHER
-                            except:
-                                group_enum = CategoryGroup.OTHER
-                        
-                        # Extract year
-                        expense_year = expense.get("expense_year")
-                        
-                        meta = {
-                            "amount": amount,
-                            "amount_t3": expense.get("amount_t3"),
-                            "amount_t6": expense.get("amount_t6"),
-                            "amount_t9": expense.get("amount_t9"),
-                            "text_value": raw_text,
-                            "reasoning": normalization.get("reasoning", ""),
-                            "row_count": expense.get("row_count"),
-                            "categories_found": expense.get("categories_found"),
-                            "original_type": item_type,
-                            "expense_year": expense_year,
-                            "page_number": expense.get("page_number"),
-                            "bbox": expense.get("bbox"),
-                            "document_id": expense.get("document_id")
-                        }
+        logger.info(f"Starting normalization of {len(all_expenses)} expenses...")
 
-                        # Create a temp ID, we will re-index later if needed to be perfectly sequential
-                        # or just use UUIDs. Here using a placeholder index that might collide if not careful
-                        # but we are appending to a local list.
-                        item = NormalizedDataItem(
-                            id=f"item_placeholder",
-                            raw_text=raw_text,
-                            normalized_value=normalization.get("normalized_value", "Other Operating Expenses"),
-                            field_type=field_type,
-                            category_group=group_enum,
-                            data_classification=DataClassification.SOURCED,
-                            confidence=normalization.get("confidence", 0.5),
-                            user_verified=False,
-                            source_document=expense.get("source_document", "Unknown"),
-                            text_type=expense.get("text_type", "Computerized"),
-                            metadata=meta
-                        )
-                        local_items.append(item)
-                        
-                        if self.batch_logging_service:
-                             self.batch_logging_service.log_normalization(
-                                 document_id=expense.get("document_id", "unknown"),
-                                 filename=expense.get("source_document", "unknown"),
-                                 raw_text=raw_text,
-                                 amount=float(amount or 0.0),
-                                 normalized_value=normalization.get("normalized_value", ""),
-                                 category_group=normalization.get("category_group", ""),
-                                 confidence=normalization.get("confidence", 0.0),
-                                 source_document=expense.get("source_document", "unknown")
-                             )
+        from app.services.multi_doc_normalization_adapter import (
+            adapt_extraction_to_normalization,
+            adapt_normalization_to_normalized_item,
+        )
+        from app.services.normalization_service import NormalizationService
 
-                    except Exception as item_error:
-                        logger.error(f"Error creating normalized item: {str(item_error)}")
-                        if self.batch_logging_service:
-                            self.batch_logging_service.log_error("batch", "create_normalized_item", str(item_error))
-                        continue
-                return local_items
-            except Exception as batch_error:
-                logger.error(f"Error processing batch {batch_idx}: {str(batch_error)}")
-                if self.batch_logging_service:
-                    self.batch_logging_service.log_error("batch", "process_normalization_batch", str(batch_error))
-                return []
+        # Extract total_units from pre-normalized OM data if available
+        _total_units = 0
+        for pni in pre_normalized_items:
+            if hasattr(pni, 'normalized_value') and pni.normalized_value == "Total Units":
+                try:
+                    _total_units = int(pni.metadata.get("amount", 0)) if pni.metadata else 0
+                except (ValueError, TypeError):
+                    pass
+                break
 
-        # Run normalization batches in parallel with limited concurrency
-        sem_norm = asyncio.Semaphore(3)
+        # Step 1: Adapt extraction output for NormalizationService
+        adapted_expenses = adapt_extraction_to_normalization(all_expenses, total_units=_total_units)
+        logger.info(f"Adapted {len(all_expenses)} raw items → {len(adapted_expenses)} items for NormSvc")
 
-        async def process_normalization_batch_with_sem(i, batch):
-            async with sem_norm:
-                return await process_normalization_batch(i, batch)
+        # Step 2: Run through NormalizationService
+        norm_svc = NormalizationService(llm_service=self.gemini_service)
+        standardized_expenses = await norm_svc.normalize_expenses_async(
+            adapted_expenses,
+            document_id=task_id or "multi_doc",
+            total_units=_total_units,
+        )
 
-        norm_results = await asyncio.gather(*[process_normalization_batch_with_sem(i, batch) for i, batch in enumerate(batches)])
-        
-        # Flatten results
-        for batch_items in norm_results:
-            normalized_items.extend(batch_items)
-            
-        # Add pre-normalized items (from OM key data)
+        # Step 3: Convert back to NormalizedDataItem
+        raw_by_desc: dict[str, dict] = {}
+        for raw_exp in all_expenses:
+            raw_by_desc.setdefault(raw_exp.get("raw_text", ""), raw_exp)
+
+        for std_exp in standardized_expenses:
+            original_raw = raw_by_desc.get(std_exp.original_text, {})
+            normalized_items.append(
+                adapt_normalization_to_normalized_item(std_exp, original_raw)
+            )
+
+        # Add pre-normalized items (from OM key data) — shared by both paths
         if pre_normalized_items:
             logger.info(f"Adding {len(pre_normalized_items)} pre-normalized items from OM to final list")
             normalized_items.extend(pre_normalized_items)
