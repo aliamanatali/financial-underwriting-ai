@@ -1480,6 +1480,15 @@ class MultiDocumentExtractionService:
                         return [], []
 
                     # OM Extraction
+                    # When the structured proforma extraction succeeds, it is
+                    # authoritative for OM documents.  The generic visual
+                    # extraction path is skipped to avoid nondeterministic
+                    # duplicates (scenario-prefixed items, spurious
+                    # misclassifications) that vary run-to-run.  If proforma
+                    # extraction fails or returns empty, we fall back to the
+                    # visual path so we still get *something*.
+                    om_proforma_succeeded = False
+
                     if doc.get("document_category") == DocumentType.OFFERING_MEMORANDUM.value:
                         logger.info(f"Running OM Extraction (Proforma + Key Data) on: {filename}")
                         try:
@@ -1488,8 +1497,9 @@ class MultiDocumentExtractionService:
                             if proforma_tables:
                                 local_om_results.extend(proforma_tables)
                                 logger.info(f"Successfully extracted {len(proforma_tables)} proforma tables from {filename}")
-                                
-                                # FIX: Convert OM Proforma to Expenses immediately
+                                om_proforma_succeeded = True
+
+                                # Convert OM Proforma to Expenses immediately
                                 om_expenses = self._convert_om_proforma_to_expenses(proforma_tables, filename, document_id)
                                 if om_expenses:
                                     local_expenses.extend(om_expenses)
@@ -1503,56 +1513,64 @@ class MultiDocumentExtractionService:
                                 mime_type = "image/jpeg"
 
                             om_key_data = await self.om_scraper_service.extract_om_key_data(file_content, filename, mime_type)
-                            
+
                             if om_key_data:
                                 om_normalized_items = self._convert_om_data_to_normalized(om_key_data, filename, document_id)
                                 local_expenses.extend(om_normalized_items)
                                 logger.info(f"Extracted {len(om_normalized_items)} key data items from OM: {filename}")
-                                
+
                         except Exception as e:
                             logger.error(f"Error extracting OM Data from {filename}: {e}")
 
-                    expenses = []
-                    if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
-                        logger.info(f"Extracting from Excel file: {filename}")
-                        expenses = await self.extract_from_excel(file_content, filename)
-                        logger.info(f"Extracted {len(expenses)} expenses from Excel: {filename}")
-                    
-                    elif file_type == "csv" or filename.lower().endswith(".csv"):
-                        logger.info(f"Extracting from CSV file: {filename}")
-                        expenses = await self.extract_from_csv(file_content, filename)
-                        logger.info(f"Extracted {len(expenses)} expenses from CSV: {filename}")
-
-                    elif file_type == "visual" or file_type == "pdf" or filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
-                        logger.info(f"Extracting from visual file: {filename}")
-                        
-                        mime_type = "application/pdf"
-                        if filename.lower().endswith(".png"):
-                            mime_type = "image/png"
-                        elif filename.lower().endswith((".jpg", ".jpeg")):
-                            mime_type = "image/jpeg"
-                            
-                        expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
-                        logger.info(f"Extracted {len(expenses)} expenses from {filename}")
-                        
-                        if document_id:
-                            for exp in expenses:
-                                exp["document_id"] = document_id
-
-                        if not expenses:
-                            logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
-                            expenses = [{
-                                "raw_text": f"Document - {filename} (No expenses extracted)",
-                                "amount": 0.0,
-                                "source_document": filename,
-                                "document_id": document_id
-                            }]
+                    # Generic extraction — skip for OM documents when the
+                    # structured proforma extraction already succeeded.
+                    if om_proforma_succeeded:
+                        logger.info(
+                            f"Skipping visual extraction for OM '{filename}' — "
+                            f"structured proforma extraction is authoritative"
+                        )
                     else:
-                        logger.warning(f"Unsupported file type for {filename}")
-                        await update_progress(filename, "failed", category)
-                        return [], []
+                        expenses = []
+                        if file_type in ["xlsx", "xls", "excel"] or filename.endswith((".xlsx", ".xls")):
+                            logger.info(f"Extracting from Excel file: {filename}")
+                            expenses = await self.extract_from_excel(file_content, filename)
+                            logger.info(f"Extracted {len(expenses)} expenses from Excel: {filename}")
 
-                    local_expenses.extend(expenses)
+                        elif file_type == "csv" or filename.lower().endswith(".csv"):
+                            logger.info(f"Extracting from CSV file: {filename}")
+                            expenses = await self.extract_from_csv(file_content, filename)
+                            logger.info(f"Extracted {len(expenses)} expenses from CSV: {filename}")
+
+                        elif file_type == "visual" or file_type == "pdf" or filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
+                            logger.info(f"Extracting from visual file: {filename}")
+
+                            mime_type = "application/pdf"
+                            if filename.lower().endswith(".png"):
+                                mime_type = "image/png"
+                            elif filename.lower().endswith((".jpg", ".jpeg")):
+                                mime_type = "image/jpeg"
+
+                            expenses = await self.extract_from_visual_document(file_content, filename, mime_type=mime_type)
+                            logger.info(f"Extracted {len(expenses)} expenses from {filename}")
+
+                            if document_id:
+                                for exp in expenses:
+                                    exp["document_id"] = document_id
+
+                            if not expenses:
+                                logger.warning(f"Visual extraction returned no expenses for {filename}, creating placeholder")
+                                expenses = [{
+                                    "raw_text": f"Document - {filename} (No expenses extracted)",
+                                    "amount": 0.0,
+                                    "source_document": filename,
+                                    "document_id": document_id
+                                }]
+                        else:
+                            logger.warning(f"Unsupported file type for {filename}")
+                            await update_progress(filename, "failed", category)
+                            return [], []
+
+                        local_expenses.extend(expenses)
                     await update_progress(filename, "completed", category)
                     return local_expenses, local_om_results
 
