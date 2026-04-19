@@ -249,6 +249,8 @@ class StandardizedExpense(BaseModel):
     expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
     source_document: Optional[str] = None # Source file name for traceability and deduplication
     text_type: Optional[str] = "Computerized"
+    section_context: Optional[str] = None  # "income", "expense", "capex", "unknown" — extraction LLM hint
+    source_snippet: Optional[str] = None  # Raw text snippet from source document for audit trail
 
 # --- 2.2 Explainability Models ---
 

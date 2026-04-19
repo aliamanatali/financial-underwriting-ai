@@ -69,9 +69,21 @@ class FinancialService:
                 raw_bill_expenses.append(exp)
         
         # Priority 1: OM Primacy
-        # If we have substantial data from OM, we use OM ONLY.
-        if len(om_expenses) > 5:
-            logger.info(f"OM Primacy: Found {len(om_expenses)} items in Offering Memorandum. Ignoring other sources (except verified items).")
+        # OM is authoritative ONLY if it covers the major expense categories.
+        # A sparse OM (e.g., 6 line items) should not discard a complete T12.
+        REQUIRED_OM_CATEGORIES = {
+            ExpenseCategory.REAL_ESTATE_TAXES,
+            ExpenseCategory.INSURANCE,
+            ExpenseCategory.UTILITIES,
+            ExpenseCategory.REPAIRS_MAINTENANCE,
+            ExpenseCategory.MANAGEMENT_FEES,
+        }
+        om_categories_present = {exp.mapped_category for exp in om_expenses if hasattr(exp, 'mapped_category')}
+        om_has_required_coverage = REQUIRED_OM_CATEGORIES.issubset(om_categories_present)
+        om_is_substantial = len(om_expenses) >= 10 and om_has_required_coverage
+
+        if om_is_substantial:
+            logger.info(f"OM Primacy: Found {len(om_expenses)} items covering {len(om_categories_present & REQUIRED_OM_CATEGORIES)}/5 required categories. Ignoring other sources (except verified items).")
             # Keep OM expenses + manual entries + any item verified by user from other sources
             # Use a set of IDs to avoid duplicates if a verified item is also in om_expenses
             seen_ids = {e.id for e in om_expenses if hasattr(e, 'id') and e.id}
@@ -266,7 +278,7 @@ class FinancialService:
             items.sort(key=lambda x: x.amount, reverse=True)
             
             # If category is Taxes or Insurance, take MAX (Largest Annual Bill)
-            if category in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE]:
+            if category in [ExpenseCategory.REAL_ESTATE_TAXES, ExpenseCategory.INSURANCE, ExpenseCategory.MANAGEMENT_FEES]:
                  largest = items[0]
                  
                  # Sanity Check for Insurance specifically (avoid capturing Property Values/Limits)

@@ -239,9 +239,19 @@ class GeminiClient:
 
         ### GUIDELINES:
         1. **Analyze Context**: Look at the 'description' text carefully. Ignore amounts when categorizing, focus on the nature of the expense.
-        2. **CapEx vs OpEx**: If an item looks like a major renovation (e.g., "Roof Replacement", "Unit Upgrade", "New HVAC"), categorize it as 'Capital Reserves' or 'Uncategorized' if 'Capital Expenses' is not in the list.
-        3. **Confidence**: Assign a confidence score (0.0 to 1.0). If you are unsure, use a lower score.
-        4. **Reasoning**: Provide a short, user-friendly explanation for your choice. This is critical for the user to trust the data.
+        2. **Section Context**: Each item may include a 'section_context' field indicating which section of the source document it appeared in ("income", "expense", "capex", or "unknown"). USE THIS to resolve ambiguity:
+           - If section_context is "income", the item should be classified as a revenue category (Gross Potential Rent, Other Income, Reimbursements, Accounts Receivable).
+           - If section_context is "expense", it should be classified as an operating expense category.
+           - If section_context is "capex", it should be classified as Capital Reserves.
+           - If section_context is "unknown" or missing, classify based on description text alone.
+           Use 'source_snippet' (surrounding OCR lines) to disambiguate further if available.
+        3. **CapEx vs OpEx**: If an item looks like a major renovation (e.g., "Roof Replacement", "Unit Upgrade", "New HVAC"), categorize it as 'Capital Reserves' or 'Uncategorized' if 'Capital Expenses' is not in the list.
+        4. **Tax Classification — IMPORTANT**:
+           - "Real Estate Taxes" = taxes assessed on real property value: Ad Valorem, Parcel Tax, Property Tax, Special Assessment, Tax Lien.
+           - "General & Administrative" = business-level taxes NOT tied to property value: Business Tax, Business License, City Business Tax, Municipal Business Fee, Franchise Tax, "Business / Other Taxes", "Other Taxes".
+           - If the description contains "Business Tax", "Business License", "City Business", "Other Taxes", or "Franchise Tax" WITHOUT a property-value qualifier like "Ad Valorem" or "Parcel" → classify as General & Administrative, NOT Real Estate Taxes.
+        5. **Confidence**: Assign a confidence score (0.0 to 1.0). If you are unsure, use a lower score.
+        6. **Reasoning**: Provide a short, user-friendly explanation for your choice. This is critical for the user to trust the data.
 
         ### INPUT DATA:
         Raw Expenses: {json.dumps(raw_expenses)}
