@@ -24,6 +24,10 @@ from app.services.extract_om_details import OMScraperService
 
 logger = logging.getLogger(__name__)
 
+# Ordered preference for OM scenario selection when no historical/in-place
+# scenario is found. Used by _convert_om_proforma_to_expenses Tier 2 logic.
+OM_SCENARIO_PREFERENCE = ["year 1", "stabilized", "pro forma"]
+
 
 class MultiDocumentExtractionService:
     """Service for extracting and normalizing financial data from multiple document types."""
@@ -1091,43 +1095,54 @@ class MultiDocumentExtractionService:
         """
         if not proforma_tables:
             return []
-            
-        # 1. Identify Best Scenario
-        # Priority keywords
-        priority_keywords = ["current", "actual", "t12", "trailing", "in-place", "inplace", "t-12"]
-        
+
+        if len(proforma_tables) > 1:
+            all_names = [t.scenario_name or "(unnamed)" for t in proforma_tables]
+            logger.info(f"OM contains {len(proforma_tables)} scenarios: {all_names}")
+
+        # ── Tier 1: Historical / in-place keywords ──
+        tier1_keywords = ["current", "actual", "t12", "trailing", "in-place", "inplace", "t-12"]
         selected_table = None
-        
-        # Try finding exact matches first
+
         for table in proforma_tables:
             name = (table.scenario_name or "").lower()
-            if any(k in name for k in priority_keywords) and "pro forma" not in name and "proforma" not in name:
-                # "Current Pro Forma" is ambiguous, but usually means Current.
-                # But "Pro Forma" alone usually means Year 1.
+            if any(k in name for k in tier1_keywords) and "pro forma" not in name and "proforma" not in name:
                 selected_table = table
                 break
-        
-        # If no "Current", try "Year 1" or "Pro Forma" (some OMs only have proforma)
+
+        # ── Tier 2: Forward-looking via OM_SCENARIO_PREFERENCE ──
         if not selected_table:
-             # Just pick the first one or look for "Pro Forma"
-             # If we only have one, use it.
-             if len(proforma_tables) == 1:
-                 selected_table = proforma_tables[0]
-             else:
-                 # Try to find "Year 1" or "Stabilized"
-                 for table in proforma_tables:
-                     name = (table.scenario_name or "").lower()
-                     if "year 1" in name or "stabilized" in name or "pro forma" in name:
-                         selected_table = table
-                         break
-        
+            if len(proforma_tables) == 1:
+                selected_table = proforma_tables[0]
+            else:
+                for pref in OM_SCENARIO_PREFERENCE:
+                    for table in proforma_tables:
+                        name = (table.scenario_name or "").lower()
+                        if pref in name:
+                            selected_table = table
+                            break
+                    if selected_table:
+                        break
+
+        # ── Tier 3: Fallback to first table ──
         if not selected_table and proforma_tables:
-            selected_table = proforma_tables[0] # Fallback
-            
+            selected_table = proforma_tables[0]
+            logger.warning(
+                f"Preferred OM scenario not found in {filename}. "
+                f"Falling back to first scenario: '{selected_table.scenario_name}'"
+            )
+
         if not selected_table:
             return []
-            
-        logger.info(f"Selected OM Financials Scenario: '{selected_table.scenario_name}' from {filename}")
+
+        if len(proforma_tables) > 1:
+            discarded = [t.scenario_name for t in proforma_tables if t is not selected_table]
+            logger.info(
+                f"Selected OM scenario '{selected_table.scenario_name}' from {filename}. "
+                f"Discarded: {discarded}"
+            )
+        else:
+            logger.info(f"Selected OM Financials Scenario: '{selected_table.scenario_name}' from {filename}")
         
         expenses = []
         for row in selected_table.rows:

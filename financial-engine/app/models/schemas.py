@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
+from datetime import date, datetime
 
 # --- 1. Enums ---
 
@@ -154,29 +155,87 @@ class RentRollItem(BaseModel):
 
     @validator('is_vacant', always=True)
     def validate_vacancy_consistency(cls, v, values):
-        """Ensure vacancy status is consistent with tenant name, unit type and current rent"""
-        tenant_name = (values.get('tenant_name') or "").lower()
-        unit_type = (values.get('unit_type') or "").lower()
-        current_rent = values.get('current_rent') or 0.0
-        
-        # Keywords that indicate vacancy
-        vacancy_keywords = ["vacant", "vac", "empty", "model"]
-        
-        if v is True:
+        """Ensure vacancy status is consistent via centralized helper."""
+        return is_unit_vacant(
+            current_rent=values.get('current_rent') or 0.0,
+            tenant_name=values.get('tenant_name') or "",
+            unit_type=values.get('unit_type') or "",
+            move_in_date=values.get('move_in_date'),
+            is_vacant_flag=v,
+        )
+
+
+# ── Vacancy helper ────────────────────────────────────────────────────────
+
+VACANCY_KEYWORDS = ["vacant", "vac", "empty", "model"]
+
+
+def _parse_date_safe(raw: Optional[str]) -> Optional[date]:
+    """Try common date formats. Return None for unparseable values like 'TBD'."""
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%dT%H:%M:%S", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def is_unit_vacant(
+    current_rent: float = 0.0,
+    tenant_name: str = "",
+    unit_type: str = "",
+    move_in_date: Optional[str] = None,
+    analysis_date: Optional[date] = None,
+    is_vacant_flag: bool = False,
+) -> bool:
+    """Centralized vacancy determination for a rent roll unit.
+
+    A unit is vacant if ANY of the following hold:
+    - ``is_vacant_flag`` is already True (upstream extraction said so)
+    - tenant_name or unit_type contains a vacancy keyword
+    - current_rent == 0 AND tenant_name is empty / "unknown" / contains vacancy keyword
+    - current_rent == 0 AND move_in_date is in the future
+    - current_rent == 0 AND move_in_date is null or unparseable (no active lease)
+
+    A unit is NOT vacant if current_rent == 0 AND move_in_date is in the past
+    (implies a $0-rent concession or month-to-month gap — tenant has moved in).
+    """
+    if is_vacant_flag:
+        return True
+
+    tenant_lower = (tenant_name or "").lower()
+    type_lower = (unit_type or "").lower()
+
+    # Explicit vacancy keywords in tenant name or unit type
+    if any(kw in tenant_lower for kw in VACANCY_KEYWORDS) or \
+       any(kw in type_lower for kw in VACANCY_KEYWORDS):
+        return True
+
+    rent = current_rent or 0.0
+
+    if rent == 0:
+        # No rent and no real tenant name → vacant
+        if not tenant_lower or tenant_lower == "unknown":
             return True
-            
-        # Check if tenant name or unit type explicitly mentions vacancy
-        is_explicitly_vacant = any(kw in tenant_name for kw in vacancy_keywords) or \
-                              any(kw in unit_type for kw in vacancy_keywords)
-        
-        if is_explicitly_vacant:
+
+        # Named tenant but $0 rent — check move-in date
+        parsed = _parse_date_safe(move_in_date)
+        ref = analysis_date or date.today()
+
+        if parsed is None:
+            # No parseable move-in date and $0 rent → no active lease → vacant
             return True
-            
-        # Fallback logic for rent being 0
-        if current_rent == 0 and (not tenant_name or tenant_name == "unknown" or any(kw in tenant_name for kw in vacancy_keywords)):
+        if parsed > ref:
+            # Future move-in → tenant hasn't arrived yet → vacant
             return True
-            
-        return v
+        # Past move-in with $0 rent → concession / gap — NOT vacant
+        return False
+
+    return False
+
 
 class RentRollSummary(BaseModel):
     total_units: int

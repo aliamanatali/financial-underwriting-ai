@@ -640,9 +640,16 @@ class FinancialService:
         for item in analysis.rent_roll:
             u_type = item.unit_type or "Unknown"
             
-            # Update vacancy based on tenant name or current rent if not explicitly set
+            # Update vacancy via centralized helper if not already set by Pydantic validator
             if getattr(item, 'is_vacant', None) is None:
-                item.is_vacant = ((item.tenant_name or "").lower() == "vacant" or (item.current_rent == 0 and (not item.tenant_name or (item.tenant_name or "").lower() == "vacant")))
+                from app.models.schemas import is_unit_vacant
+                item.is_vacant = is_unit_vacant(
+                    current_rent=item.current_rent or 0.0,
+                    tenant_name=item.tenant_name or "",
+                    unit_type=item.unit_type or "",
+                    move_in_date=item.move_in_date,
+                    is_vacant_flag=False,
+                )
 
             # Use current rent as fallback for market rent if 0 (Fix for Missing Market Rent)
             current = item.current_rent or 0
@@ -748,10 +755,22 @@ class FinancialService:
         self.audit_log_service.add_log(analysis, "GPR", f"${gpr:,.0f}", "Rent Roll", "Sum of (Market Rent * 12)")
 
         # 2. Loss to Lease
-        # Formula: GPR - (Current Rent Roll Sum * 12)
+        # Formula: GPR - Current Rent (Occupied Only) - Vacant Market Rent
+        # FIX: Exclude vacant units from LTL to prevent double-counting with vacancy loss.
+        # Vacant units have current_rent=0, which inflates LTL by their full market rent.
+        # Their income gap is already captured by the vacancy rate assumption, not LTL.
         current_rent_annual_raw = sum((item.current_rent or 0) * 12 for item in analysis.rent_roll)
         current_rent_annual = current_rent_annual_raw * scaling_factor
-        
+
+        # Calculate vacant units' rent gap to exclude from LTL
+        # Use (market - current) instead of just market to handle holdover tenants
+        # (units marked vacant but still paying rent during notice period)
+        vacant_rent_gap_annual = sum(
+            ((item.market_rent or 0) - (item.current_rent or 0)) * 12
+            for item in analysis.rent_roll
+            if getattr(item, 'is_vacant', False)
+        ) * scaling_factor
+
         # Fallback for current rent
         if current_rent_annual == 0 and analysis.rent_roll_summary:
             # If we used the summary, check if we need to scale it too?
@@ -805,9 +824,9 @@ class FinancialService:
                       logger.info(f"Adjusted Current Rent Annual by {rent_adjustment_factor:.4f} due to occupancy override")
              
 
-        loss_to_lease = gpr - current_rent_annual
+        loss_to_lease = gpr - current_rent_annual - vacant_rent_gap_annual
         analysis.loss_to_lease = self._sanitize_value(loss_to_lease)
-        self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent Annualized")
+        self.audit_log_service.add_log(analysis, "Loss to Lease", f"${loss_to_lease:,.0f}", "Calculation", "GPR - Current Rent (Occupied) - Vacant Market Rent")
 
         # 3. Vacancy Loss
         # Formula: GPR * 0.03 (Valiance Constraint)
