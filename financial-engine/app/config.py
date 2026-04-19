@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # Redis settings
     redis_url: str = "redis://localhost:6379/0"
 
+    # Feature flags
+    use_consolidated_normalization: bool = False  # Tier B: route through adapter + NormalizationService
+
     @property
     def use_mongodb(self) -> bool:
         return self.mongodb_uri is not None

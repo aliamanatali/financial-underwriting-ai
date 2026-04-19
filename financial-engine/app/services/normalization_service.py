@@ -428,6 +428,28 @@ class NormalizationService:
                      logger.warning(f"Reclassifying qualified permit to Capital Reserves: {desc} - {expense.get('amount')}")
                      forced_category = ExpenseCategory.CAPITAL_RESERVES
 
+                # Safety net: High-dollar items with CapEx keywords that the LLM
+                # classified as OpEx. Proposals, modernizations, replacements > $5k
+                # are almost certainly capital expenditures, not operating expenses.
+                high_dollar_capex_keywords = ["proposal", "modernization", "replacement", "installation"]
+                opex_categories = {
+                    ExpenseCategory.REPAIRS_MAINTENANCE, ExpenseCategory.CONTRACT_SERVICES,
+                    ExpenseCategory.OTHER_OPERATING_EXPENSES, ExpenseCategory.GENERAL_ADMINISTRATIVE,
+                }
+                if not forced_category and any(k in desc_lower for k in high_dollar_capex_keywords):
+                    amount_val = expense.get("amount", 0)
+                    parsed_amt = abs(self._parse_amount(amount_val)) if amount_val else 0
+                    if parsed_amt > 5000:
+                        mapped_item_check = final_mapped_data_dict.get(desc)
+                        if mapped_item_check:
+                            try:
+                                llm_cat = ExpenseCategory(mapped_item_check.get("mapped_category", ""))
+                            except ValueError:
+                                llm_cat = None
+                            if llm_cat in opex_categories:
+                                logger.warning(f"Reclassifying high-dollar CapEx item: {desc} (${parsed_amt:,.0f}) to Capital Reserves")
+                                forced_category = ExpenseCategory.CAPITAL_RESERVES
+
                 # 4a. Deposits are balance-sheet items, not operating expenses.
                 deposit_keywords = [
                     "security deposit", "tenant deposit", "earnest money",
