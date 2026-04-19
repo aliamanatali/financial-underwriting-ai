@@ -1407,24 +1407,48 @@ class MultiDocumentExtractionService:
             if amount == 0:
                 continue
                 
-            # Simple type heuristic
+            # Type heuristic for OM proforma rows.
+            # Determines whether each row is revenue, expense, or capex based on
+            # the row name. Must handle:
+            # - Ancillary revenue (parking, laundry, storage) that lacks "income"/"revenue" in name
+            # - "Rent Control" / "Rent Stabilization" which are expenses despite containing "rent"
+            # - Capital reserves which are CapEx, not OpEx
             row_name = row.row_name
             row_lower = row_name.lower()
-            item_type = "expense" # Default
+            item_type = "expense"  # Default
             subtype = None
-            
-            if "income" in row_lower or "rent" in row_lower or "revenue" in row_lower or "reimbursement" in row_lower:
+
+            # Negative exclusions: items containing "rent" that are NOT revenue
+            rent_exclusions = ["rent control", "rent stabilization", "rent registration"]
+            is_excluded_rent = any(excl in row_lower for excl in rent_exclusions)
+
+            # CapEx detection
+            if any(kw in row_lower for kw in ["capital reserve", "replacement reserve", "capex"]):
+                item_type = "capex"
+            # Revenue detection — explicit ancillary revenue keywords first
+            elif any(kw in row_lower for kw in ["parking", "garage", "laundry", "storage", "vending", "pet fee", "pet rent"]):
                 item_type = "revenue"
-                if "rent" in row_lower:
-                    subtype = "rent"
-                elif "reimbursement" in row_lower:
+                subtype = "other_income"
+            # Revenue detection — standard keywords, with rent exclusion guard
+            elif any(kw in row_lower for kw in ["income", "revenue", "reimbursement"]):
+                item_type = "revenue"
+                if "reimbursement" in row_lower:
                     subtype = "reimbursement"
                 else:
                     subtype = "other_income"
-            
+            elif "rent" in row_lower and not is_excluded_rent:
+                item_type = "revenue"
+                subtype = "rent"
+
             # Exclude NOI, Total Income, Total Expenses lines to avoid double counting
             # These are usually summary lines. We want line items.
-            if any(x in row_lower for x in ["total income", "total expense", "net operating income", "gross operating income", "effective gross income", "total operating expense", "noi", "egi", "goi"]):
+            if any(x in row_lower for x in [
+                "total income", "total expense", "net operating income",
+                "gross operating income", "effective gross income",
+                "total operating expense", "noi", "egi", "goi",
+                "total controllable", "sub-total", "subtotal",
+                "net rental income",
+            ]) or row_lower.strip() == "gross scheduled income":
                 # Skip summaries
                 continue
 
