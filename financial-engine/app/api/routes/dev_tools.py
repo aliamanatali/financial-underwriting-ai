@@ -366,6 +366,12 @@ async def _re_extract_from_documents(
     else:
         if len(om_docs) > 1:
             logger.info(f"[Dev reanalyze] {len(om_docs)} OMs detected — falling back to MULTI_SOURCE.")
+            # Override document_category so the extractor routes these through
+            # the generic financial pipeline instead of the OM-specific proforma
+            # path (which hallucinates on misclassified flyers/appraisals).
+            for d in financial_docs:
+                if d.get("document_category") == DocumentType.OFFERING_MEMORANDUM:
+                    d["document_category"] = DocumentType.FINANCIALS
         package.underwriting_flow = "MULTI_SOURCE"
 
     # Progress adapter that scales percentages into the 15-45% range

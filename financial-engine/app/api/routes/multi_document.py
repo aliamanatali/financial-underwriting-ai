@@ -482,71 +482,89 @@ async def normalize_package_documents(
             logger.error(f"Error retrieving document {doc_id}: {str(e)}")
         return None
 
-    # Count total documents across all target types for progress scaling
-    total_docs_to_load = sum(
-        len(package.documents.get(dt, []))
-        for dt in target_types
-    )
+    # Flatten the (doc_type, doc_metadata) pairs so we can load them in parallel.
+    # Order is preserved by doc_type → insertion order so the final routing lists
+    # match the previous sequential behavior.
+    load_queue: List[tuple] = []
+    for doc_type in target_types:
+        if doc_type not in package.documents:
+            continue
+        for doc_metadata in package.documents[doc_type]:
+            load_queue.append((doc_type, doc_metadata))
+
+    total_docs_to_load = len(load_queue)
 
     # Collect documents by category for segmented processing
     rent_roll_docs = []
     financial_docs = [] # T12, Tax, Utilities, etc.
     om_docs = []
-
     documents_count = 0
-    docs_loaded = 0
 
-    for doc_type in target_types:
-        if doc_type not in package.documents:
+    # Parallelize GCP downloads — each cache-miss file is a ~100-500ms round
+    # trip and the previous sequential loop made a 250-file deal take 30-90s
+    # just to load bytes. A semaphore of 8 overlaps downloads without
+    # exhausting the HTTP/2 connection pool to GCP or blowing up memory.
+    load_sem = asyncio.Semaphore(8)
+    progress_counter = {"n": 0}
+
+    async def _load_one(doc_type, doc_metadata):
+        async with load_sem:
+            file_data = await load_file_content(doc_metadata)
+
+        # Advance the progress counter atomically (asyncio is single-threaded,
+        # so ++ on a dict slot is safe between awaits).
+        progress_counter["n"] += 1
+        done = progress_counter["n"]
+
+        if total_docs_to_load > 0:
+            loading_pct = 8 + int((done / total_docs_to_load) * 10)  # 8 -> 18
+            await progress_service.update_progress(
+                package_id, loading_pct,
+                f"Loading documents ({done}/{total_docs_to_load})...",
+                details={"current_file": doc_metadata.filename, "file_index": done, "total_files": total_docs_to_load}
+            )
+
+        return doc_type, doc_metadata, file_data
+
+    load_results = await asyncio.gather(
+        *[_load_one(dt, dm) for dt, dm in load_queue]
+    )
+
+    for doc_type, doc_metadata, file_data in load_results:
+        if not file_data:
             continue
 
-        for doc_metadata in package.documents[doc_type]:
-            file_data = await load_file_content(doc_metadata)
-            docs_loaded += 1
+        filename = file_data["filename"]
+        # Determine file type
+        if filename.endswith((".xlsx", ".xls")):
+            file_type = "excel"
+        elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
+            file_type = "visual"
+        elif filename.lower().endswith(".csv"):
+            file_type = "csv"
+        else:
+            logger.warning(f"Unsupported file type: {filename}")
+            continue
 
-            # Emit classification progress: scale from 8% to 18% across all files
-            if total_docs_to_load > 0:
-                classification_pct = 8 + int((docs_loaded / total_docs_to_load) * 10)  # 8 -> 18
-                await progress_service.update_progress(
-                    package_id, classification_pct,
-                    f"Classifying documents ({docs_loaded}/{total_docs_to_load})...",
-                    details={"current_file": doc_metadata.filename, "file_index": docs_loaded, "total_files": total_docs_to_load}
-                )
+        doc_info = {
+            "content": file_data["content"],
+            "filename": filename,
+            "type": file_type,
+            "document_category": doc_metadata.document_type,
+            "document_id": doc_metadata.document_id
+        }
 
-            if not file_data:
-                continue
+        documents_count += 1
 
-            filename = file_data["filename"]
-            # Determine file type
-            if filename.endswith((".xlsx", ".xls")):
-                file_type = "excel"
-            elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
-                file_type = "visual"
-            elif filename.lower().endswith(".csv"):
-                file_type = "csv"
-            else:
-                logger.warning(f"Unsupported file type: {filename}")
-                continue
-                
-            doc_info = {
-                "content": file_data["content"],
-                "filename": filename,
-                "type": file_type,
-                "document_category": doc_metadata.document_type,
-                "document_id": doc_metadata.document_id
-            }
-            
-            documents_count += 1
-            
-            if doc_metadata.document_type == DocumentType.RENT_ROLL:
-                rent_roll_docs.append(doc_info)
-            elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
-                om_docs.append(doc_info)
-                # OMs also contain financials, so add to financial_docs too for extraction
-                financial_docs.append(doc_info)
-            else:
-                # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
-                financial_docs.append(doc_info)
+        if doc_metadata.document_type == DocumentType.RENT_ROLL:
+            rent_roll_docs.append(doc_info)
+        elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
+            om_docs.append(doc_info)
+            # OMs also contain financials, so add to financial_docs too for extraction
+            financial_docs.append(doc_info)
+        else:
+            # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
+            financial_docs.append(doc_info)
 
     if documents_count == 0:
         logger.warning(f"No processable documents found for package {package_id}")
@@ -561,7 +579,7 @@ async def normalize_package_documents(
     
     logger.info(f"Processing {documents_count} documents: {len(rent_roll_docs)} Rent Rolls, {len(financial_docs)} Financials/Other")
 
-    await progress_service.update_progress(package_id, 19, f"Classification complete. {documents_count} documents ready.")
+    await progress_service.update_progress(package_id, 19, f"Loading complete. {documents_count} documents ready.")
     await progress_service.update_progress(package_id, 20, f"Processing {documents_count} documents folder by folder...")
     
     # --- Simplified Parallel Processing with Basic Progress Aggregation ---
@@ -595,6 +613,17 @@ async def normalize_package_documents(
                 "misclassification. Falling back to Flow B: Multi-Source Aggregation "
                 "so all sources cross-validate."
             )
+            # Route those OM-classified files through the generic financial
+            # extractor alongside every other folder. Running the OM-specific
+            # proforma-extraction path on misclassified flyers/appraisals
+            # produces hallucinated scenario-prefixed items, so we override
+            # their document_category to FINANCIALS for extraction routing.
+            # Without this, the OM folder would appear "skipped" in the
+            # processing UI for non-OM flow.
+            for d in om_documents:
+                d["document_category"] = DocumentType.FINANCIALS
+            remaining_financial_docs = remaining_financial_docs + om_documents
+            om_documents = []
         else:
             logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
         package.underwriting_flow = "MULTI_SOURCE"
