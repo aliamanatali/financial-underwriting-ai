@@ -358,10 +358,25 @@ export default function UnderwritingDashboard({
   // Derive total_units from the actual rent-roll rows whenever one exists —
   // property_meta.total_units can disagree (stale manual override, synthesized
   // from OM cover-page text, etc.), and the rent-roll rows are the ground truth
-  // the user is looking at. Falls back to property_meta only when no rent roll
-  // is present (e.g., OM-driven deals where the rent roll failed to extract).
-  const rentRollRowCount = Array.isArray(analysis.rent_roll) ? analysis.rent_roll.length : 0;
-  const totalUnits = rentRollRowCount > 0 ? rentRollRowCount : (analysis.property_meta?.total_units || 0);
+  // the user is looking at.
+  //
+  // Parity with RentRollWidget: in non-OM flow, the widget filters out rows
+  // missing a unit_size (0, "-", "unknown") from both its rendered table and
+  // its Totals row. The dashboard header must apply the SAME filter or it
+  // double-counts those skipped rows — was the source of the 29-vs-28
+  // mismatch users were seeing.
+  //
+  // Falls back to property_meta only when no rent roll is present (e.g.,
+  // OM-driven deals where the rent roll failed to extract).
+  const isNonOMFlow = !analysis.om_proforma || analysis.om_proforma.length === 0;
+  const rentRollRows = Array.isArray(analysis.rent_roll) ? analysis.rent_roll : [];
+  const visibleRentRollCount = isNonOMFlow
+    ? rentRollRows.filter(item => {
+        const sizeStr = String(item.unit_size).toLowerCase().trim();
+        return !(!item.unit_size || item.unit_size === 0 || sizeStr === "-" || sizeStr === "unknown" || sizeStr === "unkown");
+      }).length
+    : rentRollRows.length;
+  const totalUnits = visibleRentRollCount > 0 ? visibleRentRollCount : (analysis.property_meta?.total_units || 0);
   const occupancyRate = analysis.rent_roll_summary?.occupancy_rate || 0;
   const occupiedUnits = analysis.rent_roll_summary?.occupied_units || 0;
   const purchasePrice = analysis.property_meta.purchase_price || 0;
