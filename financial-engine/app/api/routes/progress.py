@@ -5,6 +5,16 @@ from app.services.progress_service import ProgressService
 
 router = APIRouter()
 
+
+@router.get("/progress/current/{task_id}")
+async def get_current_progress(task_id: str, progress_service: ProgressService = Depends(get_progress_service)):
+    """
+    Get current progress snapshot for a task (non-streaming).
+    Used by frontend on page load to get initial state before SSE connects.
+    """
+    return await progress_service.get_current_progress(task_id)
+
+
 @router.get("/progress/{task_id}")
 async def progress_stream(task_id: str, progress_service: ProgressService = Depends(get_progress_service)):
     """

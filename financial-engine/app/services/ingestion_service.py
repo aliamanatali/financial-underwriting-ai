@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import HTTPException
+from starlette.concurrency import run_in_threadpool
 from app.models.schemas import RentRollItem, PropertyMeta, UnderwritingAnalysis, StandardizedExpense, ExpenseCategory, AuditLog, RentRollSummary
 from app.services.normalization_service import NormalizationService
 from app.services.gemini_client import GeminiClient
@@ -318,12 +319,29 @@ class IngestionService:
     async def extract_rent_roll_from_excel(self, excel_content: bytes, total_units: int = 0, filename: str = None, target_property_address: Optional[str] = None) -> List[RentRollItem]:
         """
         Extracts the rent roll from an Excel file (bytes).
-        Async version that works with file content in memory.
+
+        The body is pure synchronous pandas parsing (no awaits), and on large
+        rent rolls it can block the event loop for seconds — which is what
+        made the dashboard tab hang while an analysis was running. Dispatching
+        the whole sync body through run_in_threadpool keeps the loop free to
+        service other requests.
         """
+        return await run_in_threadpool(
+            self._extract_rent_roll_from_excel_sync,
+            excel_content, total_units, filename, target_property_address,
+        )
+
+    def _extract_rent_roll_from_excel_sync(
+        self,
+        excel_content: bytes,
+        total_units: int = 0,
+        filename: str = None,
+        target_property_address: Optional[str] = None,
+    ) -> List[RentRollItem]:
         import logging
         import io
         logger = logging.getLogger(__name__)
-        
+
         try:
             # Load Excel File
             xls = pd.ExcelFile(io.BytesIO(excel_content))
@@ -987,7 +1005,7 @@ class IngestionService:
 
         async def task_normalize_expenses():
             # Run normalization on the raw expenses extracted in Phase 1
-            return await self.normalization_service.normalize_expenses_async(raw_expenses, document_id=document_id)
+            return await self.normalization_service.normalize_expenses_async(raw_expenses, document_id=document_id, total_units=property_meta.total_units or 0)
 
         logger.info("Starting Phase 2 Parallel Extraction (Rent Roll & Normalization)...")
         results_phase2 = await asyncio.gather(
@@ -1074,8 +1092,12 @@ class IngestionService:
         
         prompt = """
         Analyze this T12 Income Statement. Extract all EXPENSE line items.
-        Ignore Income line items.
-        
+        Also extract OTHER INCOME line items such as parking revenue, laundry income,
+        storage fees, vending income, pet fees, garage income, and similar ancillary revenue.
+        Label these with their original description (e.g. "Parking Revenue", "Laundry Income").
+
+        Ignore primary rental income / gross potential rent line items.
+
         CRITICAL FOR AMOUNTS:
         - If the amount is in parentheses like (500), it is a positive expense.
         - If the amount has a minus sign like -500, it is a positive expense.
@@ -1085,12 +1107,25 @@ class IngestionService:
         - If the document contains columns for trailing periods (e.g. T3, T6, T9, T12), extract ALL of them.
         - Map them as amount_t3, amount_t6, amount_t9, and amount (for T12).
         - If only a total/annual column exists, use it for "amount" (T12).
-        
+
         LATEST PERIOD ONLY:
         - If the document contains columns for multiple years (e.g. 2021, 2022, 2023), extract ONLY the items from the LATEST/MOST RECENT year/period.
         - Ignore columns for older years.
-        
-        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00, "amount_t3": 100.0, "amount_t6": 200.0, "amount_t9": 400.0, "expense_year": 2023}, ...]
+
+        SECTION CONTEXT:
+        For each line item, determine which section of the document it appears in based on its POSITION
+        relative to section headers and subtotals (NOT based on the item name alone):
+        - "income" — items in the Revenue/Income/Other Income section (above "Net Rental Income" or "Effective Gross Income", or between those and the first expense item)
+        - "expense" — items in the Operating Expenses section (below income subtotals, above NOI)
+        - "capex" — items in the Capital Expenditures/Reserves section
+        - "unknown" — genuinely cannot determine from document layout
+        Example: "Garage/Parking" appearing in the Other Income section = "income".
+        "Vacancy" appearing before "Net Rental Income" = "income" (revenue deduction).
+
+        SOURCE SNIPPET:
+        For each line item, include 2-3 surrounding lines of text (the line above, the item itself, and the line below) as source_snippet for audit purposes.
+
+        Return a JSON array: [{"description": "Repair - Plumbing", "amount": 500.00, "amount_t3": 100.0, "amount_t6": 200.0, "amount_t9": 400.0, "expense_year": 2023, "section_context": "expense", "source_snippet": "Total Utilities $11,634\\nRepair - Plumbing $500\\nTotal Contract Services $1,500"}, ...]
         """
 
         # Use async

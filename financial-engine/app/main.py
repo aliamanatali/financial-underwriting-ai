@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 import logging
 import app.config  # Ensures config is loaded first
-from app.api.routes import analysis, ingest, exports, multi_document, progress, chat
-from app.api.routes import analysis, ingest, exports, multi_document, progress
+from app.api.routes import analysis, ingest, exports, multi_document, progress, chat, cache
+from app.config import settings
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.db.redis import redis_client
@@ -89,6 +89,13 @@ app.include_router(exports.router, prefix="/api/v1", tags=["Exports"])
 app.include_router(multi_document.router, tags=["Multi-Document"])
 app.include_router(chat.router, prefix="/api/v1", tags=["Chat"])
 app.include_router(progress.router, prefix="/api/v1", tags=["Progress"])
+app.include_router(cache.router, prefix="/api/v1", tags=["Cache"])
+
+# Dev-only endpoints — route does not exist when flag is False (pure 404)
+if settings.enable_reanalyze_endpoints:
+    from app.api.routes import dev_tools
+    app.include_router(dev_tools.router, tags=["Dev Tools"])
+    logger.info("Dev re-analyze endpoints enabled (ENABLE_REANALYZE_ENDPOINTS=True)")
 
 @app.get("/health", tags=["Health"])
 async def health_check():

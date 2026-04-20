@@ -252,7 +252,7 @@ export default function SmartFileUpload({
         </div>
 
         {/* ── Staging Area ──────────────────────────────── */}
-        <div className="flex flex-col rounded-xl border border-[#E2E8F0] bg-white overflow-hidden relative min-h-[360px]">
+        <div className="flex flex-col rounded-xl border border-[#E2E8F0] bg-white overflow-hidden relative min-h-[360px] max-h-[480px]">
 
           {/* Extracting overlay */}
           {isExtracting && (
@@ -266,7 +266,7 @@ export default function SmartFileUpload({
           <div className="px-4 py-3 border-b border-[#E2E8F0] bg-[#F1F5F9] flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#0F172A]">
               Selected Files
-              <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#2A3347] text-[10px] font-bold text-[#475569]">
+              <span className="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#E2E8F0] text-[10px] font-bold text-[#475569]">
                 {stagedFiles.length}
               </span>
             </h3>

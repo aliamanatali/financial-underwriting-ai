@@ -157,6 +157,11 @@ class ApiClient {
     return eventSource;
   }
 
+  async getCurrentProgress(taskId: string): Promise<FinancialAnalysisProgress> {
+    const response = await fetch(`${FIN_API_URL}/api/v1/progress/current/${taskId}`, { cache: 'no-store' });
+    return this.handleResponse<FinancialAnalysisProgress>(response);
+  }
+
   async listDocuments(): Promise<DocumentResponse[]> {
     const response = await fetch(`${OCR_API_URL}/api/documents`);
     const data = await this.handleResponse<{ documents: DocumentResponse[] }>(response);
@@ -569,6 +574,22 @@ class ApiClient {
         }
       }
     }
+  }
+
+  async devReanalyze(
+    packageId: string,
+    level: 1 | 2 | 3 | 4,
+    dealParameters?: DealParameters,
+  ): Promise<{ package_id: string; level: number; analysis: UnderwritingAnalysis }> {
+    const response = await fetch(
+      `${FIN_API_URL}/api/v1/dev/reanalyze/${packageId}?level=${level}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dealParameters ?? {}),
+      },
+    );
+    return this.handleResponse(response);
   }
 }
 

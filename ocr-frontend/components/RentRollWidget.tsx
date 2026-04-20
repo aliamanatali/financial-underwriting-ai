@@ -828,7 +828,12 @@ export default function RentRollWidget({
     })).sort((a, b) => b.count - a.count); // Sort by count descending
   }, [items]);
 
-  const displaySummary = isEditing ? localSummary : (summary || localSummary);
+  // Always derive from the visible rows — not just in edit mode. The backend
+  // summary can lag the actual rows (stale manual_override.total_units, unit
+  // count synthesized from property_meta instead of the rent-roll length, etc.)
+  // so "total_units" in the Totals row used to disagree with the count of
+  // rendered rows. Computing from row data keeps every cell consistent.
+  const displaySummary = localSummary;
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(Math.round(val));

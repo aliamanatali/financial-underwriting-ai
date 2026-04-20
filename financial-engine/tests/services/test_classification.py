@@ -2,35 +2,9 @@ import pytest
 from app.services.multi_document_extraction_service import MultiDocumentExtractionService
 from app.models.schemas import CategoryGroup, DataClassification, NormalizedDataItem
 
-@pytest.mark.asyncio
-async def test_classification_and_grouping():
-    service = MultiDocumentExtractionService()
-    
-    # Test Fallback Categorization Logic
-    
-    # 1. Operating Expense
-    utility_item = service._fallback_categorization("Electric Bill")
-    assert utility_item["category_group"] == "Operating Expense"
-    assert utility_item["normalized_value"] == "Utilities"
-
-    # 2. Tax & Insurance
-    tax_item = service._fallback_categorization("Property Tax 2024")
-    assert tax_item["category_group"] == "Tax & Insurance"
-    assert tax_item["normalized_value"] == "Real Estate Taxes"
-    
-    # 3. Revenue
-    rent_item = service._fallback_categorization("Gross Potential Rent")
-    assert rent_item["category_group"] == "Revenue"
-    
-    # 4. Property Info
-    year_built_item = service._fallback_categorization("Year Built: 1985")
-    assert year_built_item["category_group"] == "Property Info"
-    assert year_built_item["normalized_value"] == "Year Built"
-    
-    # 5. Default/Unknown
-    unknown_item = service._fallback_categorization("Random Miscellaneous Fee")
-    assert unknown_item["category_group"] == "Operating Expense" # Defaults to OpEx
-    assert unknown_item["normalized_value"] == "Other Operating Expenses"
+# test_classification_and_grouping was removed in Tier C — it tested
+# MultiDocumentExtractionService._fallback_categorization which was deleted
+# when the legacy normalization path was removed.
 
 @pytest.mark.asyncio
 async def test_normalization_flow_mock():

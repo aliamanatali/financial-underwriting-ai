@@ -32,7 +32,7 @@ from app.models.schemas import (
 )
 from app.services.ingestion_service import IngestionService
 from app.services.normalization_service import NormalizationService
-from app.services.gemini_service import GeminiService
+from app.services.gemini_client import GeminiClient
 from app.services.multi_document_extraction_service import MultiDocumentExtractionService
 from app.services.storage_service import storage_service
 from app.services.explainability_service import ExplainabilityService
@@ -52,10 +52,49 @@ from app.services.synthesis_service import SynthesisService
 router = APIRouter(prefix="/api/v1/multi-document", tags=["Multi-Document Ingestion"])
 logger = logging.getLogger(__name__)
 
-# In-memory file storage cache for processing session (backed by GCP storage)
-# We keep file content cache to avoid repeated downloads during the same processing session
-# but we remove the metadata cache (deal_packages_cache) to ensure consistency.
+# In-memory file storage cache for processing session (backed by GCP storage).
+# Keyed by document_id. Entries hold raw file bytes and must be evicted after
+# the package's analysis completes — leaving them resident was the main driver
+# of the April 2026 production OOM (4GB exceeded). See _evict_package_from_cache.
 file_storage_cache = {}
+
+
+def _evict_package_from_cache(package) -> int:
+    """Remove all file bytes belonging to this package from file_storage_cache.
+
+    Called at the end of normalize_package_documents (both success and failure
+    paths) so a large deal's raw bytes don't stay resident across requests.
+    Returns the number of entries evicted for logging.
+    """
+    evicted = 0
+    try:
+        for _, doc_list in (package.documents or {}).items():
+            for doc_meta in doc_list or []:
+                doc_id = getattr(doc_meta, "document_id", None)
+                if doc_id and doc_id in file_storage_cache:
+                    del file_storage_cache[doc_id]
+                    evicted += 1
+    except Exception as e:
+        logger.warning(f"Cache eviction error (non-fatal): {e}")
+    return evicted
+
+
+def _parse_pdf_text_sync(content: bytes, max_pages: int) -> str:
+    """Synchronous PyPDF2 text extraction. Designed to be dispatched via
+    run_in_threadpool — PDF parsing is CPU-bound and will block the event
+    loop if awaited directly, which starves the dashboard/progress endpoints
+    while analyses are running.
+    """
+    import PyPDF2
+    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
+    pages = []
+    for page in pdf_reader.pages[:max_pages]:
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception:
+            pages.append("")
+    return "\n".join(pages)
+
 
 # Initialize services
 zip_service = ZipProcessingService()
@@ -365,7 +404,7 @@ async def list_deal_packages(
 async def normalize_package_documents(
     package_id: str,
     document_type: Optional[DocumentType] = None,
-    gemini_service: GeminiService = Depends(get_gemini_service),
+    gemini_service: GeminiClient = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
@@ -374,44 +413,60 @@ async def normalize_package_documents(
     """
     Normalize documents in a package and automatically generate financial report.
     """
-    await progress_service.update_progress(package_id, 5, "Initializing normalization...")
-    
     # Load from storage service
     package_data = await storage_service.get_deal_package(package_id)
     if not package_data:
         raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
     package = DealPackage(**package_data)
-    
+
+    # Dedup guard: reject if already in progress
+    if package.normalization_status == "in_progress":
+        current_progress = await progress_service.get_current_progress(package_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Normalization already in progress for this package.",
+                "progress": current_progress
+            }
+        )
+
+    # Set status to in_progress immediately — only write the status field
+    package.normalization_status = "in_progress"
+    await storage_service.update_deal_package_status(package_id, "in_progress")
+
+    await progress_service.update_progress(package_id, 5, "Initializing normalization...")
+    await progress_service.update_progress(package_id, 7, "Loading package data...")
+
     # Initialize extraction service
     extraction_service = MultiDocumentExtractionService(gemini_service=gemini_service, batch_logging_service=batch_logging_service)
-    
+
     # Collect documents to process
     documents_to_process = []
-    
+
     # Determine which document types to process
     if document_type:
         target_types = [document_type]
     else:
         # If no specific type is provided, process all available document types in the package
         target_types = list(package.documents.keys())
-        
+
         # If package has no documents at all, raise error
         if not target_types:
             raise HTTPException(
                 status_code=400,
                 detail=f"No documents found in package {package_id}"
             )
-            
+
     # Helper to load file content
     async def load_file_content(doc_metadata):
         doc_id = doc_metadata.document_id
         if doc_id in file_storage_cache:
             return file_storage_cache[doc_id]
-        
+
         filename = doc_metadata.filename
         extension = Path(filename).suffix
         storage_path = f"deal-packages/{package_id}/documents/{doc_id}{extension}"
-        
+
         try:
             content = await storage_service.get_document_file(storage_path)
             if content:
@@ -427,53 +482,89 @@ async def normalize_package_documents(
             logger.error(f"Error retrieving document {doc_id}: {str(e)}")
         return None
 
+    # Flatten the (doc_type, doc_metadata) pairs so we can load them in parallel.
+    # Order is preserved by doc_type → insertion order so the final routing lists
+    # match the previous sequential behavior.
+    load_queue: List[tuple] = []
+    for doc_type in target_types:
+        if doc_type not in package.documents:
+            continue
+        for doc_metadata in package.documents[doc_type]:
+            load_queue.append((doc_type, doc_metadata))
+
+    total_docs_to_load = len(load_queue)
+
     # Collect documents by category for segmented processing
     rent_roll_docs = []
     financial_docs = [] # T12, Tax, Utilities, etc.
     om_docs = []
-    
     documents_count = 0
-    
-    for doc_type in target_types:
-        if doc_type not in package.documents:
-            continue
-        
-        for doc_metadata in package.documents[doc_type]:
+
+    # Parallelize GCP downloads — each cache-miss file is a ~100-500ms round
+    # trip and the previous sequential loop made a 250-file deal take 30-90s
+    # just to load bytes. A semaphore of 8 overlaps downloads without
+    # exhausting the HTTP/2 connection pool to GCP or blowing up memory.
+    load_sem = asyncio.Semaphore(8)
+    progress_counter = {"n": 0}
+
+    async def _load_one(doc_type, doc_metadata):
+        async with load_sem:
             file_data = await load_file_content(doc_metadata)
-            if not file_data:
-                continue
-                
-            filename = file_data["filename"]
-            # Determine file type
-            if filename.endswith((".xlsx", ".xls")):
-                file_type = "excel"
-            elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
-                file_type = "visual"
-            elif filename.lower().endswith(".csv"):
-                file_type = "csv"
-            else:
-                logger.warning(f"Unsupported file type: {filename}")
-                continue
-                
-            doc_info = {
-                "content": file_data["content"],
-                "filename": filename,
-                "type": file_type,
-                "document_category": doc_metadata.document_type,
-                "document_id": doc_metadata.document_id
-            }
-            
-            documents_count += 1
-            
-            if doc_metadata.document_type == DocumentType.RENT_ROLL:
-                rent_roll_docs.append(doc_info)
-            elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
-                om_docs.append(doc_info)
-                # OMs also contain financials, so add to financial_docs too for extraction
-                financial_docs.append(doc_info)
-            else:
-                # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
-                financial_docs.append(doc_info)
+
+        # Advance the progress counter atomically (asyncio is single-threaded,
+        # so ++ on a dict slot is safe between awaits).
+        progress_counter["n"] += 1
+        done = progress_counter["n"]
+
+        if total_docs_to_load > 0:
+            loading_pct = 8 + int((done / total_docs_to_load) * 10)  # 8 -> 18
+            await progress_service.update_progress(
+                package_id, loading_pct,
+                f"Loading documents ({done}/{total_docs_to_load})...",
+                details={"current_file": doc_metadata.filename, "file_index": done, "total_files": total_docs_to_load}
+            )
+
+        return doc_type, doc_metadata, file_data
+
+    load_results = await asyncio.gather(
+        *[_load_one(dt, dm) for dt, dm in load_queue]
+    )
+
+    for doc_type, doc_metadata, file_data in load_results:
+        if not file_data:
+            continue
+
+        filename = file_data["filename"]
+        # Determine file type
+        if filename.endswith((".xlsx", ".xls")):
+            file_type = "excel"
+        elif filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")):
+            file_type = "visual"
+        elif filename.lower().endswith(".csv"):
+            file_type = "csv"
+        else:
+            logger.warning(f"Unsupported file type: {filename}")
+            continue
+
+        doc_info = {
+            "content": file_data["content"],
+            "filename": filename,
+            "type": file_type,
+            "document_category": doc_metadata.document_type,
+            "document_id": doc_metadata.document_id
+        }
+
+        documents_count += 1
+
+        if doc_metadata.document_type == DocumentType.RENT_ROLL:
+            rent_roll_docs.append(doc_info)
+        elif doc_metadata.document_type == DocumentType.OFFERING_MEMORANDUM:
+            om_docs.append(doc_info)
+            # OMs also contain financials, so add to financial_docs too for extraction
+            financial_docs.append(doc_info)
+        else:
+            # All other docs (Financials, Tax Bills, Utilities, etc.) go to financial extraction
+            financial_docs.append(doc_info)
 
     if documents_count == 0:
         logger.warning(f"No processable documents found for package {package_id}")
@@ -487,7 +578,8 @@ async def normalize_package_documents(
         )
     
     logger.info(f"Processing {documents_count} documents: {len(rent_roll_docs)} Rent Rolls, {len(financial_docs)} Financials/Other")
-    
+
+    await progress_service.update_progress(package_id, 19, f"Loading complete. {documents_count} documents ready.")
     await progress_service.update_progress(package_id, 20, f"Processing {documents_count} documents folder by folder...")
     
     # --- Simplified Parallel Processing with Basic Progress Aggregation ---
@@ -497,18 +589,43 @@ async def normalize_package_documents(
     remaining_financial_docs = [d for d in financial_docs if d.get("document_category") != DocumentType.OFFERING_MEMORANDUM]
     
     # NEW: Determine Underwriting Flow (Flow A vs Flow B)
-    if om_documents:
-        # Flow A: OM-Driven (Single Source of Truth)
-        logger.info("OM Detected. Enforcing Flow A: OM-Driven. Ignoring non-OM documents.")
+    if len(om_documents) == 1:
+        # Flow A: OM-Driven (Single Source of Truth). Only when exactly one OM is
+        # present — two or more OM classifications usually indicate a false positive
+        # (e.g., a flyer or appraisal misclassified alongside the real OM), and the
+        # "single source of truth" premise no longer holds. Fall back to MULTI_SOURCE
+        # so every document contributes and cross-validates.
+        logger.info("Single OM detected. Enforcing Flow A: OM-Driven. Ignoring non-OM documents.")
         package.underwriting_flow = "OM_DRIVEN"
-        
+
         # Strictly ignore other files
         rent_roll_docs = []
         remaining_financial_docs = []
-        
+
     else:
-        # Flow B: Non-OM (Multi-Source Aggregation)
-        logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
+        # Flow B: Non-OM (Multi-Source Aggregation).
+        # Fires when (a) zero OMs were detected, or (b) more than one document was
+        # classified as OM — the latter implies misclassification, and aggregating
+        # across all sources is safer than trusting any single one as authoritative.
+        if len(om_documents) > 1:
+            logger.info(
+                f"{len(om_documents)} documents classified as OM — likely "
+                "misclassification. Falling back to Flow B: Multi-Source Aggregation "
+                "so all sources cross-validate."
+            )
+            # Route those OM-classified files through the generic financial
+            # extractor alongside every other folder. Running the OM-specific
+            # proforma-extraction path on misclassified flyers/appraisals
+            # produces hallucinated scenario-prefixed items, so we override
+            # their document_category to FINANCIALS for extraction routing.
+            # Without this, the OM folder would appear "skipped" in the
+            # processing UI for non-OM flow.
+            for d in om_documents:
+                d["document_category"] = DocumentType.FINANCIALS
+            remaining_financial_docs = remaining_financial_docs + om_documents
+            om_documents = []
+        else:
+            logger.info("No OM Detected. Using Flow B: Multi-Source Aggregation.")
         package.underwriting_flow = "MULTI_SOURCE"
 
     # Shared State for Parallel Progress Tracking
@@ -547,7 +664,12 @@ async def normalize_package_documents(
             unified_details = {
                 "completed_files": list(global_completed_files),
                 "active_files": list(global_active_files.values()),
-                "status": "processing"
+                "status": "processing",
+                "category_progress": {
+                    "om": round(task_progress["om"], 1),
+                    "rr": round(task_progress["rr"], 1),
+                    "fin": round(task_progress["fin"], 1),
+                }
             }
             
             # Send Update
@@ -707,16 +829,29 @@ async def normalize_package_documents(
     except Exception as e:
          logger.error(f"Error in parallel processing: {e}")
          await progress_service.update_progress(package_id, 0, f"Processing failed: {str(e)}")
+         await storage_service.update_deal_package_status(package_id, "failed")
+         _evict_package_from_cache(package)
          raise HTTPException(status_code=500, detail=f"Error processing documents: {str(e)}")
 
     # Consolidate normalized_data for backward compatibility / Verification UI
     package.normalized_data = package.financials_data
-    
+
     package.normalization_status = "in_progress"
-    
-    # Update cache and persist to GCP
-    package_dict = package.model_dump()
-    await storage_service.save_deal_package(package_dict)
+
+    # Partial update: only persist extraction results, not the full document
+    financials_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.financials_data]
+    rent_roll_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.rent_roll_data]
+    om_proforma_dump = [item.model_dump() if hasattr(item, "model_dump") else item for item in package.om_proforma_data]
+    await storage_service.partial_update_deal_package(package_id, {
+        "financials_data": financials_dump,
+        "normalized_data": financials_dump,
+        "rent_roll_data": rent_roll_dump,
+        "om_proforma_data": om_proforma_dump,
+        "normalization_status": "in_progress",
+        "primary_fiscal_year": package.primary_fiscal_year,
+        "is_partial_year": package.is_partial_year,
+        "underwriting_flow": package.underwriting_flow,
+    })
     
     await progress_service.update_progress(package_id, 60, "Normalization complete. Generating financial report...")
     
@@ -754,7 +889,11 @@ async def normalize_package_documents(
         )
         
         logger.info(f"Financial report generated successfully for package {package_id}")
-        
+
+        evicted = _evict_package_from_cache(package)
+        if evicted:
+            logger.info(f"Evicted {evicted} file-cache entries for package {package_id}")
+
         # Return a combined result so frontend gets both the analysis AND the normalized items for verification
         return {
             "analysis": analysis_result.model_dump(),
@@ -763,12 +902,15 @@ async def normalize_package_documents(
             "verified_items": 0,
             "confidence_average": 0.0
         }
-        
+
     except Exception as e:
         logger.error(f"Error generating financial report: {str(e)}", exc_info=True)
-        # If analysis fails, still return normalization result
+        # If analysis fails, still return normalization result and mark as completed
+        # (normalization succeeded even if report generation failed)
+        await storage_service.update_deal_package_status(package_id, "completed")
         await progress_service.update_progress(package_id, 100, "Normalization complete. Analysis generation failed.")
-        
+        _evict_package_from_cache(package)
+
         result = DocumentNormalizationResult(
             document_id="multiple",
             document_type=document_type or DocumentType.FINANCIALS,
@@ -778,6 +920,27 @@ async def normalize_package_documents(
             confidence_average=0.0
         )
         return result
+
+
+@router.post("/packages/{package_id}/reset-status")
+async def reset_package_status(package_id: str):
+    """
+    Reset a failed package's normalization status back to pending so it can be retried.
+    Only allows resetting from 'failed' status.
+    """
+    package_data = await storage_service.get_deal_package(package_id)
+    if not package_data:
+        raise HTTPException(status_code=404, detail=f"Deal package {package_id} not found")
+
+    package = DealPackage(**package_data)
+    if package.normalization_status not in ("failed",):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot reset package with status '{package.normalization_status}'. Only 'failed' packages can be reset."
+        )
+
+    await storage_service.update_deal_package_status(package_id, "pending")
+    return {"message": "Status reset to pending", "package_id": package_id}
 
 
 class VerifyItemRequest(BaseModel):
@@ -810,11 +973,13 @@ async def verify_normalized_item(
     if hasattr(package, 'financials_data') and package.financials_data:
         lists_to_update.append(package.financials_data)
         
+    verified_item_raw_text = None  # Captured for cache invalidation on correction
     logger.info(f"Updating item {item_id} in package {package_id}. Correction: {user_correction}, Payload: {payload}")
     for data_list in lists_to_update:
       for item in data_list:
         if item.id == item_id:
             logger.info(f"Found item {item_id}. Original amount: {item.metadata.get('amount') if item.metadata else 'N/A'}")
+            verified_item_raw_text = item.raw_text
             item.user_verified = True
             if user_correction is not None:
                 item.user_correction = user_correction
@@ -858,15 +1023,26 @@ async def verify_normalized_item(
             
     if not item_found:
         raise HTTPException(status_code=404, detail=f"Item {item_id} not found in package")
-        
+
+    # Cache invalidation: when a user CORRECTS a category (not just confirms),
+    # purge the stale mapping so future deals re-evaluate via LLM instead of
+    # serving the old wrong answer from cache.
+    if user_correction is not None and verified_item_raw_text:
+        from app.services.normalization_service import NormalizationService
+        try:
+            await NormalizationService.invalidate_cache_entry(verified_item_raw_text)
+            logger.info(f"Cache invalidated for corrected item: '{verified_item_raw_text}' → '{user_correction}'")
+        except Exception as e:
+            logger.error(f"Failed to invalidate cache for '{verified_item_raw_text}': {e}")
+
     # Recalculate progress
     total_items = len(package.normalized_data)
     verified_items = sum(1 for item in package.normalized_data if item.user_verified)
     package.verification_progress = (verified_items / total_items) * 100 if total_items > 0 else 0
-    
+
     # Save changes
     await storage_service.save_deal_package(package.model_dump())
-    
+
     return {
         "item_id": item_id,
         "verified": True,
@@ -1413,7 +1589,7 @@ async def get_package_analysis(package_id: str):
 async def analyze_deal_package(
     package_id: str,
     request: Request,
-    gemini_service: GeminiService = Depends(get_gemini_service),
+    gemini_service: GeminiClient = Depends(get_gemini_service),
     openai_service: Any = Depends(get_openai_service),
     progress_service: ProgressService = Depends(get_progress_service),
     explainability_service: ExplainabilityService = Depends(get_explainability_service),
@@ -1473,7 +1649,7 @@ async def analyze_deal_package(
 async def _analyze_deal_package_logic(
     package_id: str,
     deal_parameters: Dict[str, Any],
-    gemini_service: GeminiService,
+    gemini_service: GeminiClient,
     openai_service: Any,
     progress_service: ProgressService,
     explainability_service: ExplainabilityService,
@@ -1622,11 +1798,19 @@ async def _analyze_deal_package_logic(
             # Semaphore to avoid overwhelming LLM API with too many parallel batches
             audit_sem = asyncio.Semaphore(5)
 
+            # Skip non-text file types for contextual verification
+            _PROCESSABLE_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.txt', '.csv'}
+
             async def process_doc_audit(doc_id, items):
                 nonlocal verified_items_results
                 # Fetch document text once
                 full_text = ""
                 source_filename = items[0].source_document or "unknown.pdf"
+
+                # Skip non-text file types (images, videos, etc.)
+                ext = Path(source_filename).suffix.lower()
+                if ext not in _PROCESSABLE_EXTENSIONS:
+                    return
 
                 # 1. Try OCR Backend first (Fastest/Best)
                 try:
@@ -1646,13 +1830,7 @@ async def _analyze_deal_package_logic(
                             content = await storage_service.get_document_file(storage_path)
 
                         if content and source_filename.lower().endswith(".pdf"):
-                            import PyPDF2
-                            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                            text_pages = []
-                            # Extract text from first 25 pages for generic audit (faster than 40)
-                            for p_idx, page in enumerate(pdf_reader.pages[:25]):
-                                text_pages.append(page.extract_text())
-                            full_text = "\n".join(text_pages)
+                            full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 25)
                             logger.info(f"Recovered text from storage for {source_filename} in generic audit ({len(full_text)} chars)")
                     except Exception as ex:
                         logger.warning(f"Storage extraction failed for {doc_id} in generic audit: {ex}")
@@ -1710,9 +1888,13 @@ async def _analyze_deal_package_logic(
                         if res_list:
                             verified_items_results.extend(res_list)
 
-            # Parallelize across documents
+            # Parallelize across documents (with 120s timeout to prevent hanging on large packages)
             doc_audit_tasks = [process_doc_audit(doc_id, items) for doc_id, items in items_by_doc.items()]
-            await asyncio.gather(*doc_audit_tasks)
+            logger.info(f"Running contextual audit on {len(doc_audit_tasks)} document groups...")
+            try:
+                await asyncio.wait_for(asyncio.gather(*doc_audit_tasks), timeout=120)
+            except asyncio.TimeoutError:
+                logger.warning(f"Contextual verification timed out after 120s ({len(verified_items_results)} items verified so far)")
 
             # 2. Apply Verification Results
             # Create map for fast lookup
@@ -1860,13 +2042,7 @@ async def _analyze_deal_package_logic(
                                     content = await storage_service.get_document_file(storage_path)
                                 
                                 if content and doc.filename.lower().endswith(".pdf"):
-                                    import PyPDF2
-                                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                                    text_pages = []
-                                    # Extract text from first 20 pages
-                                    for p_idx, page in enumerate(pdf_reader.pages[:20]):
-                                        text_pages.append(page.extract_text())
-                                    full_text = "\n".join(text_pages)
+                                    full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 20)
                             except Exception as ex:
                                 logger.warning(f"Storage extraction failed for {doc_id} in PP verify: {ex}")
 
@@ -1915,10 +2091,26 @@ async def _analyze_deal_package_logic(
             # --- Year Built Verification Agent ---
             logger.info("Running Year Built Verification Agent...")
             yb_candidates = []
-            
-            # Find all documents that mention Year Built and pass them to LLM
+
+            # File extensions that can contain text about year built
+            _TEXT_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xlsx', '.xls', '.txt', '.csv'}
+            # Document types worth searching for year built
+            _YB_RELEVANT_DOC_TYPES = {
+                DocumentType.OFFERING_MEMORANDUM, DocumentType.FINANCIALS,
+                DocumentType.DISCLOSURES, DocumentType.BUILDING_PLANS,
+                DocumentType.TAX_BILLS, DocumentType.LEASES,
+            }
+
+            # Find all text-based documents that mention Year Built and pass them to LLM
             for doc_type, docs in package.documents.items():
+                # Skip image/utility/rent roll categories - unlikely to contain year built
+                if doc_type not in _YB_RELEVANT_DOC_TYPES:
+                    continue
                 for doc in docs:
+                    # Skip non-text file types (images, videos, etc.)
+                    ext = Path(doc.filename).suffix.lower()
+                    if ext not in _TEXT_DOC_EXTENSIONS:
+                        continue
                     doc_id = doc.document_id
                     full_text = ""
                     try:
@@ -1936,12 +2128,7 @@ async def _analyze_deal_package_logic(
                                 content = await storage_service.get_document_file(storage_path)
                             
                             if content and doc.filename.lower().endswith(".pdf"):
-                                import PyPDF2
-                                pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-                                text_pages = []
-                                for p_idx, page in enumerate(pdf_reader.pages[:20]):
-                                    text_pages.append(page.extract_text())
-                                full_text = "\n".join(text_pages)
+                                full_text = await run_in_threadpool(_parse_pdf_text_sync, content, 20)
                         except: pass
                     
                     if full_text:
@@ -2001,15 +2188,30 @@ async def _analyze_deal_package_logic(
             logger.error(f"Error in Verification Agents: {e}")
             # Continue without failing the whole analysis
 
-    # Note: If rent roll has more units than found in expenses/OM, update it
+    # In MULTI_SOURCE (non-OM) flow the rent roll IS the ground truth for unit
+    # count — the displayed rent-roll tab renders exactly these rows, so the
+    # header "Total Units" must match. Previously this only upgraded the count
+    # when the rent roll had MORE units than the synthesized metadata, leaving
+    # stale higher counts from OM cover pages / prior manual overrides in place
+    # when the rent roll actually had fewer rows. Now: if a rent roll exists in
+    # non-OM flow, take its length verbatim.
     if rent_roll_items:
         rr_units = len(rent_roll_items)
-        if rr_units > synthesized_metadata['total_units']['value']:
-             synthesized_metadata['total_units'] = {
-                 "value": rr_units,
-                 "source": "Rent Roll Data",
-                 "score": 90
-             }
+        if package.underwriting_flow == "MULTI_SOURCE":
+            synthesized_metadata['total_units'] = {
+                "value": rr_units,
+                "source": "Rent Roll Data (row count)",
+                "score": 999,
+            }
+        elif rr_units > synthesized_metadata['total_units']['value']:
+            # OM flow — keep prior "upgrade-only" behaviour so OM-proforma unit
+            # counts (which may legitimately exceed rent-roll rows when units
+            # are being delivered / added) aren't clobbered.
+            synthesized_metadata['total_units'] = {
+                "value": rr_units,
+                "source": "Rent Roll Data",
+                "score": 90,
+            }
     
     logger.info("=== SYNTHESIZED METADATA ===")
     logger.info(f"Purchase Price: ${synthesized_metadata['purchase_price']['value']:,.2f} (from {synthesized_metadata['purchase_price']['source']})")
@@ -2134,7 +2336,7 @@ async def _analyze_deal_package_logic(
     # Parse normalized items for expenses only (property metadata already synthesized)
     for item in normalized_items:
         # Check if this is an expense item
-        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group in ["Operating Expense", "Tax & Insurance"]):
+        if item.field_type == "expense_category" or (hasattr(item, 'category_group') and item.category_group in ["Operating Expense", "Tax & Insurance", "Revenue"]):
             try:
                 # Parse the category
                 # Fallback to Other OpEx if unknown
@@ -2256,11 +2458,13 @@ async def _analyze_deal_package_logic(
     # Apply Manual Overrides for GPR/Rent
     if package.manual_overrides:
         if "total_units" in package.manual_overrides:
-             # If manual override exists, it takes precedence if extraction failed
+             # The manual override is a fallback for when extraction produced
+             # no rent roll at all. Once we have actual rent-roll rows, the
+             # row count (already assigned to total_units above) is the ground
+             # truth — don't overwrite it with a stale manual value.
              manual_units = int(package.manual_overrides["total_units"])
-             if total_units == 0 or total_units != manual_units:
+             if total_units == 0:
                  total_units = manual_units
-                 # Adjust occupancy if needed (assume 95% if no data?)
                  if occupied_units == 0:
                      occupied_units = int(total_units * 0.95)
                      occupancy_rate = 0.95

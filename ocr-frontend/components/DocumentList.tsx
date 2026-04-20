@@ -8,6 +8,16 @@ import LoadingSpinner from "./LoadingSpinner";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_OCR_API_URL || "http://localhost:8000";
 
+function getFileIconProps(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') return { color: 'text-red-500' };
+  if (['xlsx', 'xls', 'csv'].includes(ext)) return { color: 'text-emerald-500' };
+  if (['doc', 'docx'].includes(ext)) return { color: 'text-blue-500' };
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext)) return { color: 'text-violet-500' };
+  if (['mov', 'mp4', 'avi', 'mkv'].includes(ext)) return { color: 'text-amber-500' };
+  return { color: 'text-gray-400' };
+}
+
 interface DocumentListProps {
   refreshTrigger?: number;
   onDelete?: () => void;
@@ -403,17 +413,29 @@ export default function DocumentList({
                       className="block focus:outline-none"
                     >
                       <div className="flex items-center">
-                        <svg
-                          className="h-5 w-5 text-gray-400 mr-2 flex-shrink-0"
-                          fill="currentColor"
-                          viewBox="0 0 20 20"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
+                        {(() => {
+                          const ext = doc.filename.split('.').pop()?.toLowerCase() || '';
+                          const { color } = getFileIconProps(doc.filename);
+                          const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext);
+                          const isVideo = ['mov', 'mp4', 'avi', 'mkv'].includes(ext);
+                          if (isImage) return (
+                            <svg className={`h-5 w-5 ${color} mr-2 flex-shrink-0`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" />
+                              <polyline points="21 15 16 10 5 21" />
+                            </svg>
+                          );
+                          if (isVideo) return (
+                            <svg className={`h-5 w-5 ${color} mr-2 flex-shrink-0`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <rect x="2" y="4" width="20" height="16" rx="2" />
+                              <polygon points="10 9 15 12 10 15" />
+                            </svg>
+                          );
+                          return (
+                            <svg className={`h-5 w-5 ${color} mr-2 flex-shrink-0`} fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                            </svg>
+                          );
+                        })()}
                         <p className="text-sm font-medium text-[#FF5E00] truncate hover:text-blue-800">
                           {doc.filename}
                         </p>

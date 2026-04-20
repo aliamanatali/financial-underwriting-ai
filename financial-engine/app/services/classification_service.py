@@ -165,15 +165,15 @@ class ClassificationService:
             Analyze the following document content and classify it into exactly ONE of these categories:
             
             Categories:
-            - {DocumentType.OFFERING_MEMORANDUM.value}: Marketing materials, property overview, executive summary, appraisal
+            - {DocumentType.OFFERING_MEMORANDUM.value}: A FULL broker-produced Offering Memorandum (sale package / investment brochure). To qualify, the document MUST contain ALL of the following: (1) the words "Offering Memorandum" or "Confidential Offering Memorandum" on or near the cover, (2) a listing broker team with contact details (names, phone, email, brokerage firm), (3) a table of contents with multiple sections that together cover property overview, financial analysis/underwriting, and market comparables, (4) length typically 15+ pages. DO NOT classify single-property flyers, appraisals, property brochures without underwriting sections, BOVs, or teasers as OM — those go to Images or Disclosures.
             - {DocumentType.RENT_ROLL.value}: List of tenants, lease details, unit information, occupancy data
             - {DocumentType.LEASES.value}: Individual lease agreements, tenancy agreements
             - {DocumentType.FINANCIALS.value}: T12, P&L, Income Statements, Balance Sheets, Operating Statements, Historical financials. (DO NOT put proposals, quotes, estimates, invoices, or receipts here)
             - {DocumentType.BUILDING_PLANS_PERMITS.value}: Floor plans, site plans, permits, surveys, zoning documents
-            - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports, purchase and sale agreements (PSA), management agreements, contracts
+            - {DocumentType.DISCLOSURES.value}: Environmental reports, Phase I/II, PCA, inspection reports, appraisals, purchase and sale agreements (PSA), management agreements, contracts
             - {DocumentType.TAX_BILLS.value}: Property tax bills, tax returns, assessor documents
             - {DocumentType.UTILITIES.value}: Utility bills (water, electric, gas, sewer, trash)
-            - {DocumentType.IMAGES.value}: Photos, images, scanned documents, proposals, quotes, estimates, invoices, and receipts
+            - {DocumentType.IMAGES.value}: Photos, images, scanned documents, flyers, teasers, BOVs, proposals, quotes, estimates, invoices, and receipts
             
             Document Filename: "{filename}"
             Total Pages: {total_pages if total_pages > 0 else 'Unknown'}
@@ -246,7 +246,15 @@ class ClassificationService:
             return DocumentType.RENT_ROLL
         if "t12" in filename_lower or "trailing 12" in filename_lower or "p&l" in filename_lower or "profit & loss" in filename_lower or "income statement" in filename_lower:
             return DocumentType.FINANCIALS
-        if "om" in filename_lower or "offering memorandum" in filename_lower or "flyer" in filename_lower or "offering_memorandum" in filename_lower:
+        # OM filename match: require an explicit "offering memorandum" phrase OR the
+        # OM_ / _OM_ token pattern used by brokers. Bare "om" substring is too weak
+        # (hits "promissory", "summary", "amendment", etc.) and single-property
+        # flyers/teasers/BOVs are not full OMs — they belong in IMAGES.
+        if ("offering memorandum" in filename_lower
+            or "offering_memorandum" in filename_lower
+            or filename_lower.startswith("om_")
+            or "_om_" in filename_lower
+            or " om " in filename_lower):
             return DocumentType.OFFERING_MEMORANDUM
         if "lease" in filename_lower and ("agreement" in filename_lower or "contract" in filename_lower):
             return DocumentType.LEASES
@@ -256,9 +264,9 @@ class ClassificationService:
             return DocumentType.UTILITIES
         if "plan" in filename_lower or "permit" in filename_lower:
             return DocumentType.BUILDING_PLANS_PERMITS
-        if "disclosure" in filename_lower or "environmental" in filename_lower or "psa" in filename_lower or "purchase and sale" in filename_lower or "mgmt" in filename_lower or "management agreement" in filename_lower:
+        if "appraisal" in filename_lower or "disclosure" in filename_lower or "environmental" in filename_lower or "psa" in filename_lower or "purchase and sale" in filename_lower or "mgmt" in filename_lower or "management agreement" in filename_lower:
             return DocumentType.DISCLOSURES
-        if "proposal" in filename_lower or "receipt" in filename_lower or "invoice" in filename_lower or "quote" in filename_lower or "estimate" in filename_lower:
+        if "flyer" in filename_lower or "teaser" in filename_lower or "bov" in filename_lower or "proposal" in filename_lower or "receipt" in filename_lower or "invoice" in filename_lower or "quote" in filename_lower or "estimate" in filename_lower:
             return DocumentType.IMAGES
         
         return None

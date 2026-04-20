@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Union, Dict, Any
 from enum import Enum
+from datetime import date, datetime
 
 # --- 1. Enums ---
 
@@ -154,29 +155,87 @@ class RentRollItem(BaseModel):
 
     @validator('is_vacant', always=True)
     def validate_vacancy_consistency(cls, v, values):
-        """Ensure vacancy status is consistent with tenant name, unit type and current rent"""
-        tenant_name = (values.get('tenant_name') or "").lower()
-        unit_type = (values.get('unit_type') or "").lower()
-        current_rent = values.get('current_rent') or 0.0
-        
-        # Keywords that indicate vacancy
-        vacancy_keywords = ["vacant", "vac", "empty", "model"]
-        
-        if v is True:
+        """Ensure vacancy status is consistent via centralized helper."""
+        return is_unit_vacant(
+            current_rent=values.get('current_rent') or 0.0,
+            tenant_name=values.get('tenant_name') or "",
+            unit_type=values.get('unit_type') or "",
+            move_in_date=values.get('move_in_date'),
+            is_vacant_flag=v,
+        )
+
+
+# ── Vacancy helper ────────────────────────────────────────────────────────
+
+VACANCY_KEYWORDS = ["vacant", "vac", "empty", "model"]
+
+
+def _parse_date_safe(raw: Optional[str]) -> Optional[date]:
+    """Try common date formats. Return None for unparseable values like 'TBD'."""
+    if not raw or not isinstance(raw, str):
+        return None
+    raw = raw.strip()
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y-%m-%dT%H:%M:%S", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def is_unit_vacant(
+    current_rent: float = 0.0,
+    tenant_name: str = "",
+    unit_type: str = "",
+    move_in_date: Optional[str] = None,
+    analysis_date: Optional[date] = None,
+    is_vacant_flag: bool = False,
+) -> bool:
+    """Centralized vacancy determination for a rent roll unit.
+
+    A unit is vacant if ANY of the following hold:
+    - ``is_vacant_flag`` is already True (upstream extraction said so)
+    - tenant_name or unit_type contains a vacancy keyword
+    - current_rent == 0 AND tenant_name is empty / "unknown" / contains vacancy keyword
+    - current_rent == 0 AND move_in_date is in the future
+    - current_rent == 0 AND move_in_date is null or unparseable (no active lease)
+
+    A unit is NOT vacant if current_rent == 0 AND move_in_date is in the past
+    (implies a $0-rent concession or month-to-month gap — tenant has moved in).
+    """
+    if is_vacant_flag:
+        return True
+
+    tenant_lower = (tenant_name or "").lower()
+    type_lower = (unit_type or "").lower()
+
+    # Explicit vacancy keywords in tenant name or unit type
+    if any(kw in tenant_lower for kw in VACANCY_KEYWORDS) or \
+       any(kw in type_lower for kw in VACANCY_KEYWORDS):
+        return True
+
+    rent = current_rent or 0.0
+
+    if rent == 0:
+        # No rent and no real tenant name → vacant
+        if not tenant_lower or tenant_lower == "unknown":
             return True
-            
-        # Check if tenant name or unit type explicitly mentions vacancy
-        is_explicitly_vacant = any(kw in tenant_name for kw in vacancy_keywords) or \
-                              any(kw in unit_type for kw in vacancy_keywords)
-        
-        if is_explicitly_vacant:
+
+        # Named tenant but $0 rent — check move-in date
+        parsed = _parse_date_safe(move_in_date)
+        ref = analysis_date or date.today()
+
+        if parsed is None:
+            # No parseable move-in date and $0 rent → no active lease → vacant
             return True
-            
-        # Fallback logic for rent being 0
-        if current_rent == 0 and (not tenant_name or tenant_name == "unknown" or any(kw in tenant_name for kw in vacancy_keywords)):
+        if parsed > ref:
+            # Future move-in → tenant hasn't arrived yet → vacant
             return True
-            
-        return v
+        # Past move-in with $0 rent → concession / gap — NOT vacant
+        return False
+
+    return False
+
 
 class RentRollSummary(BaseModel):
     total_units: int
@@ -218,7 +277,14 @@ class DealParameters(BaseModel):
     bridge_spread: float = 0.02 # Spread over SOFR
     treasury_rate_5yr: float = 0.042 # 5-Year US Treasury Rate
     perm_spread: float = 0.0185 # 185 bps over Treasuries
-    
+
+    # Lease-Up Assumptions (high-vacancy acquisitions)
+    lease_up_downtime_months: float = 2.0    # Avg months to lease each vacant unit
+    lease_up_vacancy_threshold: float = 0.10  # Only applies above 10% physical vacancy
+
+    # Default Management Fee
+    default_mgmt_fee_pct: float = 0.04  # 4% of EGI when no mgmt fee extracted
+
     # Project Cost Assumptions
     closing_costs: float = 100_000.0
     renovation_budget: float = 0.0
@@ -249,6 +315,8 @@ class StandardizedExpense(BaseModel):
     expense_year: Optional[int] = None  # Year of the expense (e.g. 2023)
     source_document: Optional[str] = None # Source file name for traceability and deduplication
     text_type: Optional[str] = "Computerized"
+    section_context: Optional[str] = None  # "income", "expense", "capex", "unknown" — extraction LLM hint
+    source_snippet: Optional[str] = None  # Raw text snippet from source document for audit trail
 
 # --- 2.2 Explainability Models ---
 
@@ -454,10 +522,14 @@ class UnderwritingAnalysis(BaseModel):
     gross_potential_rent: Optional[float] = 0.0
     loss_to_lease: Optional[float] = 0.0
     vacancy_loss: Optional[float] = 0.0
+    year1_leaseup_loss: Optional[float] = None  # Year 1 only; absent when below threshold
     effective_gross_income: Optional[float] = 0.0
     other_income: Optional[float] = 0.0 # Extracted from T12
     pro_forma_expenses: Optional[float] = 0.0
     pro_forma_noi: Optional[float] = 0.0
+    stabilized_noi: Optional[float] = None  # Year 2+ NOI (without lease-up loss)
+    mgmt_fee_source: Optional[str] = None  # "extracted" | "default_injected" | "user_override"
+    stabilized_egi: Optional[float] = None  # Year 2+ EGI (without lease-up loss); internal use
     
     # Valuation Metrics
     yield_on_cost: Optional[float] = 0.0
@@ -495,6 +567,8 @@ class UnderwritingAnalysis(BaseModel):
     investment_memo: Optional[str] = None
     conclusion: Optional[Conclusion] = None
     
+    computed_at: Optional[str] = None
+
     # OM Proforma Extraction
     om_proforma: Optional[List[OMProformaTable]] = []
     tax_assumptions: Optional[OMTaxAssumptions] = None
