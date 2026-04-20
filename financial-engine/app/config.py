@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # Redis settings
     redis_url: str = "redis://localhost:6379/0"
 
+    # Dev tools — set to True to enable /api/v1/dev/* endpoints (re-analyze, etc.)
+    enable_reanalyze_endpoints: bool = False
+
+    # (Feature flag use_consolidated_normalization removed in Tier C — consolidated is now the only path)
+
     @property
     def use_mongodb(self) -> bool:
         return self.mongodb_uri is not None

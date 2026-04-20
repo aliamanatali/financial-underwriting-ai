@@ -16,7 +16,8 @@ const LogicErrorItem = ({ errorMsg, analysis }: { errorMsg: string, analysis: an
     setLoading(true);
     try {
       const contextData = {
-        gross_potential_rent: analysis?.rent_roll_summary?.total_annual_rent,
+        gross_potential_rent: analysis?.gross_potential_rent,
+        in_place_annual_rent: analysis?.rent_roll_summary?.total_annual_rent,
         net_operating_income: analysis?.pro_forma_noi,
         operating_expenses: analysis?.pro_forma_expenses,
         occupancy_rate: analysis?.rent_roll_summary?.occupancy_rate,
@@ -354,8 +355,29 @@ export default function UnderwritingDashboard({
   const proFormaCapRate = analysis.cap_rate || 0;
   const capRateChange = proFormaCapRate - historicalCapRate;
 
+  // Derive total_units from the actual rent-roll rows whenever one exists —
+  // property_meta.total_units can disagree (stale manual override, synthesized
+  // from OM cover-page text, etc.), and the rent-roll rows are the ground truth
+  // the user is looking at.
+  //
+  // Parity with RentRollWidget: in non-OM flow, the widget filters out rows
+  // missing a unit_size (0, "-", "unknown") from both its rendered table and
+  // its Totals row. The dashboard header must apply the SAME filter or it
+  // double-counts those skipped rows — was the source of the 29-vs-28
+  // mismatch users were seeing.
+  //
+  // Falls back to property_meta only when no rent roll is present (e.g.,
+  // OM-driven deals where the rent roll failed to extract).
+  const isNonOMFlow = !analysis.om_proforma || analysis.om_proforma.length === 0;
+  const rentRollRows = Array.isArray(analysis.rent_roll) ? analysis.rent_roll : [];
+  const visibleRentRollCount = isNonOMFlow
+    ? rentRollRows.filter(item => {
+        const sizeStr = String(item.unit_size).toLowerCase().trim();
+        return !(!item.unit_size || item.unit_size === 0 || sizeStr === "-" || sizeStr === "unknown" || sizeStr === "unkown");
+      }).length
+    : rentRollRows.length;
+  const totalUnits = visibleRentRollCount > 0 ? visibleRentRollCount : (analysis.property_meta?.total_units || 0);
   const occupancyRate = analysis.rent_roll_summary?.occupancy_rate || 0;
-  const totalUnits = analysis.property_meta?.total_units || 0;
   const occupiedUnits = analysis.rent_roll_summary?.occupied_units || 0;
   const purchasePrice = analysis.property_meta.purchase_price || 0;
   
@@ -434,7 +456,7 @@ export default function UnderwritingDashboard({
     const missing = [];
     if (!analysis.property_meta?.purchase_price) missing.push("Purchase Price");
     if (!analysis.property_meta?.total_units) missing.push("Total Units");
-    if (!analysis.rent_roll_summary?.total_annual_rent) missing.push("Gross Potential Rent");
+    if (!analysis.gross_potential_rent) missing.push("Gross Potential Rent");
     if (!analysis.historical_total_expenses && (!analysis.historical_expenses || analysis.historical_expenses.length === 0)) missing.push("Operating Expenses");
     return missing;
   };
@@ -443,7 +465,7 @@ export default function UnderwritingDashboard({
     const errors = [];
     
     // Logic Error: NOI should not be greater than Gross Potential Rent
-    if (analysis.pro_forma_noi && analysis.rent_roll_summary?.total_annual_rent && analysis.pro_forma_noi > analysis.rent_roll_summary.total_annual_rent) {
+    if (analysis.pro_forma_noi && analysis.gross_potential_rent && analysis.pro_forma_noi > analysis.gross_potential_rent) {
       errors.push("Net Operating Income (NOI) cannot exceed Gross Potential Rent.");
     }
 
@@ -941,7 +963,17 @@ export default function UnderwritingDashboard({
             {/* Rent Growth Rate Panel */}
             <div className="group">
               <div className="flex justify-between items-baseline mb-2">
-                <label className="text-xs font-medium text-neutral-600">Rent Growth Rate</label>
+                <label className="text-xs font-medium text-neutral-600 flex items-center">
+                  Rent Growth Rate
+                  <WidgetTooltip
+                    title="Rent Growth Rate"
+                    description="Projected annual percentage increase in rents over the hold period. The stabilized NOI is compounded forward each year using this rate, which directly drives the exit sale price and IRR. Typical range: 2.5%–4% for stabilized multifamily."
+                    formulas={[
+                      { label: "NOI in Year N", formula: "stabilized_NOI × (1 + growth_rate)^N" },
+                      { label: "Sale Price (Year 5 exit)", formula: "Year 6 NOI ÷ exit_cap_rate" },
+                    ]}
+                  />
+                </label>
                 <span className="text-sm font-semibold text-[#0F172A]">{(editParams.growth_rate * 100).toFixed(1)}%</span>
               </div>
               <input
@@ -965,7 +997,17 @@ export default function UnderwritingDashboard({
             {/* Vacancy Rate Panel */}
             <div className="group">
               <div className="flex justify-between items-baseline mb-2">
-                <label className="text-xs font-medium text-neutral-600">Vacancy Rate</label>
+                <label className="text-xs font-medium text-neutral-600 flex items-center">
+                  Vacancy Rate
+                  <WidgetTooltip
+                    title="Vacancy Rate"
+                    description="Stabilized percentage of Gross Potential Rent lost to vacancy and credit loss once the property is operating normally. This is NOT the current physical vacancy — it's the long-run assumption. Convention: 3% = tight market, 5% = typical, 8–10% = soft market. Lease-up loss on high-vacancy deals is handled separately by the lease-up model."
+                    formulas={[
+                      { label: "Vacancy Loss", formula: "GPR × vacancy_rate" },
+                      { label: "EGI", formula: "GPR − Loss to Lease − Vacancy Loss + Other Income" },
+                    ]}
+                  />
+                </label>
                 <span className="text-sm font-semibold text-[#0F172A]">{(editParams.vacancy_rate * 100).toFixed(1)}%</span>
               </div>
               <input
@@ -989,7 +1031,17 @@ export default function UnderwritingDashboard({
             {/* Exit Cap Rate Panel */}
             <div className="group">
               <div className="flex justify-between items-baseline mb-2">
-                <label className="text-xs font-medium text-neutral-600">Exit Cap Rate</label>
+                <label className="text-xs font-medium text-neutral-600 flex items-center">
+                  Exit Cap Rate
+                  <WidgetTooltip
+                    title="Exit Cap Rate"
+                    description="The capitalization rate a future buyer is assumed to apply to NOI when you sell in Year 5. Lower exit cap = higher sale price (inverse relationship). Convention is to underwrite the exit 25–75 bps higher than the entry cap to stay conservative. On a 5-year hold, sale proceeds typically drive 60–80% of total IRR, so this is the single biggest lever on terminal value."
+                    formulas={[
+                      { label: "Sale Price", formula: "Year 6 NOI ÷ exit_cap_rate" },
+                      { label: "Net Sale Proceeds", formula: "Sale Price × (1 − sales_cost_rate) − loan_payoff" },
+                    ]}
+                  />
+                </label>
                 <span className="text-sm font-semibold text-[#0F172A]">{(editParams.exit_cap_rate * 100).toFixed(1)}%</span>
               </div>
               <input
@@ -1013,7 +1065,18 @@ export default function UnderwritingDashboard({
             {/* Cost to Loan Ratio Panel */}
             <div className="group pt-2 border-t border-neutral-100">
               <div className="flex justify-between items-baseline mb-2">
-                <label className="text-xs font-medium text-neutral-600">Cost to Loan Ratio (%)</label>
+                <label className="text-xs font-medium text-neutral-600 flex items-center">
+                  Cost to Loan Ratio (%)
+                  <WidgetTooltip
+                    title="Cost to Loan Ratio (Loan-To-Value)"
+                    description="The percentage of the purchase price financed with debt. Higher LTV = less equity required but more debt service and lower DSCR. Convention: 65% is typical for stabilized multifamily, 75–80% is aggressive, 50–60% is conservative. Drives every leveraged return metric."
+                    formulas={[
+                      { label: "Loan Amount", formula: "Purchase Price × LTV" },
+                      { label: "Equity Invested", formula: "Purchase Price × (1 − LTV) + closing_costs" },
+                      { label: "Annual Debt Service", formula: "Loan Amount × Interest Rate" },
+                    ]}
+                  />
+                </label>
                 <div className="flex items-baseline gap-2">
                   <span className="text-xs text-[#64748B]">{formatCurrency(editParams.loan_amount ?? analysis.loan_amount ?? 0)}</span>
                   <span className="text-sm font-semibold text-[#0F172A]">
@@ -1073,6 +1136,32 @@ export default function UnderwritingDashboard({
               <div className="flex justify-between text-[9px] text-[#94A3B8] mt-1.5">
                 <span>0%</span>
                 <span>100%</span>
+              </div>
+            </div>
+
+            {/* Interest Rate (Read-Only) */}
+            <div className="group pt-2 border-t border-neutral-100">
+              <div className="flex justify-between items-baseline">
+                <label className="text-xs font-medium text-neutral-600 flex items-center gap-1">
+                  Interest Rate (IO)
+                  <span className="text-[9px] text-[#94A3B8] font-normal">(SOFR + Spread)</span>
+                  <WidgetTooltip
+                    title="Interest Rate (Interest-Only)"
+                    description="The all-in interest rate used to compute annual debt service. This is an interest-only rate — principal amortization is not modeled during the hold. The rate is the floating benchmark (SOFR) plus the lender's credit spread (bridge spread for transitional loans, perm spread for stabilized permanent debt). Changing market rates directly flows through to DSCR and cash-on-cash return."
+                    formulas={[
+                      { label: "All-In Rate", formula: "SOFR + Bridge Spread" },
+                      { label: "Annual Debt Service", formula: "Loan Amount × All-In Rate" },
+                    ]}
+                  />
+                </label>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-[10px] text-[#94A3B8]">
+                    {((analysis.deal_parameters?.sofr_rate ?? 0.053) * 100).toFixed(1)}% + {((analysis.deal_parameters?.bridge_spread ?? 0.02) * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-sm font-semibold text-[#0F172A]">
+                    {(((analysis.deal_parameters?.sofr_rate ?? 0.053) + (analysis.deal_parameters?.bridge_spread ?? 0.02)) * 100).toFixed(1)}%
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -1527,9 +1616,11 @@ export default function UnderwritingDashboard({
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.debt_yield || 0) >= 0.08
-                          ? 'The robust debt yield metric strongly supports refinancing or exit flexibility. The asset can likely absorb market cap rate expansions or minor income disruptions without violating typical lender covenants.'
-                          : 'The lower debt yield suggests the deal is highly sensitive to exit cap rate expansion or income shortfalls. Refinancing at maturity may be challenging, potentially requiring sponsor capital calls to pay down principal.'}
+                        {(analysis.debt_yield || 0) >= 0.10
+                          ? 'The strong debt yield metric supports refinancing or exit flexibility. The asset can absorb market cap rate expansions or income disruptions without violating typical lender covenants.'
+                          : (analysis.debt_yield || 0) >= 0.08
+                          ? 'The debt yield meets minimum institutional thresholds but offers limited cushion. The asset should perform adequately under stable market conditions but may face refinancing friction if NOI declines.'
+                          : `A debt yield of ${((analysis.debt_yield || 0) * 100).toFixed(2)}% falls below the standard institutional minimum of 8%, making the deal sensitive to exit cap rate expansion or income shortfalls. Refinancing at maturity may be challenging, potentially requiring sponsor capital calls to pay down principal.`}
                       </p>
                     </div>
                   </div>
@@ -1574,23 +1665,27 @@ export default function UnderwritingDashboard({
                   <div className="space-y-3">
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">AI Decision</span>
-                      <p className={`text-xs font-semibold mt-1 ${(analysis.dscr || 0) >= 1.25 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {(analysis.dscr || 0) >= 1.25 ? 'Adequate' : 'Low'} DSCR of {(analysis.dscr || 0).toFixed(2)}x
+                      <p className={`text-xs font-semibold mt-1 ${(analysis.dscr || 0) >= 1.20 ? 'text-emerald-700' : (analysis.dscr || 0) >= 1.0 ? 'text-amber-700' : 'text-rose-700'}`}>
+                        {(analysis.dscr || 0) >= 1.20 ? 'Adequate' : (analysis.dscr || 0) >= 1.0 ? 'Tight' : 'Low'} DSCR of {(analysis.dscr || 0).toFixed(2)}x
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Reasoning</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.dscr || 0) >= 1.25
+                        {(analysis.dscr || 0) >= 1.20
                           ? 'The projected stabilized Net Operating Income (NOI) provides a sufficient buffer to comfortably cover the proposed annualized debt service obligations, meeting or exceeding standard lender underwriting minimums (typically 1.20x - 1.25x).'
+                          : (analysis.dscr || 0) >= 1.0
+                          ? 'The projected stabilized Net Operating Income (NOI) covers the proposed debt service but with a limited margin of safety. Cash flow is positive but leaves minimal buffer against income disruptions or unexpected expenses.'
                           : 'The projected stabilized Net Operating Income (NOI) falls below the minimum threshold required to safely service the proposed debt load. This indicates that operational cash flow is currently insufficient to meet periodic principal and interest payments without significant risk of shortfall.'}
                       </p>
                     </div>
                     <div>
                       <span className="text-[10px] text-[#64748B] uppercase tracking-wide font-medium">Client Impact</span>
                       <p className="text-xs text-neutral-700 mt-1 leading-relaxed">
-                        {(analysis.dscr || 0) >= 1.25
+                        {(analysis.dscr || 0) >= 1.20
                           ? 'The property presents an acceptable risk profile for debt financing. The healthy cash flow buffer supports favorable loan terms, protects investor distributions, and ensures compliance with standard debt yield and DSCR covenants.'
+                          : (analysis.dscr || 0) >= 1.0
+                          ? 'The deal services its debt but with limited headroom. Lenders may require additional reserves, a lower LTV, or rate protection to offset the thin coverage margin. Operational discipline is critical to avoid covenant breaches.'
                           : 'The severe default risk will likely trigger loan rejection under current terms. To proceed, the sponsor must structurally de-risk the deal by either negotiating a lower purchase price, significantly reducing the requested loan amount, securing lower interest rates, or injecting additional upfront equity.'}
                       </p>
                     </div>

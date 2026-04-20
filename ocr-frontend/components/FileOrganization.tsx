@@ -89,17 +89,47 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   ),
 };
 
-function PdfFileIcon() {
+function getFileTypeInfo(filename: string) {
+  const ext = filename.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') return { label: 'PDF', color: '#EF4444', bgColor: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.15)', icon: 'document' as const };
+  if (['xlsx', 'xls', 'csv'].includes(ext)) return { label: ext.toUpperCase(), color: '#10B981', bgColor: 'rgba(16,185,129,0.08)', borderColor: 'rgba(16,185,129,0.15)', icon: 'spreadsheet' as const };
+  if (['doc', 'docx'].includes(ext)) return { label: ext.toUpperCase(), color: '#3B82F6', bgColor: 'rgba(59,130,246,0.08)', borderColor: 'rgba(59,130,246,0.15)', icon: 'document' as const };
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext)) return { label: ext.toUpperCase(), color: '#8B5CF6', bgColor: 'rgba(139,92,246,0.08)', borderColor: 'rgba(139,92,246,0.15)', icon: 'image' as const };
+  if (['mov', 'mp4', 'avi', 'mkv'].includes(ext)) return { label: ext.toUpperCase(), color: '#F59E0B', bgColor: 'rgba(245,158,11,0.08)', borderColor: 'rgba(245,158,11,0.15)', icon: 'video' as const };
+  return { label: ext.toUpperCase() || 'FILE', color: '#64748B', bgColor: 'rgba(100,116,139,0.08)', borderColor: 'rgba(100,116,139,0.15)', icon: 'document' as const };
+}
+
+function FileTypeIcon({ filename }: { filename: string }) {
+  const info = getFileTypeInfo(filename);
   return (
     <div className="relative shrink-0">
-      <div className="w-9 h-9 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.15)] rounded-lg flex items-center justify-center">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="text-[#EF4444]">
-          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-          <polyline points="14 2 14 8 20 8" />
-          <line x1="16" x2="8" y1="13" y2="13" /><line x1="16" x2="8" y1="17" y2="17" />
-        </svg>
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ backgroundColor: info.bgColor, border: `1px solid ${info.borderColor}` }}>
+        {info.icon === 'image' ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ color: info.color }}>
+            <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" />
+            <polyline points="21 15 16 10 5 21" />
+          </svg>
+        ) : info.icon === 'video' ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ color: info.color }}>
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <polygon points="10 9 15 12 10 15" />
+          </svg>
+        ) : info.icon === 'spreadsheet' ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ color: info.color }}>
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="8" x2="16" y1="13" y2="13" /><line x1="8" x2="16" y1="17" y2="17" />
+            <line x1="12" x2="12" y1="10" y2="20" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" style={{ color: info.color }}>
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" x2="8" y1="13" y2="13" /><line x1="16" x2="8" y1="17" y2="17" />
+          </svg>
+        )}
       </div>
-      <span className="absolute -bottom-1 -right-1 text-[7px] font-bold text-white bg-[#EF4444] px-1 py-px rounded leading-none">PDF</span>
+      <span className="absolute -bottom-1 -right-1 text-[7px] font-bold text-white px-1 py-px rounded leading-none" style={{ backgroundColor: info.color }}>{info.label}</span>
     </div>
   );
 }
@@ -205,7 +235,7 @@ function DraggableFileRow({ file, packageId, onDelete, onPreview, isDragDisabled
         </div>
       )}
 
-      <PdfFileIcon />
+      <FileTypeIcon filename={file.name} />
 
       <div className="flex-1 min-w-0">
         <p className="text-xs font-semibold text-[#0F172A] truncate" title={file.name}>
@@ -588,7 +618,7 @@ export default function FileOrganization({ packageId, initialPackage, onComplete
         <DragOverlay dropAnimation={{ sideEffects: defaultDropAnimationSideEffects({ styles: { active: { opacity: "0.5" } } }) }}>
           {activeDragFile ? (
             <div className="flex items-center gap-3 px-4 py-3 bg-white border border-[#F97316] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] w-72">
-              <PdfFileIcon />
+              <FileTypeIcon filename={activeDragFile.name} />
               <p className="text-xs font-semibold text-[#0F172A] truncate">{activeDragFile.name}</p>
             </div>
           ) : null}

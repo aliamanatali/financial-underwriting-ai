@@ -95,6 +95,11 @@ export interface FinancialAnalysisProgress {
     file_index?: number;
     total_files?: number;
     file_type?: string;
+    category_progress?: {
+      om: number;
+      rr: number;
+      fin: number;
+    };
     [key: string]: any;
   };
 }
@@ -197,6 +202,8 @@ export interface DealParameters {
   max_build_year?: number;
   treasury_rate_5yr?: number;
   perm_spread?: number;
+  sofr_rate?: number;
+  bridge_spread?: number;
   units_override?: number;
   purchase_price_override?: number;
   occupancy_override?: number;

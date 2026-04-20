@@ -182,20 +182,26 @@ class ExplainabilityService:
         val = self.analysis.loss_to_lease or 0.0
         gpr = self.analysis.gross_potential_rent or 0.0
         current_rent_annual = sum((item.current_rent or 0) * 12 for item in self.analysis.rent_roll)
-        
+        vacant_rent_gap_annual = sum(
+            ((item.market_rent or 0) - (item.current_rent or 0)) * 12
+            for item in self.analysis.rent_roll
+            if getattr(item, 'is_vacant', False)
+        )
+
         self._add_explanation("Loss to Lease", ExplainabilityMetadata(
             metric="Loss to Lease",
             value=val,
             source=ExplanationSource(
                 document="Rent Roll",
-                fields_used=["Market Rent", "Current Rent"],
+                fields_used=["Market Rent", "Current Rent", "Vacancy Status"],
                 data_type="Derived"
             ),
             calculation=ExplanationCalculation(
-                formula="Gross Potential Rent - Annualized Current Rent",
+                formula="GPR - Current Rent - Vacant Rent Gap",
                 inputs={
                     "Gross Potential Rent": gpr,
-                    "Annualized Current Rent": current_rent_annual
+                    "Annualized Current Rent": current_rent_annual,
+                    "Vacant Rent Gap Annual": vacant_rent_gap_annual
                 }
             ),
             adjustments=[],
@@ -722,19 +728,19 @@ class ExplainabilityService:
                 reasoning="Net Operating Income is insufficient to cover the proposed debt service.",
                 impact="High risk of default; requires lower loan amount or increased equity."
             ))
-        elif dscr < 1.25:
+        elif dscr < 1.20:
             decisions.append(DecisionImpact(
                 metric="Debt Service Coverage",
-                decision=f"Moderate DSCR of {dscr:.2f}x",
-                reasoning="Cash flow is tight but positive.",
-                impact="Loan may be sized correctly but leaves little room for operational variance."
+                decision=f"Tight DSCR of {dscr:.2f}x",
+                reasoning="Cash flow covers debt service but with limited margin of safety.",
+                impact="Deal services its debt but with limited headroom; lenders may require additional reserves or rate protection."
             ))
         else:
             decisions.append(DecisionImpact(
                 metric="Debt Service Coverage",
-                decision=f"Strong DSCR of {dscr:.2f}x",
+                decision=f"Adequate DSCR of {dscr:.2f}x",
                 reasoning="Healthy margin between NOI and debt obligations.",
-                impact="Supports the requested loan amount with lower risk."
+                impact="Supports the requested loan amount with acceptable risk."
             ))
 
         # 4. Valuation

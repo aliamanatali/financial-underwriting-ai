@@ -70,6 +70,8 @@ export default function AnalysisResultPage() {
   const [validationTrigger, setValidationTrigger] = useState<number>(0);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const devReanalyzeEnabled = process.env.NEXT_PUBLIC_ENABLE_REANALYZE === "true";
 
   useEffect(() => {
     const tab = searchParams.get("tab");
@@ -89,6 +91,21 @@ export default function AnalysisResultPage() {
 
   const closeEventSource = () => {
     if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+  };
+
+  const handleDevReanalyze = async () => {
+    if (isReanalyzing) return;
+    setIsReanalyzing(true);
+    try {
+      // Fire a full re-extraction (level 4). Returns instantly — work runs in background.
+      await apiClient.devReanalyze(id, 4);
+    } catch (err) {
+      console.error("Failed to start re-analyze:", err);
+      setIsReanalyzing(false);
+      return;
+    }
+    // Redirect to processing page to show progress via SSE
+    router.push(`/processing/${id}?reanalyze=4`);
   };
 
   const handleReanalyze = async (newParams: DealParameters) => {
@@ -323,6 +340,28 @@ export default function AnalysisResultPage() {
                   </button>
                 );
               })}
+
+              {devReanalyzeEnabled && (
+                <button
+                  onClick={handleDevReanalyze}
+                  disabled={isReanalyzing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border border-[#7C3AED] text-[#7C3AED] hover:bg-[rgba(124,58,237,0.08)] disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isReanalyzing ? (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                      </svg>
+                      Starting…
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6" /><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M3 22v-6h6" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /></svg>
+                      Re-Analyze
+                    </>
+                  )}
+                </button>
+              )}
 
               <button
                 onClick={() => router.push("/upload-package")}

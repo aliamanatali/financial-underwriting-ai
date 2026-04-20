@@ -50,7 +50,7 @@ class ExcelService:
         ))
         
         entries.append(ProFormaEntry(
-            name="Effective Gross Income",
+            name="Rent Collections (T12) / EGI (Pro Forma)",
             t12=historical_revenue,
             f12=pro_forma_revenue_after_vacancy
         ))
@@ -185,17 +185,17 @@ class ExcelService:
                     sheet[f"B{row}"] = 0  # Historical has no vacancy loss
                     sheet[f"C{row}"] = f"=C{gpr_row}*0.03"
                     
-            elif "Effective Gross Income" in entry_name:
+            elif "Rent Collections" in entry_name or "Effective Gross Income" in entry_name:
                 # EGI = GPR - Vacancy Loss
                 gpr_row = row_map.get("Gross Potential Rent")
                 vacancy_row = row_map.get("Vacancy Loss")
                 if gpr_row and vacancy_row:
                     sheet[f"B{row}"] = f"=B{gpr_row}-B{vacancy_row}"
                     sheet[f"C{row}"] = f"=C{gpr_row}-C{vacancy_row}"
-                    
+
             elif "Net Operating Income" in entry_name:
                 # NOI = EGI - Total Expenses
-                egi_row = row_map.get("Effective Gross Income")
+                egi_row = row_map.get("Rent Collections (T12) / EGI (Pro Forma)") or row_map.get("Effective Gross Income")
                 expenses_row = row_map.get("Total Operating Expenses")
                 if egi_row and expenses_row:
                     sheet[f"B{row}"] = f"=B{egi_row}-B{expenses_row}"
@@ -216,7 +216,7 @@ class ExcelService:
                 sheet[f"C{row}"].number_format = currency_format
             
             # Bold section headers
-            if any(keyword in entry_name for keyword in ["Net Operating Income", "Cap Rate", "Total Operating Expenses", "Effective Gross Income"]):
+            if any(keyword in entry_name for keyword in ["Net Operating Income", "Cap Rate", "Total Operating Expenses", "Effective Gross Income", "Rent Collections"]):
                 sheet[f"A{row}"].font = section_font
                 sheet[f"A{row}"].fill = section_fill
                 sheet[f"B{row}"].fill = section_fill
@@ -1978,12 +1978,20 @@ class ExcelService:
         elif analysis_data.rent_roll:
              current_rent_annual = sum((r.current_rent or 0) for r in analysis_data.rent_roll) * 12
 
-        # Loss to Lease = Market - Current
-        # If Market > Current, we have a Loss to Lease (positive gap, so we deduct it).
-        # If Market < Current, we have a Gain to Lease (negative gap, so we add it).
-        # We want the value to add/subtract to Market to get Current.
-        # Value = Current - Market.
-        loss_to_lease_value = current_rent_annual - market_rent_annual
+        # Loss to Lease = Current - Market (for occupied units only)
+        # Exclude vacant units to prevent double-counting with vacancy loss.
+        # Vacant units have current_rent=0 which inflates the gap — their income loss
+        # is captured by vacancy rate, not LTL.
+        # Use (market - current) gap for vacant units to handle holdover tenants
+        # (units marked vacant but still paying rent during notice period)
+        vacant_rent_gap_annual = 0.0
+        if analysis_data.rent_roll:
+            vacant_rent_gap_annual = sum(
+                ((r.market_rent or 0) - (r.current_rent or 0)) * 12
+                for r in analysis_data.rent_roll
+                if getattr(r, 'is_vacant', False)
+            )
+        loss_to_lease_value = current_rent_annual - (market_rent_annual - vacant_rent_gap_annual)
         
         # Vacancy Rate
         vacancy_rate = 0.05 # Default

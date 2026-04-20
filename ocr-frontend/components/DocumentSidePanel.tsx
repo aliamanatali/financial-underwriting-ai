@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api';
 import { Document, Page, pdfjs } from 'react-pdf';
+import mammoth from 'mammoth';
 import { DocumentFile } from './FileOrganization';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
@@ -26,6 +27,7 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [wordHtml, setWordHtml] = useState<string | null>(null);
 
   useEffect(() => {
     if (file && packageId) {
@@ -48,25 +50,42 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
     setIsLoading(true);
     setError(null);
     setContentUrl(null);
-    
+    setWordHtml(null);
+
     try {
       const response = await apiClient.getDocumentContentUrl(packageId, file.id);
-      
+
       if (response.signed_url) {
           const type = getContentTypeFromFilename(file.name);
           setContentType(type);
-          
-          if (type === 'application/pdf') {
+          const isDocx = type.includes('wordprocessingml');
+          const isDoc = type === 'application/msword';
+
+          if (isDoc) {
+             setError("Legacy .doc files cannot be previewed. Please download to view.");
+             setContentUrl(response.signed_url);
+             setIsLoading(false);
+             return;
+          }
+
+          if (type === 'application/pdf' || isDocx) {
              const proxyUrl = `/api/proxy-pdf?url=${encodeURIComponent(response.signed_url)}`;
              const res = await fetch(proxyUrl);
-             if (!res.ok) throw new Error('Failed to load PDF');
+             if (!res.ok) throw new Error(`Failed to load file: ${res.statusText}`);
              const blob = await res.blob();
              const blobUrl = URL.createObjectURL(blob);
              setContentUrl(blobUrl);
+             if (isDocx) {
+               try {
+                 const result = await mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
+                 setWordHtml(result.value);
+               } catch {
+                 setError("Failed to parse Word document.");
+               }
+             }
           } else if (type.startsWith('image/')) {
              setContentUrl(response.signed_url);
           } else {
-             // For other types, we might not be able to preview easily in side panel
              setContentUrl(null);
           }
       } else if (response.content && response.encoding === 'base64') {
@@ -79,9 +98,17 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
           const type = response.content_type || getContentTypeFromFilename(file.name);
           const blob = new Blob([byteArray], { type });
           const url = URL.createObjectURL(blob);
-          
+
           setContentUrl(url);
           setContentType(type);
+          if (type.includes('wordprocessingml')) {
+            try {
+              const result = await mammoth.convertToHtml({ arrayBuffer: blob.arrayBuffer ? await blob.arrayBuffer() : new ArrayBuffer(0) });
+              setWordHtml(result.value);
+            } catch {
+              setError("Failed to parse Word document.");
+            }
+          }
       }
     } catch (err) {
       console.error("Failed to load file preview:", err);
@@ -94,7 +121,9 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
   const getContentTypeFromFilename = (name: string) => {
       const ext = name.split('.').pop()?.toLowerCase();
       if (ext === 'pdf') return 'application/pdf';
-      if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) return `image/${ext}`;
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(ext || '')) return `image/${ext}`;
+      if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      if (ext === 'doc') return 'application/msword';
       return 'application/octet-stream';
   };
 
@@ -188,6 +217,14 @@ export default function DocumentSidePanel({ file, packageId, onClose, onDelete, 
                     onClick={() => onViewFull(file.id, file.name)}
                     title="Click to view full details"
                 />
+            ) : wordHtml ? (
+                <div
+                    className="w-full h-full overflow-auto custom-scrollbar bg-white cursor-pointer hover:bg-[#FAFBFD] transition-colors p-4"
+                    onClick={() => onViewFull(file.id, file.name)}
+                    title="Click to view full details"
+                >
+                    <div className="prose prose-sm max-w-none text-[11px] leading-relaxed" dangerouslySetInnerHTML={{ __html: wordHtml }} />
+                </div>
             ) : (
                 <div className="text-center p-4">
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-300 mx-auto mb-2">
