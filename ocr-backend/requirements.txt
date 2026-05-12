@@ -1,43 +1,56 @@
 # FastAPI and server
-fastapi
-uvicorn[standard]
-python-multipart
+fastapi>=0.128.0
+uvicorn[standard]>=0.40.0
+python-multipart>=0.0.27  # CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
 
 # Google Gemini AI
-google-genai
+google-genai>=1.56.0
 
 # Pydantic for validation
-pydantic
-pydantic-settings
+pydantic>=2.12.5
+pydantic-settings>=2.6.0
 
 # Environment variables
-python-dotenv
+python-dotenv>=1.2.2  # CVE-2026-28684
 
 # PDF handling
-PyPDF2
+PyPDF2>=3.0.1
 
 # MongoDB (async)
-motor
-pymongo
+motor>=3.7.1
+pymongo>=4.15.5
 
 # MinIO object storage
-minio
+minio>=7.2.20
 
 # GCP Cloud Storage
-google-cloud-storage
-google-auth
+google-cloud-storage>=3.7.0
+google-auth>=2.45.0
 
 # Async file operations
-aiofiles
+aiofiles>=25.1.0
 
 # Celery and Redis for background tasks
-celery[redis]>=5.3.0
-redis>=5.0.0
+celery[redis]>=5.6.1
+redis>=6.4.0
 
 # Utilities
-python-dateutil
-fpdf2
+python-dateutil>=2.9.0
+fpdf2>=2.8.7
+
 # Excel handling
-pandas
-openpyxl
-xlrd
+pandas>=2.3.3
+openpyxl>=3.1.5
+xlrd>=2.0.2
+
+# Test framework
+pytest>=9.0.3                       # CVE-2025-71176
+
+# Security pins — explicitly force patched versions of transitive dependencies
+# Reviewed against pip-audit; remove pins once direct deps require these natively.
+protobuf>=5.29.6,<6.0   # CVE-2026-0994 (stay on 5.x for google-ai-generativelanguage/grpcio-status compat)
+pyasn1>=0.6.3           # CVE-2026-23490, CVE-2026-30922
+urllib3>=2.7.0          # CVE-2026-21441, CVE-2026-44431, CVE-2026-44432
+requests>=2.33.0        # CVE-2026-25645
+pygments>=2.20.0        # CVE-2026-4539
+pillow>=12.2.0          # CVE-2026-25990, CVE-2026-40192, CVE-2026-42308..42311
