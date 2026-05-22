@@ -1,0 +1,36 @@
+name: Security Scan
+on:
+  pull_request:
+    branches: [main, master, staging, develop, production]
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for package.json
+        id: check-npm
+        run: |
+          if [ -f "package.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Run npm audit
+        if: steps.check-npm.outputs.exists == 'true'
+        run: npm audit --omit=dev --audit-level=critical
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for requirements.txt
+        id: check-pip
+        run: |
+          if [ -f "requirements.txt" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          fi
+      - name: Run pip audit
+        if: steps.check-pip.outputs.exists == 'true'
+        run: pip install pip-audit && pip-audit -r requirements.txt
