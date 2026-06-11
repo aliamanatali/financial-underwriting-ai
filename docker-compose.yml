@@ -1,0 +1,72 @@
+# Single-host deployment for a free always-on VPS (e.g. Oracle Cloud Always Free).
+# Runs all three backend processes + Redis on one box. Frontend stays on Vercel.
+#
+#   docker compose up -d --build
+#
+# Each service reads its own .env file (copy from the .env.example templates and fill in
+# GEMINI_API_KEY, MONGODB_URI, GCP_* etc.). REDIS_URL is overridden here to point at the
+# in-compose redis service, so you do NOT need Upstash on this setup.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ocr-backend-api:
+    build: ./ocr-backend
+    restart: unless-stopped
+    env_file: ./ocr-backend/.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  ocr-backend-worker:
+    build: ./ocr-backend
+    restart: unless-stopped
+    env_file: ./ocr-backend/.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    command: >
+      celery -A app.celery_app worker
+      --loglevel=info
+      -Q document_processing,chunk_processing,default
+      --concurrency=2
+      --max-tasks-per-child=200
+      --time-limit=3600 --soft-time-limit=3300
+      -n worker@%h
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  financial-engine:
+    build: ./financial-engine
+    restart: unless-stopped
+    env_file: ./financial-engine/.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:

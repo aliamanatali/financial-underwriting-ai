@@ -1,0 +1,15 @@
+# Keep the image small and never ship local secrets / virtualenvs.
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+!.env.example
+uploads/
+*.md
+.DS_Store
+test_*.py
+.git
+.gitignore

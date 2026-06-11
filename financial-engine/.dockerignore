@@ -1,0 +1,16 @@
+# Keep the image small and never ship local secrets / logs / scratch data.
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+!.env.example
+batch_logs/
+temp_uploads/
+data/
+*.md
+.DS_Store
+.git
+.gitignore

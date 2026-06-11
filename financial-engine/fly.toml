@@ -1,0 +1,30 @@
+# Fly.io config for the Financial Engine API.
+# Rename `app` below if the name is taken (must be globally unique on Fly).
+app = "fin-uw-financial-engine"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "8080"
+  # OCR_BACKEND_URL is set as a secret to the deployed OCR backend's URL.
+  # CORS_ORIGINS should be a JSON array string including the Vercel frontend URL,
+  # e.g. fly secrets set CORS_ORIGINS='["https://your-frontend.vercel.app"]'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
