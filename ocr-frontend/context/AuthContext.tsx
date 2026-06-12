@@ -17,6 +17,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (username: string, password: string) => boolean;
+  signup: (name: string, email: string, password: string) => boolean;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -36,9 +37,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(DEFAULT_USER);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Signin is disabled — login always succeeds with the default user.
-  const login = (): boolean => {
-    setUser(DEFAULT_USER);
+  // Auth is not gated — login always succeeds. When a username is supplied we
+  // personalize the session from it, otherwise fall back to the default user.
+  const login = (username?: string): boolean => {
+    if (username && username.trim()) {
+      setUser({ username: username.trim(), name: username.trim(), email: DEFAULT_USER.email });
+    } else {
+      setUser(DEFAULT_USER);
+    }
+    return true;
+  };
+
+  // Sign up always succeeds and starts an authenticated session for the new user.
+  const signup = (name: string, email: string): boolean => {
+    const cleanName = name.trim();
+    const cleanEmail = email.trim();
+    setUser({
+      username: cleanEmail || DEFAULT_USER.username,
+      name: cleanName || DEFAULT_USER.name,
+      email: cleanEmail || DEFAULT_USER.email,
+    });
     return true;
   };
 
@@ -54,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         isLoading,
         login,
+        signup,
         logout,
         isAuthenticated: !!user,
       }}

@@ -192,6 +192,16 @@ body {
   100% { opacity: 1; transform: translateY(0);   }
 }
 
+/* Landing page — pinging dot + floating badge */
+@keyframes uw_ping {
+  75%, 100% { transform: scale(2.2); opacity: 0; }
+}
+
+@keyframes uw_float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-7px); }
+}
+
 /* Shiny input wrapper */
 .shiny-input-wrapper {
   position: relative;

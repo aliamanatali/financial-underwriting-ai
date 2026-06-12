@@ -393,7 +393,7 @@ export default function VerificationPage() {
         throw new Error("Failed to regenerate financial report");
       }
 
-      router.push("/");
+      router.push("/home");
       
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report regeneration failed");
@@ -458,7 +458,7 @@ export default function VerificationPage() {
           <h1 className="text-2xl font-bold text-red-600 mb-2">Error</h1>
           <p className="text-gray-600">{error}</p>
           <button
-            onClick={() => router.push("/")}
+            onClick={() => router.push("/home")}
             className="mt-4 px-4 py-2 bg-neutral-900 text-white rounded-md hover:bg-neutral-800"
           >
             Go Home
