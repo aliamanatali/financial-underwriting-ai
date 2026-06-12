@@ -36,7 +36,7 @@ export default function Sidebar({
   const { user, logout } = useAuth();
   const pathname = usePathname();
 
-  const isChatActive = pathname === "/" || isChatMode;
+  const isChatActive = pathname === "/home" || isChatMode;
   const isFinancialActive = pathname === "/dashboard";
 
   const getUserInitials = () => {
@@ -117,7 +117,7 @@ export default function Sidebar({
 
           {/* Chat */}
           <Link
-            href="/"
+            href="/home"
             className={`${navItemBase} ${isChatActive ? navItemActive : navItemInactive} ${expandedAlign}`}
           >
             <MessageCircleIcon className="w-5 h-5 stroke-[1.5] shrink-0" />
